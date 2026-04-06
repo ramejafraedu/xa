@@ -92,10 +92,10 @@ def run_pipeline_v15(
         raise ValueError(f"Unknown niche: {nicho_slug}. Available: {list(NICHOS.keys())}")
 
     # Initialize
-    director = Director(mode)
-    state_mgr = StateManager(settings.temp_dir)
     timestamp = int(time.time() * 1000)
     job_id = f"{nicho_slug}_{timestamp}"
+    director = Director(mode, job_id=job_id)
+    state_mgr = StateManager(settings.temp_dir)
 
     manifest = JobManifest(
         job_id=job_id,
@@ -325,7 +325,6 @@ def run_pipeline_v15(
 
             assets = asset_agent.run(story, nicho, timestamp, settings.temp_dir)
 
-            veo_clips = assets.get("veo_clips", [])
             stock_urls = assets.get("stock_clips", [])
             images = assets.get("images", [])
             music_path = assets.get("music_path")
@@ -336,7 +335,6 @@ def run_pipeline_v15(
 
             # Checkpoint: assets
             asset_summary = (
-                f"🎬 Veo clips: {len(veo_clips)}\n"
                 f"📦 Stock clips: {len(stock_urls)}\n"
                 f"🖼️ Images: {len(images)}\n"
                 f"🎵 Music: {'✅' if music_path else '❌'}\n"
@@ -352,7 +350,7 @@ def run_pipeline_v15(
             t = time.time()
             progress.update(main_task, description="[cyan]⬇️ Downloading clips...")
             stock_clips = download_clips(stock_urls, timestamp, settings.temp_dir)
-            clips = veo_clips + stock_clips
+            clips = stock_clips
             manifest.clip_paths = [str(p) for p in clips]
 
             if not clips and not images:
@@ -673,8 +671,9 @@ def _audience_for_nicho(slug: str) -> str:
 def _clean_tts_text(text: str) -> str:
     import re
     text = re.sub(r"<[^>]*>", " ", text)
-    text = re.sub(r'[{}\\[\\]|\\\\^~*_#@"]', " ", text)
-    text = re.sub(r"\\s+", " ", text)
+    text = re.sub(r'[{}\[\]|\\^~*_#@"]', " ", text)
+    text = re.sub(r"\s+", " ", text)
+    text = text.replace(", ", ", ").replace(". ", ". ")
     return text.strip()
 
 

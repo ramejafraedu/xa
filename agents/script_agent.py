@@ -143,6 +143,18 @@ class ScriptAgent:
                 f"\n⚠️ CORRECCIÓN REQUERIDA:\n{correction_notes}\n"
                 f"Mejora específicamente lo indicado sin cambiar la estructura general.\n"
             )
+            
+        few_shot_examples = """
+EJEMPLOS DE GUIONES DE ALTA RETENCIÓN (COPIA ESTE RITMO):
+
+EJEMPLO 1 (Misterio/Psicología):
+"gancho": "Esta es la razón por la que te sientes cansado todo el tiempo...",
+"guion": "Y no, no es por falta de sueño. Se llama 'fatiga de decisión'. Tu cerebro toma más de 35,000 decisiones al día. Al llegar a las 4 PM, tu corteza prefrontal está literalmente frita. Por eso pides comida chatarra en lugar de cocinar. El truco militar para evitarlo: planea tu día la noche anterior. Aplícalo hoy y verás la diferencia."
+
+EJEMPLO 2 (Finanzas/Éxito):
+"gancho": "Si ganas menos de $2000 al mes, deja de hacer esto...",
+"guion": "Ahorrar el 10% no te hará rico. Te están mintiendo. La inflación está en 4%, el banco te da 1%. Pierdes dinero todos los días. Lo que necesitas no es ahorrar, es multiplicar. Aprender a vender o programar te dará un ROI del 1000%. Cambia tu mentalidad de consumidor a productor."
+"""
 
         system = f"""Eres head writer de videos faceless top 1%. Objetivo: CTR alto y retención brutal.
 
@@ -151,6 +163,7 @@ CONTEXTO NARRATIVO:
 
 OUTLINE APROBADO:
 {outline}
+{few_shot_examples}
 
 REGLAS MAESTRAS:
 - Gancho en <=1.8 segundos con polarización real.
@@ -216,45 +229,67 @@ Devuelve EXACTAMENTE este JSON:
         return parsed
 
     def _call_llm(self, system: str, user: str, temperature: float = 0.9) -> str:
-        """Call GPT-4.1 via Azure inference (same as V14)."""
-        payload = {
-            "model": settings.inference_model,
-            "temperature": temperature,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
-        headers = {
-            "Authorization": f"Bearer {settings.github_token}",
-            "Content-Type": "application/json",
-        }
+        """Call Gemini usando google-genai SDK con rotación de las 4 API keys."""
+        try:
+            import google.genai as genai
+            from google.genai import types
+        except ImportError:
+            logger.error("google-genai no está instalado. Instala con: pip install google-genai")
+            return ""
 
-        models = [settings.inference_model, settings.inference_fallback_model]
+        all_keys = settings.get_gemini_keys()
+        if not all_keys:
+            logger.error("No Gemini API keys found for ScriptAgent")
+            return ""
+
+        # Modelos ordenados por cuota disponible (mayor RPM primero)
+        models_to_try = [
+            "gemini-3.1-flash-lite",   # 15 RPM — mayor cuota free
+            "gemini-2.5-flash-lite",   # 10 RPM
+            "gemini-2.5-flash",        # 5 RPM
+            "gemini-3-flash",          # 5 RPM
+            "gemini-3.1-pro",          # 0 RPM free / cuota pago
+            "gemini-3.1-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+        ]
         last_error = ""
 
-        for model in models:
-            payload["model"] = model
-            try:
-                response = request_with_retry(
-                    "POST", settings.inference_api_url,
-                    json_data=payload, headers=headers,
-                    max_retries=2, timeout=60,
-                )
-                if response.status_code >= 400:
-                    last_error = f"HTTP {response.status_code}"
-                    continue
+        # Rotación agresiva: por cada modelo, intenta con todas las keys
+        # 4 keys × 15 RPM = ~60 RPM efectivos en gemini-3.1-flash-lite
+        for model_name in models_to_try:
+            for key_idx, api_key in enumerate(all_keys):
+                try:
+                    client = genai.Client(api_key=api_key)
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=[user],
+                        config=types.GenerateContentConfig(
+                            system_instruction=system,
+                            temperature=temperature,
+                        )
+                    )
+                    if response.text:
+                        logger.debug(f"ScriptAgent: {model_name} con key #{key_idx+1}")
+                        return response.text
+                    last_error = f"Empty response from {model_name}"
+                except Exception as e:
+                    last_error = str(e)
+                    err_str = str(e).lower()
+                    # RESOURCE_EXHAUSTED → probar siguiente key de inmediato
+                    if "resource_exhausted" in err_str or "quota" in err_str or "429" in err_str:
+                        logger.debug(f"{model_name} key#{key_idx+1} agotada, rotando...")
+                        continue
+                    # Error de modelo (NOT_FOUND, INVALID_ARGUMENT) → siguiente modelo
+                    if "not_found" in err_str or "invalid" in err_str or "404" in err_str:
+                        logger.debug(f"{model_name} no disponible, saltando modelo")
+                        break
+                    logger.warning(f"{model_name} key#{key_idx+1} error: {e}")
 
-                data = response.json()
-                text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                if text:
-                    return text
+            # Pausa breve entre modelos para evitar flood
+            time.sleep(0.5)
 
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(f"ScriptAgent LLM error ({model}): {e}")
-
-        logger.error(f"ScriptAgent: all models failed. Last: {last_error}")
+        logger.error(f"ScriptAgent: todos los modelos/keys fallaron. Último: {last_error}")
         return ""
 
     def _parse_json(self, raw: str) -> Optional[dict]:

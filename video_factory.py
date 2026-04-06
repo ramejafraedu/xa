@@ -128,17 +128,14 @@ def _preflight_checks() -> bool:
     # MEGA Upgrade providers status
     gemini_key_count = len(settings.get_gemini_keys())
     if gemini_key_count > 0:
-        checks.append(("Gemini Keys", f"✅ {gemini_key_count} keys in rotation", "green"))
-
-    if settings.gemini_api_key and settings.use_veo_clips:
-        checks.append(("Veo 3.1 (AI clips)", "✅ Active", "green"))
+        checks.append(("Gemini Keys", f"✅ {gemini_key_count}/4 keys activas (rotación)", "green"))
     else:
-        checks.append(("Veo 3.1 (AI clips)", "⬜ Disabled / no key", "dim"))
+        checks.append(("Gemini Keys", "❌ Ninguna configurada", "red"))
 
-    if settings.gemini_api_key and settings.use_lyria_music:
+    if hasattr(settings, 'use_lyria_music') and settings.use_lyria_music:
         checks.append(("Lyria 3 (AI music)", "✅ Active", "green"))
     else:
-        checks.append(("Lyria 3 (AI music)", "⬜ Disabled / no key", "dim"))
+        checks.append(("Lyria 3 (AI music)", "⬜ Disabled", "dim"))
 
     if settings.use_whisperx:
         try:
@@ -269,6 +266,7 @@ def run_pipeline(
             # ── Stage 2: Generate Content ────────────────────────────
             timer = _stage_timer()
             progress.update(main_task, description="[cyan]🤖 Generating content...")
+            raw_content = {}  # Inicializar antes del bloque (fix: NameError en --resume)
             if not state.is_stage_done(manifest, "content_gen"):
                 try:
                     raw_content = generate_content(nicho, trending, memoria)
@@ -458,33 +456,13 @@ def run_pipeline(
             state.mark_stage(manifest, "subtitles", _elapsed(timer))
             progress.advance(main_task)
 
-            # ── Stage 6: Media (Veo AI → Stock, Lyria → Pixabay) ────
+            # ── Stage 6: Media (Stock, Lyria → Pixabay) ────
             timer = _stage_timer()
-            progress.update(main_task, description="[cyan]🎬 Fetching media...")
+            progress.update(main_task, description="[cyan]🎨 Generating media...")
             keywords = content.palabras_clave[:nicho.keywords_count]
 
-            # --- Veo 3.1 AI clips (NEW — with stock fallback) ---
-            veo_clips_list = []
-            try:
-                from pipeline.veo_clips import generate_veo_clips, generate_scene_prompts
-                scene_prompts = generate_scene_prompts(
-                    keywords, nicho.nombre, nicho.num_clips, nicho.tono
-                )
-                veo_clips_list = generate_veo_clips(
-                    scene_prompts, timestamp, settings.temp_dir,
-                    max_clips=settings.veo_max_clips_per_video,
-                )
-                if veo_clips_list:
-                    logger.info(f"🎬 Veo 3.1: {len(veo_clips_list)} AI clips generated")
-            except Exception as e:
-                logger.debug(f"Veo clips skipped: {e}")
-
-            # Stock fallback: only fetch what Veo didn't cover
-            clips_needed = max(0, nicho.num_clips - len(veo_clips_list))
-            video_urls = []
-            if clips_needed > 0:
-                video_urls = fetch_stock_videos(keywords, clips_needed)
-                logger.info(f"📦 Stock fallback: fetching {clips_needed} clips from Pexels")
+            stock_clips = fetch_stock_videos(keywords, nicho.num_clips)
+            logger.info(f"📦 Stock: fetching {len(stock_clips)} clips from Pexels")
 
             images = generate_images(
                 content.prompt_imagen or (keywords[0] if keywords else nicho.nombre),
@@ -515,25 +493,22 @@ def run_pipeline(
             state.mark_stage(manifest, "media", _elapsed(timer))
             progress.advance(main_task)
 
-            # ── Stage 7: Download clips + merge with Veo ─────────────
+            # ── Stage 7: Download clips ─────────────
             timer = _stage_timer()
             progress.update(main_task, description="[cyan]⬇️ Downloading clips...")
-            stock_clips = download_clips(video_urls, timestamp, settings.temp_dir)
-
-            # Merge: Veo AI clips first, then stock clips
-            clips = veo_clips_list + stock_clips
+            clips = download_clips(stock_clips, timestamp, settings.temp_dir)
             manifest.clip_paths = [str(p) for p in clips]
 
             if not clips and not images:
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "download"
-                manifest.error_message = "No clips (Veo + stock) and no images"
+                manifest.error_message = "No clips and no images"
                 manifest.error_code = ErrorCode.ASSET_MISSING.value
                 state.save(manifest)
                 notify_error(manifest)
                 return manifest
 
-            logger.info(f"📊 Total clips: {len(clips)} (Veo: {len(veo_clips_list)}, Stock: {len(stock_clips)})")
+            logger.info(f"📊 Total clips: {len(clips)} (Stock: {len(stock_clips)})")
             state.mark_stage(manifest, "combine", _elapsed(timer))
             progress.advance(main_task)
 

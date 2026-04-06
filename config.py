@@ -86,10 +86,6 @@ class Settings(BaseSettings):
     rapidapi_key: str = ""
 
     # --- MEGA Upgrade: Provider Toggles ---
-    # Veo 3.1 (AI video clips via Gemini)
-    use_veo_clips: bool = True
-    veo_max_clips_per_video: int = 5
-
     # Lyria 3 (AI music via Gemini)
     use_lyria_music: bool = True
 
@@ -140,6 +136,13 @@ class Settings(BaseSettings):
         key = keys[_gemini_rotation_counter[0] % len(keys)]
         _gemini_rotation_counter[0] += 1
         return key
+
+    def get_gemini_key(self) -> str:
+        """Backward-compatible alias used by V15 agents.
+
+        Returns the next key in rotation to spread requests across keys.
+        """
+        return self.next_gemini_key()
 
     # --- Derived paths (pathlib) ---
 
@@ -236,9 +239,11 @@ class Settings(BaseSettings):
         """
         critical_missing = []
         if not self.github_token:
-            critical_missing.append("GITHUB_TOKEN (needed for AI content generation)")
+            critical_missing.append("GITHUB_TOKEN (needed for AI content generation via Azure)")
         if not self.pexels_keys:
-            critical_missing.append("PEXELS_API_KEY (needed for stock videos)")
+            critical_missing.append("PEXELS_API_KEY (needed for stock videos — at least 1 of 4)")
+        if not self.get_gemini_keys():
+            critical_missing.append("GEMINI_API_KEY (needed for TTS + ScriptAgent — at least 1 of 4)")
 
         if critical_missing:
             msg = (
@@ -249,7 +254,7 @@ class Settings(BaseSettings):
                 msg += f"  • {k}\n"
             msg += (
                 "\nCopy .env.example → .env and fill in the values.\n"
-                "See: https://github.com/your-repo/video-factory#setup\n"
+                "See: README.md for setup instructions.\n"
             )
             logger.error(msg)
             raise SystemExit(msg)

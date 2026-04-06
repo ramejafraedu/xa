@@ -43,34 +43,30 @@ class AssetAgent:
         """
         t0 = time.time()
         results = {
-            "veo_clips": [],
             "stock_clips": [],
             "images": [],
             "music_path": None,
             "sfx_paths": [],
         }
 
-        # --- 1. AI Video Clips (Veo 3.1) with scene-specific prompts ---
-        results["veo_clips"] = self._generate_veo_clips(state, nicho, timestamp, temp_dir)
-
-        # --- 2. Stock fallback for uncovered scenes ---
-        clips_needed = max(0, nicho.num_clips - len(results["veo_clips"]))
+        # --- 1. Stock fallback for uncovered scenes ---
+        clips_needed = nicho.num_clips
         if clips_needed > 0:
             results["stock_clips"] = self._fetch_stock_clips(
                 state, nicho, clips_needed
             )
 
-        # --- 3. Images (with visual direction from StoryState) ---
+        # --- 2. Images (with visual direction from StoryState) ---
         results["images"] = self._generate_images(
             state, nicho, timestamp, temp_dir
         )
 
-        # --- 4. Music (mood from script) ---
+        # --- 3. Music (mood from script) ---
         results["music_path"] = self._fetch_music(
             state, nicho, timestamp, temp_dir
         )
 
-        # --- 5. SFX ---
+        # --- 4. SFX ---
         try:
             from pipeline.sfx import fetch_sfx
             results["sfx_paths"] = fetch_sfx(timestamp, temp_dir)
@@ -80,52 +76,12 @@ class AssetAgent:
         elapsed = round(time.time() - t0, 2)
         logger.info(
             f"🎨 Assets ready: "
-            f"Veo={len(results['veo_clips'])}, "
             f"Stock={len(results['stock_clips'])}, "
             f"Images={len(results['images'])}, "
             f"Music={'✅' if results['music_path'] else '❌'} "
             f"({elapsed}s)"
         )
         return results
-
-    def _generate_veo_clips(
-        self,
-        state: StoryState,
-        nicho: NichoConfig,
-        timestamp: int,
-        temp_dir: Path,
-    ) -> list[Path]:
-        """Generate Veo clips using scene-specific visual prompts."""
-        if not settings.gemini_api_key or not settings.use_veo_clips:
-            return []
-
-        try:
-            from pipeline.veo_clips import generate_veo_clips
-
-            # Use scene visual_prompts instead of generic keywords
-            scene_prompts = state.visual_prompts()
-            if not scene_prompts:
-                # Fallback to V14 keyword-based prompts
-                from pipeline.veo_clips import generate_scene_prompts
-                raw_content = getattr(state, "_raw_content", {})
-                keywords = raw_content.get("palabras_clave", [])[:nicho.num_clips]
-                scene_prompts = generate_scene_prompts(
-                    keywords, nicho.nombre, nicho.num_clips, nicho.tono
-                )
-
-            clips = generate_veo_clips(
-                scene_prompts,
-                timestamp,
-                temp_dir,
-                max_clips=settings.veo_max_clips_per_video,
-            )
-            if clips:
-                logger.info(f"🎬 Veo 3.1: {len(clips)} scene-coherent clips")
-            return clips
-
-        except Exception as e:
-            logger.debug(f"Veo clips skipped: {e}")
-            return []
 
     def _fetch_stock_clips(
         self,

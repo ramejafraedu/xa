@@ -316,6 +316,7 @@
             font-weight: 700;
             background: var(--gradient-hero);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -534,6 +535,26 @@
         .page { display: none; }
         .page.active { display: block; }
 
+        /* ===== MODAL ===== */
+        .modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px);
+            z-index: 2000; display: none; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s;
+        }
+        .modal-overlay.active { display: flex; opacity: 1; }
+        .modal {
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+            width: 90%; max-width: 600px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); transform: translateY(20px); transition: transform 0.3s;
+        }
+        .modal-overlay.active .modal { transform: translateY(0); }
+        .modal-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--bg-elevated); }
+        .modal-title { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; color: var(--accent-purple); }
+        .modal-body { padding: 24px; overflow-y: auto; font-size: 13px; line-height: 1.6; }
+        .modal-content-box { background: #0d0e12; padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); font-family: monospace; white-space: pre-wrap; margin-bottom: 16px; max-height: 300px; overflow-y: auto;}
+        .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 12px; background: var(--bg-elevated); }
+        .edit-area { width: 100%; min-height: 80px; padding: 12px; background: #0d0e12; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-family: 'Inter', sans-serif; resize: vertical; display: none; margin-bottom: 16px;}
+        .edit-area:focus { outline: none; border-color: var(--accent-purple); }
+
         /* ===== RESPONSIVE ===== */
         @media (max-width: 768px) {
             .app { grid-template-columns: 1fr; }
@@ -647,6 +668,29 @@
                     <button class="btn btn-secondary btn-sm" onclick="clearLogs()">Clear</button>
                 </div>
                 <div class="log-console" id="log-console"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- COPILOT MODAL -->
+    <div id="copilot-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">⏸️ Pipeline Checkpoint: <span id="cp-stage">Stage</span></div>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 12px; display: flex; justify-content: space-between;">
+                    <div style="color: var(--text-muted);">ID: <span id="cp-job-id" style="color:var(--text-primary);font-weight:600;"></span></div>
+                    <div style="color: var(--text-muted); font-size: 11px;" id="cp-metadata"></div>
+                </div>
+                <div class="modal-content-box" id="cp-content"></div>
+                <textarea id="cp-edit-notes" class="edit-area" placeholder="Escribe instrucciones de cambios para que la IA regenere esto..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="submitCheckpoint('approve')" style="flex:1; justify-content:center;">✅ Aprobar</button>
+                <button class="btn btn-secondary" onclick="toggleEditMode()" style="flex:1; justify-content:center; color: var(--accent-orange);">✏️ Editar</button>
+                <button class="btn btn-secondary" onclick="submitCheckpoint('reject')" style="background: rgba(239,68,68,0.1); border-color: transparent; color: var(--accent-red); justify-content:center;">❌ Rechazar</button>
+                <button class="btn btn-primary" id="btn-submit-edit" onclick="submitCheckpoint('edit')" style="display:none; flex:2; justify-content:center;">Enviar Instrucciones 🚀</button>
             </div>
         </div>
     </div>
@@ -938,6 +982,81 @@
         async function refreshAll() {
             await Promise.all([fetchStatus(), fetchNichos(), fetchJobs(), fetchVideos()]);
         }
+        
+        // ===== COPILOT CHECKPOINTS =====
+        let activeCheckpointJob = null;
+        let isEditMode = false;
+
+        async function fetchCheckpoints() {
+            if (activeCheckpointJob) return; // Wait if modal is open
+            try {
+                const res = await fetch(API + '/api/checkpoints');
+                const data = await res.json();
+                const jobs = Object.keys(data.checkpoints);
+                if (jobs.length > 0) {
+                    const jobId = jobs[0];
+                    showCheckpoint(jobId, data.checkpoints[jobId]);
+                }
+            } catch (e) {
+                console.error("Checkpoints fetch failed:", e);
+            }
+        }
+
+        function showCheckpoint(jobId, cp) {
+            activeCheckpointJob = jobId;
+            document.getElementById('cp-job-id').textContent = jobId.substring(0, 20) + '...';
+            document.getElementById('cp-stage').textContent = cp.stage.toUpperCase();
+            
+            let metaTxt = "";
+            for (const [k, v] of Object.entries(cp.metadata || {})) metaTxt += `<b>${k}:</b> ${v} | `;
+            document.getElementById('cp-metadata').innerHTML = metaTxt || cp.topic;
+            
+            document.getElementById('cp-content').textContent = typeof cp.content === 'object' ? JSON.stringify(cp.content, null, 2) : cp.content;
+            
+            // Reset edit mode
+            isEditMode = false;
+            document.getElementById('cp-edit-notes').style.display = 'none';
+            document.getElementById('cp-edit-notes').value = '';
+            document.getElementById('btn-submit-edit').style.display = 'none';
+            
+            document.getElementById('copilot-modal').classList.add('active');
+            
+            // Notification sound
+            try { new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU').play() } catch(e){}
+        }
+
+        function toggleEditMode() {
+            isEditMode = !isEditMode;
+            document.getElementById('cp-edit-notes').style.display = isEditMode ? 'block' : 'none';
+            document.getElementById('btn-submit-edit').style.display = isEditMode ? 'flex' : 'none';
+            if(isEditMode) document.getElementById('cp-edit-notes').focus();
+        }
+
+        async function submitCheckpoint(decision) {
+            if (!activeCheckpointJob) return;
+            
+            const notes = document.getElementById('cp-edit-notes').value;
+            if (decision === 'edit' && !notes.trim()) {
+                toast("Debes escribir unas instrucciones para editar", "error");
+                document.getElementById('cp-edit-notes').focus();
+                return;
+            }
+
+            try {
+                await fetch(API + '/api/checkpoints/' + activeCheckpointJob + '/resolve', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({decision: decision, notes: notes})
+                });
+                
+                toast("Decisión enviada. Pipeline reanudado.", "success");
+                document.getElementById('copilot-modal').classList.remove('active');
+                activeCheckpointJob = null;
+                setTimeout(fetchJobs, 1000);
+            } catch(e) {
+                toast("Error al enviar decisión: " + e.message, "error");
+            }
+        }
 
         // ===== INIT =====
         refreshAll();
@@ -945,6 +1064,7 @@
         setInterval(fetchStatus, 15000);
         setInterval(fetchNichos, 10000);
         setInterval(fetchJobs, 30000);
+        setInterval(fetchCheckpoints, 2000);
     </script>
 </body>
 </html>

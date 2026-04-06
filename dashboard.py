@@ -22,13 +22,14 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, BackgroundTasks, Request, Body
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from config import settings, NICHOS
+from core.director import WEB_CHECKPOINTS, WEB_RESOLUTIONS, DirectorMode
 from models.content import JobManifest, JobStatus
 from state_manager import StateManager
 
@@ -248,15 +249,35 @@ async def list_videos():
     return videos
 
 
+@app.get("/api/checkpoints")
+async def get_checkpoints():
+    """Return all pending checkpoints awaiting human approval."""
+    return {"checkpoints": WEB_CHECKPOINTS}
+
+
+@app.post("/api/checkpoints/{job_id}/resolve")
+async def resolve_checkpoint(job_id: str, payload: dict = Body(...)):
+    """Resolve a pending checkpoint with a decision."""
+    if job_id not in WEB_CHECKPOINTS:
+        return {"error": "Checkpoint not found", "job_id": job_id}
+    
+    WEB_RESOLUTIONS[job_id] = {
+        "decision": payload.get("decision", "approve"),
+        "notes": payload.get("notes", "")
+    }
+    return {"status": "resolved", "job_id": job_id}
+
+
 # ---------------------------------------------------------------------------
 # Background pipeline runners
 # ---------------------------------------------------------------------------
 
 def _run_pipeline_bg(nicho_slug: str, dry_run: bool = False, resume_id: str = ""):
-    """Run pipeline in background thread."""
+    """Run pipeline in background thread using V15 mode WEB."""
     try:
-        from video_factory import run_pipeline
-        result = run_pipeline(nicho_slug, dry_run=dry_run, resume_job_id=resume_id)
+        from core.pipeline_v15 import run_pipeline_v15
+        logger.info(f"🚀 Starting V15 WEB Pipeline for {nicho_slug}")
+        result = run_pipeline_v15(nicho_slug, dry_run=dry_run, resume_job_id=resume_id, mode=DirectorMode.WEB)
         if result:
             _active_runs[nicho_slug] = {
                 "job_id": result.job_id,

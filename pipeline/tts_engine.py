@@ -55,88 +55,103 @@ def generate_tts(
 
 
 def _gemini_tts(text: str, output_mp3: Path, voice: str) -> bool:
-    """Generate TTS via Gemini API."""
-    try:
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/"
-            f"models/gemini-2.5-flash-preview-tts:generateContent"
-            f"?key={settings.gemini_api_key}"
-        )
-
-        payload = {
-            "contents": [{"parts": [{"text": text}]}],
-            "generationConfig": {
-                "responseModalities": ["AUDIO"],
-                "speechConfig": {
-                    "voiceConfig": {
-                        "prebuiltVoiceConfig": {"voiceName": voice}
-                    }
-                },
-            },
-        }
-
-        response = request_with_retry(
-            "POST", url,
-            json_data=payload,
-            headers={"Content-Type": "application/json"},
-            max_retries=2,
-            timeout=60,
-        )
-
-        if response.status_code != 200:
-            logger.warning(f"Gemini TTS HTTP {response.status_code}")
-            return False
-
-        data = response.json()
-        parts = (
-            data.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [])
-        )
-
-        audio_b64 = None
-        mime_type = "audio/pcm;rate=24000"
-        for p in parts:
-            inline = p.get("inlineData", {})
-            if inline.get("data"):
-                audio_b64 = inline["data"]
-                mime_type = inline.get("mimeType", mime_type)
-                break
-
-        if not audio_b64:
-            logger.warning("Gemini TTS: no audio data in response")
-            return False
-
-        pcm_data = base64.b64decode(audio_b64)
-
-        # Extract sample rate
-        sample_rate = 24000
-        if "rate=" in mime_type:
-            try:
-                sample_rate = int(mime_type.split("rate=")[1].split(";")[0].strip())
-            except (ValueError, IndexError):
-                pass
-
-        # Write WAV
-        raw_wav = output_mp3.with_suffix(".wav")
-        with wave.open(str(raw_wav), "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(pcm_data)
-
-        if not raw_wav.exists() or raw_wav.stat().st_size < 100:
-            logger.warning("Gemini TTS: WAV is empty")
-            return False
-
-        # Convert to MP3 with audio filters (identical to MASTER V13)
-        success = _apply_audio_filters(raw_wav, output_mp3)
-        raw_wav.unlink(missing_ok=True)
-        return success
-
-    except Exception as e:
-        logger.warning(f"Gemini TTS error: {e}")
+    """Generate TTS via Gemini API con rotación de las 4 keys."""
+    all_keys = settings.get_gemini_keys()
+    if not all_keys:
+        logger.warning("Gemini TTS: no keys configured")
         return False
+
+    for key_idx, api_key in enumerate(all_keys):
+        try:
+            url = (
+                f"https://generativelanguage.googleapis.com/v1beta/"
+                f"models/gemini-2.5-flash-preview-tts:generateContent"
+                f"?key={api_key}"
+            )
+
+            payload = {
+                "contents": [{"parts": [{"text": text}]}],
+                "generationConfig": {
+                    "responseModalities": ["AUDIO"],
+                    "speechConfig": {
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {"voiceName": voice}
+                        }
+                    },
+                },
+            }
+
+            response = request_with_retry(
+                "POST", url,
+                json_data=payload,
+                headers={"Content-Type": "application/json"},
+                max_retries=1,
+                timeout=60,
+            )
+
+            if response.status_code == 429:
+                logger.debug(f"Gemini TTS key#{key_idx+1} quota agotada, rotando...")
+                continue
+
+            if response.status_code != 200:
+                logger.warning(f"Gemini TTS key#{key_idx+1} HTTP {response.status_code}")
+                continue
+
+            data = response.json()
+            parts = (
+                data.get("candidates", [{}])[0]
+                .get("content", {})
+                .get("parts", [])
+            )
+
+            audio_b64 = None
+            mime_type = "audio/pcm;rate=24000"
+            for p in parts:
+                inline = p.get("inlineData", {})
+                if inline.get("data"):
+                    audio_b64 = inline["data"]
+                    mime_type = inline.get("mimeType", mime_type)
+                    break
+
+            if not audio_b64:
+                logger.warning(f"Gemini TTS key#{key_idx+1}: no audio data")
+                continue
+
+            pcm_data = base64.b64decode(audio_b64)
+
+            # Extract sample rate
+            sample_rate = 24000
+            if "rate=" in mime_type:
+                try:
+                    sample_rate = int(mime_type.split("rate=")[1].split(";")[0].strip())
+                except (ValueError, IndexError):
+                    pass
+
+            # Write WAV
+            raw_wav = output_mp3.with_suffix(".wav")
+            with wave.open(str(raw_wav), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(pcm_data)
+
+            if not raw_wav.exists() or raw_wav.stat().st_size < 100:
+                logger.warning(f"Gemini TTS key#{key_idx+1}: WAV vacío")
+                raw_wav.unlink(missing_ok=True)
+                continue
+
+            # Convert to MP3 with audio filters
+            success = _apply_audio_filters(raw_wav, output_mp3)
+            raw_wav.unlink(missing_ok=True)
+            if success:
+                logger.info(f"✅ Gemini TTS generado con key#{key_idx+1}")
+                return True
+
+        except Exception as e:
+            logger.warning(f"Gemini TTS key#{key_idx+1} error: {e}")
+            continue
+
+    return False
 
 
 def _edge_tts(
@@ -166,8 +181,23 @@ def _edge_tts(
                     submaker = edge_tts.SubMaker()
                     async for chunk in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).stream():
                         if chunk["type"] == "WordBoundary":
-                            submaker.feed(chunk)
-                    vtt_path.write_text(submaker.get_subs(), encoding="utf-8")
+                            # Compatibilidad edge-tts <7 y >=7
+                            if hasattr(submaker, 'feed'):
+                                submaker.feed(chunk)
+                            elif hasattr(submaker, 'create_sub'):
+                                submaker.create_sub(
+                                    chunk.get("offset", 0),
+                                    chunk.get("duration", 0),
+                                    chunk.get("text", ""),
+                                )
+                    # Compatibilidad get_subs() vs srt
+                    if hasattr(submaker, 'get_subs'):
+                        subs_content = submaker.get_subs()
+                    elif hasattr(submaker, 'srt'):
+                        subs_content = submaker.srt
+                    else:
+                        subs_content = "WEBVTT\n\n"
+                    vtt_path.write_text(subs_content, encoding="utf-8")
                 except Exception as e:
                     logger.debug(f"Edge-TTS subtitle generation failed: {e}")
                     vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")

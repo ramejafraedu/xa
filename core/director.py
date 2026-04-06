@@ -12,6 +12,7 @@ MODULE CONTRACT:
 from __future__ import annotations
 
 import json
+import time
 from enum import Enum
 from typing import Optional
 
@@ -27,10 +28,14 @@ from core.state import SceneBlueprint, StoryState
 
 console = Console()
 
+# Web checkpoints shared state
+WEB_CHECKPOINTS: dict[str, dict] = {}
+WEB_RESOLUTIONS: dict[str, dict] = {}
 
 class DirectorMode(str, Enum):
     INTERACTIVE = "interactive"
     AUTO = "auto"
+    WEB = "web"
 
 
 class Decision(str, Enum):
@@ -71,8 +76,9 @@ class Director:
             # re-generate with result.notes
     """
 
-    def __init__(self, mode: DirectorMode = DirectorMode.AUTO):
+    def __init__(self, mode: DirectorMode = DirectorMode.AUTO, job_id: str = "default"):
         self.mode = mode
+        self.job_id = job_id
         self._checkpoint_history: list[dict] = []
 
     # ----- Main checkpoint -----
@@ -103,6 +109,9 @@ class Director:
             self._record(stage, Decision.APPROVE)
             return CheckpointResult(Decision.APPROVE, content)
 
+        if self.mode == DirectorMode.WEB:
+            return self._web_checkpoint(stage, content, state, metadata)
+
         return self._interactive_checkpoint(stage, content, state, metadata)
 
     def checkpoint_scenes(
@@ -118,9 +127,61 @@ class Director:
             )
             return CheckpointResult(Decision.APPROVE, scenes_json)
 
+        scenes_json = json.dumps(
+            [s.model_dump() for s in scenes], ensure_ascii=False, indent=2
+        )
+
+        if self.mode == DirectorMode.WEB:
+            return self._web_checkpoint("scenes", scenes_json, state, None)
+
         return self._interactive_scenes(scenes, state)
 
     # ----- Interactive implementations -----
+
+    def _web_checkpoint(
+        self,
+        stage: str,
+        content: str,
+        state: Optional[StoryState],
+        metadata: Optional[dict],
+    ) -> CheckpointResult:
+        """Dashboard checkpoint - pushes to a dict and waits for the frontend."""
+        # Create payload
+        checkpoint_data = {
+            "job_id": self.job_id,
+            "stage": stage,
+            "content": content,
+            "topic": state.topic if state else "Unknown",
+            "metadata": metadata or {},
+            "timestamp": time.time()
+        }
+        
+        # Publish checkpoint
+        WEB_CHECKPOINTS[self.job_id] = checkpoint_data
+        WEB_RESOLUTIONS.pop(self.job_id, None)  # Clear previous resolution if any
+        
+        logger.info(f"⏸️ Pipeline paused at [{stage}] awaiting WEB approval for {self.job_id}")
+        
+        # Wait for resolution
+        while self.job_id not in WEB_RESOLUTIONS:
+            time.sleep(1)
+            
+        resolution = WEB_RESOLUTIONS.pop(self.job_id)
+        WEB_CHECKPOINTS.pop(self.job_id, None)  # Clear the checkpoint
+        
+        decision_str = resolution.get("decision", "approve")
+        notes = resolution.get("notes", "")
+        
+        decision_map = {
+            "approve": Decision.APPROVE,
+            "reject": Decision.REJECT,
+            "edit": Decision.EDIT
+        }
+        decision = decision_map.get(decision_str.lower(), Decision.APPROVE)
+        
+        self._record(stage, decision, notes)
+        logger.info(f"▶️ Pipeline resumed! WEB Decision: {decision.name}")
+        return CheckpointResult(decision, content, notes)
 
     def _interactive_checkpoint(
         self,
@@ -261,7 +322,7 @@ class Director:
 
         else:
             notes = Prompt.ask("¿Por qué rechazas?", default="Escenas no coherentes")
-            self._record("scenes", Decision.REJECT, scenes_json, notes)
+            self._record("scenes", Decision.REJECT, notes)
             return CheckpointResult(Decision.REJECT, scenes_json, notes)
 
     # ----- Utility -----

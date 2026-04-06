@@ -427,7 +427,9 @@ def _burn_subtitles(
 ) -> str:
     """Burn ASS subtitles into video. Returns error or empty."""
     output = temp_dir / f"video_sub_{timestamp}.mp4"
-    vf = f"ass={subs.as_posix()}"
+    # Windows absolute paths format like "C:/..." breaks ffmpeg filters due to the colon. Escape it.
+    escaped_subs_path = subs.as_posix().replace(":", r"\:")
+    vf = f"ass='{escaped_subs_path}'"
 
     cmd = [
         "ffmpeg", "-y", "-threads", "2",
@@ -472,10 +474,12 @@ def _generate_thumbnail(
         text_file = temp_dir / f"thumb_text_{timestamp}.txt"
         text_file.write_text(f"{gancho}\n{titulo}", encoding="utf-8")
 
+        # Escape colon in Windows path for the textfile parameter
+        escaped_txt_path = text_file.as_posix().replace(":", r"\:")
         vf = (
             "scale=1080:1920:force_original_aspect_ratio=decrease,"
             "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
-            f"drawtext=textfile={text_file.as_posix()}:"
+            f"drawtext=textfile='{escaped_txt_path}':"
             "fontcolor=white:fontsize=68:line_spacing=14:"
             "x=(w-text_w)/2:y=h*0.70:"
             "box=1:boxcolor=black@0.62:boxborderw=24"
