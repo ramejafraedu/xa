@@ -1,14 +1,23 @@
-"""Video Factory V14 — Main Entry Point.
+"""Video Factory V15 PRO — Director-Based Multi-Agent Video Production.
 
 Usage:
-    python video_factory.py --test              # Quick test (finanzas, 1 video)
-    python video_factory.py finanzas            # Run one niche now
-    python video_factory.py --all-now           # Run all 5 nichos immediately
-    python video_factory.py --schedule          # Start scheduler (24/7)
+    python video_factory.py --test              # Quick test V15 (finanzas, 1 video)
+    python video_factory.py --director finanzas # Interactive mode (approve each stage)
+    python video_factory.py --v15 finanzas      # V15 autonomous (multi-agent + coherence)
+    python video_factory.py finanzas            # V14 classic mode (backward compat)
+    python video_factory.py --all-now           # Run all 5 nichos (V15)
+    python video_factory.py --schedule          # Start scheduler (24/7, V14)
     python video_factory.py --dry-run finanzas  # Content gen + QA only, no render
     python video_factory.py --resume JOB_ID     # Resume a crashed job
     python video_factory.py --render-only JOB_ID # Re-render from existing assets
     python video_factory.py --publish-only JOB_ID # Re-publish an already-rendered video
+
+V15 UPGRADE:
+  - Multi-agent system: Research → Script → Scene → Assets → Editor
+  - StoryState: global narrative memory for coherence
+  - Director: human-in-the-loop checkpoints (--director mode)
+  - Feedback Loop: AI quality review with auto-regeneration
+  - V14 pipeline preserved as fallback
 
 MODULE CONTRACT:
   Entry point → orchestrates all pipeline modules → produces final video + manifest
@@ -51,7 +60,7 @@ from state_manager import StateManager
 console = Console()
 app = typer.Typer(
     name="video-factory",
-    help="🎬 Video Factory V14 — Autonomous Viral Video Generator",
+    help="🎬 Video Factory V15 PRO — Director-Based Multi-Agent Video Production",
     add_completion=False,
 )
 
@@ -785,20 +794,32 @@ def _print_summary(manifest: JobManifest):
 @app.command()
 def run(
     niche: str = typer.Argument(None, help="Niche: finanzas, historia, curiosidades, salud, recetas"),
-    test: bool = typer.Option(False, "--test", help="Quick test with finanzas"),
-    all_now: bool = typer.Option(False, "--all-now", help="Run all 5 nichos immediately"),
+    test: bool = typer.Option(False, "--test", help="Quick test with finanzas (V15)"),
+    all_now: bool = typer.Option(False, "--all-now", help="Run all 5 nichos immediately (V15)"),
     schedule: bool = typer.Option(False, "--schedule", help="Start 24/7 scheduler"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Content gen + QA only, no render"),
     resume: str = typer.Option("", "--resume", help="Resume a crashed job by JOB_ID"),
     render_only: str = typer.Option("", "--render-only", help="Re-render from existing assets by JOB_ID"),
     publish_only: str = typer.Option("", "--publish-only", help="Re-publish already-rendered video by JOB_ID"),
+    # ── V15 PRO flags ──
+    director: bool = typer.Option(False, "--director", help="🎬 V15 Interactive mode (approve each stage)"),
+    v15: bool = typer.Option(False, "--v15", help="🚀 V15 Autonomous mode (multi-agent + coherence)"),
+    v14: bool = typer.Option(False, "--v14", help="⚙️ Force V14 classic pipeline"),
 ):
-    """🎬 Video Factory V14 — Autonomous Viral Video Generator"""
+    """🎬 Video Factory V15 PRO — Director-Based Multi-Agent Video Production"""
     _setup_logging()
 
+    # Determine version & mode
+    use_v15 = director or v15 or test or all_now  # V15 is default for new modes
+    if v14:
+        use_v15 = False  # Explicit V14 override
+
+    version_label = "V15 PRO" if use_v15 else "V14"
+    mode_label = "Director (Interactive)" if director else "Autonomous" if use_v15 else "Classic"
+
     console.print(Panel(
-        "[bold magenta]🎬 Video Factory V14[/bold magenta]\n"
-        "[dim]Autonomous Viral Video Generator[/dim]",
+        f"[bold magenta]🎬 Video Factory {version_label}[/bold magenta]\n"
+        f"[dim]{mode_label} Mode[/dim]",
         border_style="magenta",
     ))
 
@@ -806,14 +827,13 @@ def run(
         console.print("[red]❌ Preflight checks failed.[/red]")
         raise typer.Exit(1)
 
-    # --resume: resume a crashed job
+    # --resume: resume a crashed job (V14 only for now)
     if resume:
         console.print(f"\n[cyan]🔄 Resuming job: {resume}[/cyan]\n")
         state = StateManager(settings.temp_dir)
         manifest = state.load(resume)
         if not manifest:
             console.print(f"[red]Job {resume} not found in temp/[/red]")
-            # List available
             jobs = state.list_resumable_jobs()
             if jobs:
                 table = Table(title="Resumable Jobs")
@@ -824,14 +844,12 @@ def run(
             raise typer.Exit(1)
         run_pipeline(manifest.nicho_slug, resume_job_id=resume)
 
-    # --render-only / --publish-only (simplified pass-through)
     elif render_only:
         console.print(f"\n[cyan]🎥 Render-only for job: {render_only}[/cyan]\n")
         run_pipeline("", resume_job_id=render_only)
 
     elif publish_only:
         console.print(f"\n[cyan]📤 Publish-only for job: {publish_only}[/cyan]\n")
-        # Minimal — just send telegram notification for existing job
         state = StateManager(settings.temp_dir)
         manifest = state.load(publish_only)
         if manifest and manifest.video_path:
@@ -842,31 +860,79 @@ def run(
             console.print("[red]Job not found or no video path[/red]")
 
     elif test:
-        console.print("\n[yellow]🧪 TEST MODE — Running 1 finanzas video[/yellow]\n")
-        run_pipeline("finanzas")
+        if use_v15:
+            console.print("\n[yellow]🧪 TEST MODE — V15 PRO (finanzas)[/yellow]\n")
+            from core.pipeline_v15 import run_pipeline_v15
+            from core.director import DirectorMode
+            mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
+            run_pipeline_v15("finanzas", mode=mode)
+        else:
+            console.print("\n[yellow]🧪 TEST MODE — V14 Classic (finanzas)[/yellow]\n")
+            run_pipeline("finanzas")
 
     elif dry_run and niche:
-        console.print(f"\n[yellow]🏜️ DRY RUN — {niche} (content only)[/yellow]\n")
-        run_pipeline(niche, dry_run=True)
+        if use_v15:
+            console.print(f"\n[yellow]🏜️ DRY RUN V15 — {niche}[/yellow]\n")
+            from core.pipeline_v15 import run_pipeline_v15
+            from core.director import DirectorMode
+            mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
+            run_pipeline_v15(niche, mode=mode, dry_run=True)
+        else:
+            console.print(f"\n[yellow]🏜️ DRY RUN V14 — {niche}[/yellow]\n")
+            run_pipeline(niche, dry_run=True)
 
     elif all_now:
-        console.print("\n[cyan]🚀 Running all 5 nichos...[/cyan]\n")
+        console.print(f"\n[cyan]🚀 Running all 5 nichos ({version_label})...[/cyan]\n")
         for slug in NICHOS:
             console.print(f"\n{'='*60}")
             console.print(f"[bold]{slug.upper()}[/bold]")
             console.print(f"{'='*60}")
-            run_pipeline(slug)
+            if use_v15:
+                from core.pipeline_v15 import run_pipeline_v15
+                from core.director import DirectorMode
+                run_pipeline_v15(slug, mode=DirectorMode.AUTO)
+            else:
+                run_pipeline(slug)
 
     elif schedule:
         from scheduler import start_scheduler
         start_scheduler()
 
-    elif niche:
+    elif director and niche:
+        # V15 Interactive mode
         if niche not in NICHOS:
             console.print(f"[red]❌ Unknown niche: {niche}[/red]")
             console.print(f"Available: {', '.join(NICHOS.keys())}")
             raise typer.Exit(1)
-        run_pipeline(niche)
+        console.print(f"\n[cyan]🎬 V15 DIRECTOR MODE — {niche}[/cyan]")
+        console.print("[dim]You'll approve/edit at each stage[/dim]\n")
+        from core.pipeline_v15 import run_pipeline_v15
+        from core.director import DirectorMode
+        run_pipeline_v15(niche, mode=DirectorMode.INTERACTIVE)
+
+    elif v15 and niche:
+        # V15 Autonomous mode
+        if niche not in NICHOS:
+            console.print(f"[red]❌ Unknown niche: {niche}[/red]")
+            console.print(f"Available: {', '.join(NICHOS.keys())}")
+            raise typer.Exit(1)
+        console.print(f"\n[cyan]🚀 V15 AUTONOMOUS — {niche}[/cyan]\n")
+        from core.pipeline_v15 import run_pipeline_v15
+        from core.director import DirectorMode
+        run_pipeline_v15(niche, mode=DirectorMode.AUTO)
+
+    elif niche:
+        # Default: V14 classic (backward compatible)
+        if niche not in NICHOS:
+            console.print(f"[red]❌ Unknown niche: {niche}[/red]")
+            console.print(f"Available: {', '.join(NICHOS.keys())}")
+            raise typer.Exit(1)
+        if use_v15:
+            from core.pipeline_v15 import run_pipeline_v15
+            from core.director import DirectorMode
+            run_pipeline_v15(niche, mode=DirectorMode.AUTO)
+        else:
+            run_pipeline(niche)
 
     else:
         console.print("\n[cyan]📋 Starting scheduler (24/7 mode)...[/cyan]")
