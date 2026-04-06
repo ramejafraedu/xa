@@ -72,12 +72,15 @@ def generate_images(
 
         logger.warning(f"Image {idx}/4 FAILED")
 
-    # Copy image 1 as legacy filename
+    # Copy image 1 as legacy filename (safe — fixes WinError 2)
     if results:
         legacy = temp_dir / f"imagen_{timestamp}.jpg"
-        if not legacy.exists():
-            import shutil
-            shutil.copy2(results[0], legacy)
+        if not legacy.exists() and results[0].exists():
+            try:
+                import shutil
+                shutil.copy2(results[0], legacy)
+            except (FileNotFoundError, OSError) as e:
+                logger.debug(f"Legacy image copy skipped: {e}")
 
     logger.info(f"Images generated: {len(results)}/{count}")
     return results
