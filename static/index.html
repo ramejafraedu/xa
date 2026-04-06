@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Factory V14 — Dashboard</title>
+    <meta name="description" content="Autonomous Viral Video Generator Dashboard">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        /* ===== DESIGN SYSTEM ===== */
+        :root {
+            --bg-primary: #0a0b10;
+            --bg-secondary: #12131a;
+            --bg-card: #181920;
+            --bg-elevated: #1e1f28;
+            --bg-glass: rgba(24, 25, 32, 0.75);
+            --border: rgba(255,255,255,0.06);
+            --border-active: rgba(255,255,255,0.12);
+            --text-primary: #e8eaed;
+            --text-secondary: #8b8fa3;
+            --text-muted: #5a5e72;
+            --accent-purple: #8b5cf6;
+            --accent-cyan: #06b6d4;
+            --accent-magenta: #ec4899;
+            --accent-green: #10b981;
+            --accent-orange: #f59e0b;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --gradient-hero: linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #06b6d4 100%);
+            --gradient-card: linear-gradient(145deg, rgba(139,92,246,0.08) 0%, rgba(236,72,153,0.04) 100%);
+            --shadow-lg: 0 20px 60px rgba(0,0,0,0.4);
+            --shadow-glow: 0 0 30px rgba(139,92,246,0.15);
+            --radius: 14px;
+            --radius-sm: 8px;
+            --transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ===== LAYOUT ===== */
+        .app {
+            display: grid;
+            grid-template-columns: 68px 1fr;
+            min-height: 100vh;
+        }
+
+        /* ===== SIDEBAR ===== */
+        .sidebar {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0;
+            gap: 8px;
+            position: fixed;
+            width: 68px;
+            height: 100vh;
+            z-index: 100;
+        }
+
+        .sidebar-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--gradient-hero);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow-glow);
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        .sidebar-logo:hover { transform: scale(1.08); }
+
+        .nav-btn {
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            border-radius: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: var(--transition);
+            position: relative;
+        }
+        .nav-btn:hover { background: var(--bg-elevated); color: var(--text-primary); }
+        .nav-btn.active { background: rgba(139,92,246,0.15); color: var(--accent-purple); }
+        .nav-btn.active::before {
+            content: '';
+            position: absolute;
+            left: -12px;
+            width: 3px;
+            height: 20px;
+            background: var(--accent-purple);
+            border-radius: 0 3px 3px 0;
+        }
+
+        .sidebar-spacer { flex: 1; }
+
+        /* ===== MAIN CONTENT ===== */
+        .main {
+            margin-left: 68px;
+            padding: 24px 32px;
+            max-width: 1400px;
+        }
+
+        /* ===== HEADER ===== */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 28px;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: var(--gradient-hero);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        /* ===== BUTTONS ===== */
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: var(--accent-purple);
+            color: white;
+            box-shadow: 0 4px 16px rgba(139,92,246,0.3);
+        }
+        .btn-primary:hover { background: #7c3aed; transform: translateY(-1px); box-shadow: 0 6px 24px rgba(139,92,246,0.4); }
+
+        .btn-secondary {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover { border-color: var(--border-active); background: var(--bg-card); }
+
+        .btn-danger { background: rgba(239,68,68,0.15); color: var(--accent-red); }
+        .btn-danger:hover { background: rgba(239,68,68,0.25); }
+
+        .btn-sm { padding: 6px 14px; font-size: 12px; }
+
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+
+        /* ===== STATUS BAR ===== */
+        .status-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 28px;
+        }
+
+        .status-chip {
+            padding: 8px 16px;
+            border-radius: 100px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: var(--transition);
+        }
+
+        .status-chip .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .dot-green { background: var(--accent-green); box-shadow: 0 0 8px rgba(16,185,129,0.5); }
+        .dot-red { background: var(--accent-red); box-shadow: 0 0 8px rgba(239,68,68,0.5); }
+        .dot-yellow { background: var(--accent-orange); box-shadow: 0 0 8px rgba(245,158,11,0.5); }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        /* ===== SECTION HEADERS ===== */
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        /* ===== NICHE CARDS ===== */
+        .nicho-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .nicho-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            transition: var(--transition);
+            cursor: default;
+        }
+        .nicho-card:hover {
+            border-color: var(--border-active);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .nicho-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            border-radius: var(--radius) var(--radius) 0 0;
+        }
+
+        .nicho-card[data-nicho="finanzas"]::before { background: var(--accent-purple); }
+        .nicho-card[data-nicho="historia"]::before { background: var(--accent-red); }
+        .nicho-card[data-nicho="curiosidades"]::before { background: var(--accent-cyan); }
+        .nicho-card[data-nicho="salud"]::before { background: var(--accent-green); }
+        .nicho-card[data-nicho="recetas"]::before { background: var(--accent-orange); }
+
+        .nicho-name {
+            font-size: 15px;
+            font-weight: 600;
+            text-transform: capitalize;
+            margin-bottom: 4px;
+        }
+
+        .nicho-desc {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 14px;
+            line-height: 1.4;
+        }
+
+        .nicho-stats {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 14px;
+        }
+
+        .nicho-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .nicho-stat-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .nicho-stat-value {
+            font-size: 18px;
+            font-weight: 700;
+            background: var(--gradient-hero);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .nicho-schedule {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 14px;
+        }
+
+        .nicho-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .nicho-badge {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            padding: 3px 10px;
+            border-radius: 100px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-running {
+            background: rgba(139,92,246,0.2);
+            color: var(--accent-purple);
+            animation: pulse 1.5s infinite;
+        }
+
+        .badge-idle {
+            background: rgba(139,92,246,0.08);
+            color: var(--text-muted);
+        }
+
+        /* ===== JOBS TABLE ===== */
+        .jobs-section {
+            margin-bottom: 28px;
+        }
+
+        .jobs-table-wrap {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .jobs-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .jobs-table th {
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-elevated);
+        }
+
+        .jobs-table td {
+            padding: 12px 16px;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        .jobs-table tr:last-child td { border-bottom: none; }
+        .jobs-table tr:hover td { background: rgba(139,92,246,0.03); }
+
+        .status-badge {
+            padding: 3px 10px;
+            border-radius: 100px;
+            font-size: 11px;
+            font-weight: 600;
+            display: inline-block;
+        }
+
+        .status-success { background: rgba(16,185,129,0.15); color: var(--accent-green); }
+        .status-error { background: rgba(239,68,68,0.15); color: var(--accent-red); }
+        .status-review { background: rgba(245,158,11,0.15); color: var(--accent-orange); }
+        .status-running { background: rgba(139,92,246,0.15); color: var(--accent-purple); }
+        .status-draft { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
+
+        .score-bar {
+            width: 60px;
+            height: 6px;
+            background: var(--bg-elevated);
+            border-radius: 3px;
+            overflow: hidden;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 6px;
+        }
+
+        .score-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        /* ===== LOG CONSOLE ===== */
+        .log-section {
+            margin-bottom: 28px;
+        }
+
+        .log-console {
+            background: #0d0e12;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            height: 280px;
+            overflow-y: auto;
+            padding: 14px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+
+        .log-line {
+            display: flex;
+            gap: 10px;
+            opacity: 0;
+            animation: fadeIn 0.2s ease forwards;
+        }
+
+        @keyframes fadeIn { to { opacity: 1; } }
+
+        .log-time { color: var(--text-muted); min-width: 65px; }
+        .log-level { min-width: 55px; font-weight: 600; }
+        .log-level-INFO { color: var(--accent-cyan); }
+        .log-level-WARNING { color: var(--accent-orange); }
+        .log-level-ERROR { color: var(--accent-red); }
+        .log-level-DEBUG { color: var(--text-muted); }
+        .log-level-SUCCESS { color: var(--accent-green); }
+        .log-msg { color: var(--text-secondary); word-break: break-word; }
+
+        /* ===== VIDEOS GRID ===== */
+        .videos-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .video-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 14px;
+            transition: var(--transition);
+        }
+        .video-card:hover { border-color: var(--border-active); }
+
+        .video-name {
+            font-size: 12px;
+            font-weight: 500;
+            word-break: break-word;
+            margin-bottom: 6px;
+        }
+
+        .video-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* ===== EMPTY STATE ===== */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+
+        .empty-state-icon { font-size: 40px; margin-bottom: 12px; }
+        .empty-state-text { font-size: 14px; }
+
+        /* ===== TOAST ===== */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .toast {
+            padding: 12px 20px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            animation: slideIn 0.3s ease, fadeOut 0.3s ease 3.5s forwards;
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+        }
+
+        .toast-success { background: rgba(16,185,129,0.15); color: var(--accent-green); }
+        .toast-error { background: rgba(239,68,68,0.15); color: var(--accent-red); }
+        .toast-info { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
+
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: none; opacity: 1; } }
+        @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+
+        /* ===== SCROLLBAR ===== */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        /* ===== SECTIONS ===== */
+        .page { display: none; }
+        .page.active { display: block; }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 768px) {
+            .app { grid-template-columns: 1fr; }
+            .sidebar { display: none; }
+            .main { margin-left: 0; padding: 16px; }
+            .nicho-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- SIDEBAR -->
+        <nav class="sidebar">
+            <div class="sidebar-logo" title="Video Factory V14">🎬</div>
+            <button class="nav-btn active" data-page="dashboard" title="Dashboard">📊</button>
+            <button class="nav-btn" data-page="jobs" title="Job History">📋</button>
+            <button class="nav-btn" data-page="videos" title="Videos">🎥</button>
+            <button class="nav-btn" data-page="logs" title="Logs">📝</button>
+            <div class="sidebar-spacer"></div>
+            <button class="nav-btn" id="btn-refresh" title="Refresh">🔄</button>
+        </nav>
+
+        <!-- MAIN CONTENT -->
+        <div class="main">
+            <!-- HEADER -->
+            <header class="header">
+                <div class="header-title">
+                    <div>
+                        <h1>Video Factory V14</h1>
+                        <span class="header-subtitle">Autonomous Viral Video Generator</span>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="runAll()">🚀 Run All</button>
+                    <button class="btn btn-primary btn-sm" onclick="refreshAll()">↻ Refresh</button>
+                </div>
+            </header>
+
+            <!-- STATUS BAR -->
+            <div class="status-bar" id="status-bar">
+                <div class="status-chip"><span class="dot" id="dot-ffmpeg"></span> FFmpeg: <span id="status-ffmpeg">checking...</span></div>
+                <div class="status-chip"><span class="dot" id="dot-disk"></span> Disk: <span id="status-disk">...</span></div>
+                <div class="status-chip"><span class="dot" id="dot-keys"></span> API Keys: <span id="status-keys">...</span></div>
+                <div class="status-chip">🕐 <span id="status-time"></span></div>
+            </div>
+
+            <!-- PAGE: DASHBOARD -->
+            <div class="page active" id="page-dashboard">
+                <div class="section-header">
+                    <span class="section-title">⚡ Nichos</span>
+                </div>
+                <div class="nicho-grid" id="nicho-grid"></div>
+
+                <div class="section-header">
+                    <span class="section-title">📋 Recent Jobs</span>
+                    <button class="btn btn-secondary btn-sm" data-page="jobs">View All →</button>
+                </div>
+                <div class="jobs-table-wrap">
+                    <table class="jobs-table" id="jobs-table-mini">
+                        <thead>
+                            <tr>
+                                <th>Nicho</th>
+                                <th>Titulo</th>
+                                <th>Status</th>
+                                <th>Quality</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobs-body-mini"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- PAGE: JOBS -->
+            <div class="page" id="page-jobs">
+                <div class="section-header">
+                    <span class="section-title">📋 All Jobs</span>
+                </div>
+                <div class="jobs-table-wrap">
+                    <table class="jobs-table">
+                        <thead>
+                            <tr>
+                                <th>Job ID</th>
+                                <th>Nicho</th>
+                                <th>Titulo</th>
+                                <th>Status</th>
+                                <th>Quality</th>
+                                <th>Viral</th>
+                                <th>Duration</th>
+                                <th>Healing</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobs-body-full"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- PAGE: VIDEOS -->
+            <div class="page" id="page-videos">
+                <div class="section-header">
+                    <span class="section-title">🎥 Generated Videos</span>
+                </div>
+                <div class="videos-grid" id="videos-grid"></div>
+            </div>
+
+            <!-- PAGE: LOGS -->
+            <div class="page" id="page-logs">
+                <div class="section-header">
+                    <span class="section-title">📝 Real-time Logs</span>
+                    <button class="btn btn-secondary btn-sm" onclick="clearLogs()">Clear</button>
+                </div>
+                <div class="log-console" id="log-console"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+        // ===== STATE =====
+        const API = '';
+        let logSource = null;
+
+        // ===== NAVIGATION =====
+        document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                document.getElementById('page-' + btn.dataset.page).classList.add('active');
+            });
+        });
+
+        document.getElementById('btn-refresh').addEventListener('click', refreshAll);
+
+        // ===== API CALLS =====
+        async function fetchStatus() {
+            try {
+                const res = await fetch(API + '/api/status');
+                const data = await res.json();
+
+                const ffmpeg = document.getElementById('dot-ffmpeg');
+                const disk = document.getElementById('dot-disk');
+                const keys = document.getElementById('dot-keys');
+
+                ffmpeg.className = 'dot ' + (data.ffmpeg ? 'dot-green' : 'dot-red');
+                document.getElementById('status-ffmpeg').textContent = data.ffmpeg ? '✅ OK' : '❌ Missing';
+
+                disk.className = 'dot ' + (data.disk_ok ? 'dot-green' : 'dot-red');
+                document.getElementById('status-disk').textContent = data.disk_free_gb + ' GB free';
+
+                keys.className = 'dot ' + (data.missing_keys.length === 0 ? 'dot-green' : 'dot-yellow');
+                document.getElementById('status-keys').textContent = data.missing_keys.length === 0 ? '✅ All set' : data.missing_keys.length + ' missing';
+
+                document.getElementById('status-time').textContent = data.server_time;
+            } catch (e) {
+                console.error('Status fetch failed:', e);
+            }
+        }
+
+        async function fetchNichos() {
+            try {
+                const res = await fetch(API + '/api/nichos');
+                const nichos = await res.json();
+                const grid = document.getElementById('nicho-grid');
+                grid.innerHTML = '';
+
+                const colors = {
+                    finanzas: '#8b5cf6', historia: '#ef4444',
+                    curiosidades: '#06b6d4', salud: '#10b981', recetas: '#f59e0b'
+                };
+                const icons = {
+                    finanzas: '💰', historia: '📜',
+                    curiosidades: '🧠', salud: '🏥', recetas: '🍳'
+                };
+
+                nichos.forEach(n => {
+                    const card = document.createElement('div');
+                    card.className = 'nicho-card';
+                    card.dataset.nicho = n.slug;
+                    card.innerHTML = `
+                        <span class="nicho-badge ${n.is_running ? 'badge-running' : 'badge-idle'}">
+                            ${n.is_running ? '▶ Running' : '● Idle'}
+                        </span>
+                        <div class="nicho-name">${icons[n.slug] || '📁'} ${n.slug}</div>
+                        <div class="nicho-desc">${n.nombre}</div>
+                        <div class="nicho-stats">
+                            <div class="nicho-stat">
+                                <span class="nicho-stat-label">Clips</span>
+                                <span class="nicho-stat-value">${n.num_clips}</span>
+                            </div>
+                            <div class="nicho-stat">
+                                <span class="nicho-stat-label">Voice</span>
+                                <span class="nicho-stat-value" style="font-size:13px">${n.voz}</span>
+                            </div>
+                        </div>
+                        <div class="nicho-schedule">⏰ Schedule: ${n.horas.map(h => h.toString().padStart(2,'0') + ':00').join(', ')}</div>
+                        <div class="nicho-actions">
+                            <button class="btn btn-primary btn-sm" onclick="runNiche('${n.slug}')" ${n.is_running ? 'disabled' : ''}>
+                                ▶ Run
+                            </button>
+                            <button class="btn btn-secondary btn-sm" onclick="runNiche('${n.slug}', true)">
+                                🏜️ Dry Run
+                            </button>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+            } catch (e) {
+                console.error('Nichos fetch failed:', e);
+            }
+        }
+
+        async function fetchJobs() {
+            try {
+                const res = await fetch(API + '/api/jobs');
+                const jobs = await res.json();
+
+                // Mini table (dashboard)
+                const miniBody = document.getElementById('jobs-body-mini');
+                miniBody.innerHTML = '';
+                jobs.slice(0, 5).forEach(j => {
+                    miniBody.innerHTML += `<tr>
+                        <td style="text-transform:capitalize;font-weight:500">${j.nicho}</td>
+                        <td>${j.titulo || '—'}</td>
+                        <td>${statusBadge(j.status)}</td>
+                        <td>${scoreCell(j.quality_score)}</td>
+                        <td style="font-size:11px">${formatTime(j.timestamp)}</td>
+                    </tr>`;
+                });
+
+                if (jobs.length === 0) {
+                    miniBody.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-text">No jobs yet. Run a niche to get started.</div></td></tr>';
+                }
+
+                // Full table
+                const fullBody = document.getElementById('jobs-body-full');
+                fullBody.innerHTML = '';
+                jobs.forEach(j => {
+                    fullBody.innerHTML += `<tr>
+                        <td style="font-size:11px;font-family:monospace">${(j.job_id || '').substring(0,30)}</td>
+                        <td style="text-transform:capitalize">${j.nicho}</td>
+                        <td>${j.titulo || '—'}</td>
+                        <td>${statusBadge(j.status)}</td>
+                        <td>${scoreCell(j.quality_score)}</td>
+                        <td>${j.viral_score || '—'}</td>
+                        <td>${j.duration ? j.duration.toFixed(1) + 's' : '—'}</td>
+                        <td>${j.healing_count || 0}</td>
+                        <td>${j.status && !['success','error'].includes(j.status) ? `<button class="btn btn-sm btn-secondary" onclick="resumeJob('${j.job_id}')">Resume</button>` : ''}</td>
+                    </tr>`;
+                });
+            } catch (e) {
+                console.error('Jobs fetch failed:', e);
+            }
+        }
+
+        async function fetchVideos() {
+            try {
+                const res = await fetch(API + '/api/videos');
+                const videos = await res.json();
+                const grid = document.getElementById('videos-grid');
+                grid.innerHTML = '';
+
+                if (videos.length === 0) {
+                    grid.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🎬</div><div class="empty-state-text">No videos generated yet.</div></div>';
+                    return;
+                }
+
+                videos.forEach(v => {
+                    const card = document.createElement('div');
+                    card.className = 'video-card';
+                    card.innerHTML = `
+                        <div class="video-name">🎬 ${v.name}</div>
+                        <div class="video-meta">${v.size_mb} MB • ${v.created} • ${v.dir}</div>
+                    `;
+                    grid.appendChild(card);
+                });
+            } catch (e) {
+                console.error('Videos fetch failed:', e);
+            }
+        }
+
+        // ===== ACTIONS =====
+        async function runNiche(slug, dryRun = false) {
+            try {
+                const url = API + '/api/run/' + slug + (dryRun ? '?dry_run=true' : '');
+                const res = await fetch(url, { method: 'POST' });
+                const data = await res.json();
+                if (data.error) {
+                    toast(data.error, 'error');
+                } else {
+                    toast(`${dryRun ? '🏜️ Dry run' : '▶ Pipeline'} started for ${slug}`, 'success');
+                    setTimeout(fetchNichos, 1000);
+                }
+            } catch (e) {
+                toast('Failed to start: ' + e.message, 'error');
+            }
+        }
+
+        async function runAll() {
+            try {
+                await fetch(API + '/api/run-all', { method: 'POST' });
+                toast('🚀 All nichos queued', 'success');
+                setTimeout(fetchNichos, 1000);
+            } catch (e) {
+                toast('Failed: ' + e.message, 'error');
+            }
+        }
+
+        async function resumeJob(jobId) {
+            try {
+                await fetch(API + '/api/resume/' + jobId, { method: 'POST' });
+                toast('🔄 Resuming ' + jobId.substring(0, 25), 'info');
+            } catch (e) {
+                toast('Resume failed: ' + e.message, 'error');
+            }
+        }
+
+        // ===== LOG STREAMING =====
+        function connectLogs() {
+            if (logSource) logSource.close();
+            logSource = new EventSource(API + '/api/logs');
+
+            logSource.addEventListener('log', (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    addLogLine(data);
+                } catch (err) {}
+            });
+
+            logSource.onerror = () => {
+                setTimeout(connectLogs, 3000);
+            };
+        }
+
+        function addLogLine(entry) {
+            const console_el = document.getElementById('log-console');
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            line.innerHTML = `
+                <span class="log-time">${entry.time}</span>
+                <span class="log-level log-level-${entry.level}">${entry.level}</span>
+                <span class="log-msg">${escapeHtml(entry.message)}</span>
+            `;
+            console_el.appendChild(line);
+
+            // Auto-scroll
+            if (console_el.scrollHeight - console_el.scrollTop < 400) {
+                console_el.scrollTop = console_el.scrollHeight;
+            }
+
+            // Limit lines
+            while (console_el.children.length > 200) {
+                console_el.removeChild(console_el.firstChild);
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('log-console').innerHTML = '';
+        }
+
+        // ===== HELPERS =====
+        function statusBadge(status) {
+            const map = {
+                success: 'status-success', error: 'status-error',
+                manual_review: 'status-review', draft: 'status-draft',
+            };
+            const cls = map[status] || 'status-running';
+            const label = (status || 'pending').replace(/_/g, ' ').replace('completed ', '');
+            return `<span class="status-badge ${cls}">${label}</span>`;
+        }
+
+        function scoreCell(score) {
+            if (!score) return '—';
+            const pct = Math.min(100, score * 10);
+            const color = score >= 8 ? 'var(--accent-green)' : score >= 7 ? 'var(--accent-orange)' : 'var(--accent-red)';
+            return `${score} <span class="score-bar"><span class="score-bar-fill" style="width:${pct}%;background:${color}"></span></span>`;
+        }
+
+        function formatTime(ts) {
+            if (!ts) return '—';
+            const d = new Date(ts);
+            return d.toLocaleString('es-MX', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' });
+        }
+
+        function escapeHtml(s) {
+            const div = document.createElement('div');
+            div.textContent = s;
+            return div.innerHTML;
+        }
+
+        function toast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const el = document.createElement('div');
+            el.className = 'toast toast-' + type;
+            el.textContent = message;
+            container.appendChild(el);
+            setTimeout(() => el.remove(), 4000);
+        }
+
+        async function refreshAll() {
+            await Promise.all([fetchStatus(), fetchNichos(), fetchJobs(), fetchVideos()]);
+        }
+
+        // ===== INIT =====
+        refreshAll();
+        connectLogs();
+        setInterval(fetchStatus, 15000);
+        setInterval(fetchNichos, 10000);
+        setInterval(fetchJobs, 30000);
+    </script>
+</body>
+</html>

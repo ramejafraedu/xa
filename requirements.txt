@@ -1,0 +1,46 @@
+# Video Factory V14 — Dependencies
+# Install: pip install -r requirements.txt
+
+# Core
+pydantic>=2.10,<3
+pydantic-settings>=2.7,<3
+python-dotenv>=1.0,<2
+loguru>=0.7,<1
+typer>=0.15,<1
+rich>=13.9,<14
+
+# HTTP (single library, no mixing)
+httpx>=0.28,<1
+
+# TTS
+edge-tts>=6.1,<7
+
+# Scheduler
+apscheduler>=3.10,<4
+
+# Dashboard
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+sse-starlette>=2.2,<3
+
+# Video/Audio (optional, for async file ops)
+aiofiles>=23.2,<24
+
+# Gemini API (Veo 3.1, Lyria 3, Imagen, TTS)
+google-genai>=1.14
+
+# WhisperX — word-level subtitles (optional, heavy install)
+# pip install whisperx  (requires torch, ~2GB)
+# Uncomment only if you want precise subtitle timing:
+# whisperx>=3.1
+
+# Trends (optional, may fail due to Google blocks)
+# pytrends>=4.9,<5
+
+# Google Drive/Sheets (optional — enable when ready)
+# google-api-python-client>=2.160
+# google-auth>=2.37
+# google-auth-oauthlib>=1.2
+
+# Supabase (optional — enable when ready)
+# supabase>=2.8
