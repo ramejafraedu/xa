@@ -43,6 +43,13 @@ from config import NICHOS, app_config, settings
 from core.cost_governance import CostGovernance
 from core.director import CheckpointResult, Director, DirectorMode
 from core.feedback_loop import review_content, should_iterate
+from core.openmontage_free import (
+    apply_auto_reframe,
+    apply_color_grade,
+    apply_playbook_to_story,
+    apply_video_trim,
+    generate_vtt_from_audio,
+)
 from core.reference_context import load_reference_context
 from core.state import StoryState, get_style_for_platform
 from models.content import (
@@ -111,12 +118,18 @@ def run_pipeline_v15(
     )
     manifest.execution_mode = settings.execution_mode_label()
     manifest.feature_flags = settings.active_feature_flags()
+    manifest.pipeline_type = "v15"
+    manifest.checkpoint_policy = "guided" if mode == DirectorMode.INTERACTIVE else "auto"
+    manifest.human_approval_required = mode == DirectorMode.INTERACTIVE
+    manifest.human_approved = mode != DirectorMode.INTERACTIVE
     manifest.budget_daily_usd = float(settings.daily_budget_usd)
+    manifest.budget_monthly_usd = float(settings.monthly_budget_usd)
     manifest.reference_url = (reference_url or "").strip()
     if manifest.reference_url:
         manifest.reference_notes = "reference_received"
 
     cost_governance = CostGovernance(manifest)
+    manifest.month_to_date_spend_usd = cost_governance.get_current_month_spend_usd()
 
     # Build initial StoryState
     story = StoryState(
@@ -137,6 +150,166 @@ def run_pipeline_v15(
 
     settings.ensure_dirs()
     cleanup_stale_temp()
+
+    # Lightweight observability trail persisted in the manifest.
+    stage_clock: dict[str, float] = {}
+
+    def _stage_start(stage_key: str, label: str = "", detail: str = "") -> None:
+        stage_clock[stage_key] = time.time()
+        manifest.stage_trace.append({
+            "stage": stage_key,
+            "label": label or stage_key,
+            "state": "running",
+            "started_at": int(time.time() * 1000),
+            "ended_at": 0,
+            "elapsed_seconds": 0.0,
+            "detail": detail,
+            "metadata": {},
+        })
+
+    def _stage_end(
+        stage_key: str,
+        state: str = "completed",
+        detail: str = "",
+        metadata: Optional[dict] = None,
+    ) -> None:
+        started = stage_clock.pop(stage_key, None)
+        elapsed = round(max(0.0, time.time() - started), 2) if started else 0.0
+        if elapsed > 0 and stage_key not in manifest.timings:
+            manifest.timings[stage_key] = elapsed
+
+        updated_running_entry = False
+        for entry in reversed(manifest.stage_trace):
+            if entry.get("stage") == stage_key and entry.get("state") == "running":
+                entry["state"] = state
+                entry["ended_at"] = int(time.time() * 1000)
+                entry["elapsed_seconds"] = elapsed
+                if detail:
+                    entry["detail"] = detail
+                if metadata:
+                    entry["metadata"] = metadata
+                updated_running_entry = True
+                break
+
+        if not updated_running_entry:
+            manifest.stage_trace.append({
+                "stage": stage_key,
+                "label": stage_key,
+                "state": state,
+                "started_at": 0,
+                "ended_at": int(time.time() * 1000),
+                "elapsed_seconds": elapsed,
+                "detail": detail,
+                "metadata": metadata or {},
+            })
+
+        checkpoint_status = "completed" if state == "completed" else "error" if state == "error" else state
+        checkpoint_artifacts = _checkpoint_artifacts(stage_key)
+        try:
+            state_mgr.write_stage_checkpoint(
+                manifest,
+                stage=stage_key,
+                status=checkpoint_status,
+                artifacts=checkpoint_artifacts,
+                metadata=metadata or {},
+                elapsed=elapsed,
+            )
+        except Exception as exc:
+            logger.debug(f"Checkpoint dual-write skipped for {stage_key}: {exc}")
+
+    def _add_decision(stage: str, label: str, detail: str = "", severity: str = "info", metadata: Optional[dict] = None) -> None:
+        manifest.decision_trail.append({
+            "stage": stage,
+            "label": label,
+            "detail": detail,
+            "severity": severity,
+            "timestamp": int(time.time() * 1000),
+            "metadata": metadata or {},
+        })
+
+    def _checkpoint_artifacts(stage_key: str) -> dict:
+        artifacts: dict[str, dict] = {}
+        if stage_key == "content_gen":
+            artifacts["script"] = {
+                "title": manifest.titulo,
+                "hook": manifest.gancho,
+                "cta": manifest.cta,
+                "reference_url": manifest.reference_url,
+                "style_playbook": manifest.style_playbook,
+            }
+        elif stage_key == "quality_gate":
+            artifacts["quality_report"] = {
+                "quality_score": manifest.quality_score,
+                "hook_score": manifest.hook_score,
+                "viral_score": manifest.viral_score,
+            }
+        elif stage_key == "media":
+            artifacts["asset_manifest"] = {
+                "clip_count": len(manifest.clip_paths),
+                "image_count": len(manifest.image_paths),
+                "sfx_count": len(manifest.sfx_paths),
+            }
+        elif stage_key == "tts":
+            artifacts["audio"] = {
+                "audio_path": manifest.audio_path,
+                "tts_engine": manifest.tts_engine_used,
+                "duration_seconds": manifest.duration_seconds,
+            }
+        elif stage_key == "subtitles":
+            artifacts["subtitles"] = {
+                "subs_path": manifest.subs_path,
+            }
+        elif stage_key == "combine":
+            artifacts["edit_decisions"] = {
+                "timeline_json_path": manifest.timeline_json_path,
+            }
+        elif stage_key == "render":
+            artifacts["render_report"] = {
+                "video_path": manifest.video_path,
+                "thumbnail_path": manifest.thumbnail_path,
+                "backend": manifest.render_backend,
+            }
+        elif stage_key == "qa_post":
+            artifacts["qa_report"] = {
+                "passed": manifest.qa_passed,
+                "issues": manifest.qa_issues,
+                "report": manifest.post_render_report,
+            }
+        elif stage_key == "publish":
+            artifacts["publish_log"] = {
+                "status": manifest.status,
+                "drive_link": manifest.drive_link,
+            }
+        return artifacts
+
+    if settings.enable_openmontage_free_tools and settings.openmontage_enable_styles:
+        requested_playbook = settings.openmontage_default_playbook or "clean-professional"
+        playbook_name, playbook_issues = apply_playbook_to_story(story, requested_playbook)
+        if playbook_name:
+            manifest.style_playbook = playbook_name
+            _add_decision("style", f"Playbook applied: {playbook_name}")
+            if playbook_issues:
+                _add_decision(
+                    "style",
+                    "Playbook validation warnings",
+                    "; ".join(playbook_issues[:3]),
+                    severity="warning",
+                    metadata={"issue_count": len(playbook_issues)},
+                )
+        else:
+            _add_decision(
+                "style",
+                "Playbook unavailable",
+                requested_playbook,
+                severity="warning",
+            )
+
+    if settings.v15_strict_free_media_tools:
+        _add_decision(
+            "policy",
+            "Strict-free media/tools policy enabled",
+            "Only free providers are eligible for media/render tool stages",
+        )
 
     # Agents
     research_agent = ResearchAgent()
@@ -200,6 +373,7 @@ def run_pipeline_v15(
                     manifest.reference_notes = "reference_context_unavailable"
 
             # ── Stage 1: Research ────────────────────────────────────
+            _stage_start("content_gen", "Content Generation", "Research + Script + Scenes + Review")
             t = time.time()
             progress.update(main_task, description="[cyan]🔍 Research Agent...")
             research_agent.run(nicho, story)
@@ -214,7 +388,14 @@ def run_pipeline_v15(
                 f"🔗 Reference: {story.reference_url or 'N/A'}"
             )
             result = director.checkpoint("research", research_summary, story)
+            _add_decision(
+                "content_gen",
+                f"Checkpoint research: {result.decision.value}",
+                (result.notes or "")[:160],
+                severity="warning" if result.decision.value == "reject" else "info",
+            )
             if not result.approved and result.decision.value == "reject":
+                _stage_end("content_gen", "error", "Rejected at research checkpoint")
                 manifest.status = JobStatus.DRAFT.value
                 state_mgr.save(manifest)
                 return manifest
@@ -247,6 +428,13 @@ def run_pipeline_v15(
                     "Script Score": story.script_score,
                     "Attempt": script_attempts,
                 })
+                _add_decision(
+                    "content_gen",
+                    f"Checkpoint script attempt {script_attempts}: {result.decision.value}",
+                    (result.notes or "")[:160],
+                    severity="warning" if result.decision.value == "reject" else "info",
+                    metadata={"attempt": script_attempts},
+                )
                 script_approved = result.approved or result.edited
 
             manifest.timings["script"] = round(time.time() - t, 2)
@@ -255,6 +443,7 @@ def run_pipeline_v15(
             # ── Stage 3: Quality Gate (V14 reuse) ────────────────────
             t = time.time()
             progress.update(main_task, description="[cyan]🔎 Quality Gate...")
+            _stage_start("quality_gate", "Quality Gate")
 
             raw_content = script_agent.get_raw_content(story)
             if raw_content:
@@ -296,6 +485,7 @@ def run_pipeline_v15(
                     break
 
                 if content is None:
+                    _stage_end("quality_gate", "error", "Content validation failed")
                     manifest.status = JobStatus.ERROR.value
                     manifest.error_stage = "quality_gate"
                     manifest.error_message = "Content validation failed"
@@ -321,8 +511,28 @@ def run_pipeline_v15(
 
                 if not quality.is_approved:
                     manifest.status = JobStatus.MANUAL_REVIEW.value
+                    _add_decision(
+                        "quality_gate",
+                        "Quality gate flagged manual review",
+                        f"score={quality.quality_score:.2f}",
+                        severity="warning",
+                    )
 
             manifest.timings["quality_gate"] = round(time.time() - t, 2)
+            _stage_end(
+                "quality_gate",
+                "completed",
+                metadata={
+                    "quality_score": manifest.quality_score,
+                    "hook_score": manifest.hook_score,
+                    "status": manifest.status,
+                },
+            )
+            _add_decision(
+                "quality_gate",
+                "Quality gate completed",
+                f"quality={manifest.quality_score:.2f}, viral={manifest.viral_score:.2f}",
+            )
             state_mgr.mark_stage(manifest, "quality_gate")
             progress.advance(main_task)
 
@@ -334,7 +544,14 @@ def run_pipeline_v15(
 
             # Checkpoint: scenes
             cp_result = director.checkpoint_scenes(scenes, story)
+            _add_decision(
+                "content_gen",
+                f"Checkpoint scenes: {cp_result.decision.value}",
+                (cp_result.notes or "")[:160],
+                severity="warning" if cp_result.decision.value == "reject" else "info",
+            )
             if not cp_result.approved and cp_result.decision.value == "reject":
+                _stage_end("content_gen", "error", "Rejected at scenes checkpoint")
                 manifest.status = JobStatus.DRAFT.value
                 state_mgr.save(manifest)
                 return manifest
@@ -373,6 +590,23 @@ def run_pipeline_v15(
                 should_retry, retry_stage, correction = should_iterate(story, review)
 
             manifest.timings["review"] = round(time.time() - t, 2)
+            manifest.timings["content_gen"] = round(
+                sum(
+                    manifest.timings.get(k, 0.0)
+                    for k in ("research", "script", "scene_plan", "review")
+                ),
+                2,
+            )
+            _stage_end(
+                "content_gen",
+                "completed",
+                metadata={"feedback_iterations": story.feedback_iterations},
+            )
+            _add_decision(
+                "content_gen",
+                "Content generation completed",
+                f"hook={story.hook[:60]} | feedback_iterations={story.feedback_iterations}",
+            )
             progress.advance(main_task)
 
             # ── DRY RUN EXIT ─────────────────────────────────────────
@@ -384,11 +618,14 @@ def run_pipeline_v15(
                 return manifest
 
             # ── Stage 6: Assets ──────────────────────────────────────
+            media_stage_t0 = time.time()
+            _stage_start("media", "Media Retrieval")
             t = time.time()
             progress.update(main_task, description="[cyan]🎨 Asset Agent...")
 
             allowed_assets, reason_assets, est_assets = cost_governance.reserve_stage("assets")
             if not allowed_assets:
+                _stage_end("media", "error", reason_assets[:180])
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "assets_budget"
                 manifest.error_message = reason_assets
@@ -431,6 +668,7 @@ def run_pipeline_v15(
             manifest.clip_paths = [str(p) for p in clips]
 
             if not clips and not images:
+                _stage_end("media", "error", "No clips and no images")
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "download"
                 manifest.error_message = "No clips and no images"
@@ -440,18 +678,31 @@ def run_pipeline_v15(
                 return manifest
 
             manifest.timings["download"] = round(time.time() - t, 2)
+            manifest.timings["media"] = round(time.time() - media_stage_t0, 2)
+            _stage_end(
+                "media",
+                "completed",
+                metadata={"clips": len(clips), "images": len(images), "sfx": len(sfx_paths)},
+            )
+            _add_decision(
+                "media",
+                f"Media selected: {len(clips)} clips, {len(images)} images",
+                f"music={'yes' if music_path else 'no'}",
+            )
             progress.advance(main_task)
 
             # ── Stage 8: TTS ─────────────────────────────────────────
             t = time.time()
             progress.update(main_task, description="[cyan]🗣️ TTS...")
+            _stage_start("tts", "Narration TTS")
 
-            preferred_tts_provider = "gemini" if settings.provider_allowed("gemini") else "edge_tts"
+            preferred_tts_provider = "gemini" if settings.provider_allowed("gemini", usage="media") else "edge_tts"
             allowed_tts, reason_tts, _ = cost_governance.reserve_stage(
                 "tts",
                 provider=preferred_tts_provider,
             )
             if not allowed_tts:
+                _stage_end("tts", "error", reason_tts[:180])
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "tts_budget"
                 manifest.error_message = reason_tts
@@ -479,6 +730,7 @@ def run_pipeline_v15(
             )
 
             if not tts_ok:
+                _stage_end("tts", "error", "TTS failed")
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "tts"
                 manifest.error_message = "TTS failed"
@@ -496,11 +748,14 @@ def run_pipeline_v15(
             cost_governance.record_stage_actual("tts", tts_actual)
 
             manifest.timings["tts"] = round(time.time() - t, 2)
+            _stage_end("tts", "completed", metadata={"engine": tts_engine})
+            _add_decision("tts", f"Narration generated with {tts_engine}", f"duration={audio_duration:.2f}s")
             progress.advance(main_task)
 
             # ── Stage 9: Subtitles ───────────────────────────────────
             t = time.time()
             progress.update(main_task, description="[cyan]📝 Subtitles...")
+            _stage_start("subtitles", "Subtitle Generation")
 
             ass_path = settings.temp_dir / f"subs_{timestamp}.ass"
             try:
@@ -510,7 +765,15 @@ def run_pipeline_v15(
                     raise Exception("WhisperX produced no events")
             except Exception as e:
                 logger.warning(f"⚠️ WhisperX falló o no está instalado, usando método de respaldo: {e}")
-                if vtt_path.exists() and vtt_path.stat().st_size > 20:
+                om_vtt_path = generate_vtt_from_audio(audio_path, settings.temp_dir)
+                if om_vtt_path and om_vtt_path.exists() and om_vtt_path.stat().st_size > 20:
+                    vtt_to_ass(om_vtt_path, ass_path)
+                    _add_decision(
+                        "subtitles",
+                        "OpenMontage subtitle_gen applied",
+                        om_vtt_path.name,
+                    )
+                elif vtt_path.exists() and vtt_path.stat().st_size > 20:
                     vtt_to_ass(vtt_path, ass_path)
                 else:
                     generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
@@ -525,6 +788,11 @@ def run_pipeline_v15(
                 manifest.duration_seconds = audio_duration
 
             manifest.timings["subtitles"] = round(time.time() - t, 2)
+            _stage_end(
+                "subtitles",
+                "completed",
+                metadata={"subtitle_path": manifest.subs_path, "audio_duration": manifest.duration_seconds},
+            )
             progress.advance(main_task)
 
             # ── Stage 10: Edit Decisions + Render ────────────────────
@@ -533,6 +801,7 @@ def run_pipeline_v15(
 
             allowed_render, reason_render, est_render = cost_governance.reserve_stage("render")
             if not allowed_render:
+                _stage_end("render", "error", reason_render[:180])
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "render_budget"
                 manifest.error_message = reason_render
@@ -540,6 +809,9 @@ def run_pipeline_v15(
                 state_mgr.save(manifest)
                 notify_error(manifest)
                 return manifest
+
+            combine_t0 = time.time()
+            _stage_start("combine", "Edit Decisions + Timeline")
 
             # Get scene-aware edit decisions
             edit_decisions = editor_agent.run(story, nicho, len(clips), audio_duration)
@@ -561,6 +833,17 @@ def run_pipeline_v15(
                 music_path=music_path if music_path and music_path.exists() else None,
             )
             manifest.timeline_json_path = str(timeline_path)
+            manifest.timings["combine"] = round(time.time() - combine_t0, 2)
+            _stage_end(
+                "combine",
+                "completed",
+                metadata={"timeline_scenes": len(timeline_payload.get("scenes", []))},
+            )
+            _add_decision(
+                "combine",
+                "Timeline assembled",
+                f"scenes={len(timeline_payload.get('scenes', []))}",
+            )
 
             # Determine velocidad from dominant mood
             velocidad = raw_content.get("velocidad_cortes", "rapido") if raw_content else "rapido"
@@ -570,6 +853,8 @@ def run_pipeline_v15(
                 output_target = settings.review_dir
 
             # Pre-render validation
+            validated_t0 = time.time()
+            _stage_start("validated", "Pre-render Validation")
             pre_ok, pre_errors = validate_pre_render(
                 audio_path=audio_path,
                 subs_path=ass_path if ass_path.exists() else None,
@@ -581,6 +866,7 @@ def run_pipeline_v15(
             )
             if not pre_ok:
                 first_code = pre_errors[0][0] if pre_errors else ErrorCode.ASSET_MISSING
+                _stage_end("validated", "error", "; ".join(m for _, m in pre_errors)[:180])
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "pre_render_validation"
                 manifest.error_message = "; ".join(m for _, m in pre_errors)[:200]
@@ -589,7 +875,13 @@ def run_pipeline_v15(
                 notify_error(manifest)
                 return manifest
 
-            video_path, thumb_path, render_error = render_video_with_fallback(
+            manifest.timings["validated"] = round(time.time() - validated_t0, 2)
+            _stage_end("validated", "completed")
+
+            _stage_start("render", "Render")
+            render_t0 = time.time()
+
+            video_path, thumb_path, render_error, render_backend = render_video_with_fallback(
                 clips=clips,
                 audio_path=audio_path,
                 subs_path=ass_path if ass_path.exists() else None,
@@ -620,7 +912,7 @@ def run_pipeline_v15(
                 if fix:
                     try:
                         render_fixes = json.loads(fix) if isinstance(fix, str) else fix
-                        video_path, thumb_path, render_error2 = render_video_with_fallback(
+                        video_path, thumb_path, render_error2, render_backend2 = render_video_with_fallback(
                             clips=clips,
                             audio_path=audio_path,
                             subs_path=ass_path if ass_path.exists() else None,
@@ -640,12 +932,14 @@ def run_pipeline_v15(
                             timeline_payload=timeline_payload,
                             render_fixes=render_fixes,
                         )
+                        render_backend = render_backend2
                         if render_error2:
                             render_error = render_error2
                     except Exception:
                         pass
 
                 if render_error or not video_path:
+                    _stage_end("render", "error", (render_error or "Render failed")[:180])
                     manifest.status = JobStatus.ERROR.value
                     manifest.error_stage = "render"
                     manifest.error_message = render_error or "Render failed"
@@ -655,13 +949,49 @@ def run_pipeline_v15(
                     return manifest
 
             manifest.video_path = str(video_path)
+
+            # Optional OpenMontage enhancement chain (free/local).
+            if settings.enable_openmontage_free_tools and settings.openmontage_enable_enhancement:
+                graded_tmp = settings.temp_dir / f"graded_{timestamp}.mp4"
+                graded_path = apply_color_grade(video_path, graded_tmp, profile="cinematic_warm")
+                if graded_path and graded_path.exists():
+                    shutil.move(str(graded_path), str(video_path))
+                    _add_decision("render", "OpenMontage color_grade applied", video_path.name)
+
+            # Optional OpenMontage video utilities (reframe/trim).
+            if settings.enable_openmontage_free_tools and settings.openmontage_enable_video_utilities:
+                platform_key = str(nicho.plataforma).lower()
+                target_aspect = "portrait" if any(k in platform_key for k in ["tiktok", "reel", "short"]) else "landscape"
+                reframed_tmp = settings.temp_dir / f"reframed_{timestamp}.mp4"
+                reframed_path = apply_auto_reframe(video_path, reframed_tmp, target_aspect=target_aspect)
+                if reframed_path and reframed_path.exists():
+                    shutil.move(str(reframed_path), str(video_path))
+                    _add_decision("render", "OpenMontage auto_reframe applied", target_aspect)
+
+                trim_target = max(0.0, float(manifest.duration_seconds or audio_duration))
+                if trim_target > 0:
+                    trimmed_tmp = settings.temp_dir / f"trimmed_{timestamp}.mp4"
+                    trimmed_path = apply_video_trim(video_path, trimmed_tmp, 0.0, trim_target)
+                    if trimmed_path and trimmed_path.exists():
+                        shutil.move(str(trimmed_path), str(video_path))
+                        _add_decision("render", "OpenMontage video_trimmer applied", f"0-{trim_target:.2f}s")
+
             manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
             cost_governance.record_stage_actual("render", est_render)
-            manifest.timings["render"] = round(time.time() - t, 2)
+            manifest.timings["render"] = round(time.time() - render_t0, 2)
+            manifest.render_backend = render_backend or "ffmpeg"
+            _stage_end("render", "completed", metadata={"backend": manifest.render_backend})
+            _add_decision(
+                "render",
+                f"Render completed ({manifest.render_backend})",
+                Path(manifest.video_path).name,
+            )
             progress.advance(main_task)
 
             # ── Stage 11: Post-render QA (V16: A/V sync + safe-zone + frame sampling) ──
             progress.update(main_task, description="[cyan]🔬 Post-render QA...")
+            qa_t0 = time.time()
+            _stage_start("qa_post", "Post-render QA")
             try:
                 from pipeline.post_render_qa import post_render_qa
                 qa_passed, qa_issues = post_render_qa(
@@ -675,6 +1005,13 @@ def run_pipeline_v15(
                 )
                 manifest.qa_passed = qa_passed
                 manifest.qa_issues = qa_issues
+                manifest.post_render_report = {
+                    "passed": qa_passed,
+                    "issues": qa_issues,
+                    "checked_at": int(time.time() * 1000),
+                    "reference_promise": story.reference_delivery_promise,
+                    "reference_avg_cut_seconds": story.reference_avg_cut_seconds,
+                }
 
                 if not qa_passed:
                     manifest.status = JobStatus.MANUAL_REVIEW.value
@@ -684,12 +1021,32 @@ def run_pipeline_v15(
                         manifest.video_path = str(review_path)
                         video_path = review_path
                     output_target = settings.review_dir
+                    _add_decision(
+                        "qa_post",
+                        "Post-render QA flagged manual review",
+                        "; ".join(qa_issues)[:200],
+                        severity="warning",
+                    )
+                    _stage_end("qa_post", "error", "QA issues detected")
+                else:
+                    _add_decision("qa_post", "Post-render QA passed")
+                    _stage_end("qa_post", "completed")
             except Exception as e:
                 logger.debug(f"Post-render QA skipped: {e}")
+                manifest.post_render_report = {
+                    "passed": True,
+                    "issues": [],
+                    "skipped": True,
+                    "skip_reason": str(e),
+                    "checked_at": int(time.time() * 1000),
+                }
+                _stage_end("qa_post", "skipped", str(e)[:180])
+            manifest.timings["qa_post"] = round(time.time() - qa_t0, 2)
 
             # ── Stage 12: Publish ────────────────────────────────────
             t = time.time()
             progress.update(main_task, description="[cyan]📤 Publishing...")
+            _stage_start("publish", "Publish")
 
             from datetime import datetime
 
@@ -746,11 +1103,18 @@ def run_pipeline_v15(
             # Notifications
             if manifest.status == JobStatus.MANUAL_REVIEW.value:
                 notify_review(manifest)
+                _add_decision("publish", "Sent to manual review", "; ".join(manifest.qa_issues)[:200], severity="warning")
             else:
                 manifest.status = JobStatus.SUCCESS.value
                 notify_success(manifest, drive_link)
+                _add_decision("publish", "Publish success", drive_link)
 
             manifest.timings["publish"] = round(time.time() - t, 2)
+            _stage_end(
+                "publish",
+                "completed",
+                metadata={"status": manifest.status, "drive_link": manifest.drive_link},
+            )
             progress.advance(main_task)
 
             # Cleanup
@@ -767,6 +1131,9 @@ def run_pipeline_v15(
 
         except Exception as e:
             logger.exception(f"V15 Pipeline crashed: {e}")
+            for running_stage in list(stage_clock.keys()):
+                _stage_end(running_stage, "error", str(e)[:180])
+            _add_decision("pipeline", "Pipeline crashed", str(e)[:220], severity="error")
             manifest.status = JobStatus.ERROR.value
             manifest.error_stage = "unknown"
             manifest.error_message = str(e)

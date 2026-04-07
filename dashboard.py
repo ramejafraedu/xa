@@ -100,6 +100,39 @@ def _manifest_path_candidates(job_id: str) -> list[Path]:
     ]
 
 
+def _checkpoint_dir_candidates(job_id: str) -> list[Path]:
+    """Return potential locations for stage checkpoint directories."""
+    return [
+        settings.temp_dir / "checkpoints" / job_id,
+        settings.output_dir / "checkpoints" / job_id,
+        settings.review_dir / "checkpoints" / job_id,
+    ]
+
+
+def _load_stage_checkpoints(job_id: str) -> dict:
+    """Load stage checkpoints from dual-write checkpoint folders."""
+    checkpoints: dict = {}
+    for cp_dir in _checkpoint_dir_candidates(job_id):
+        if not cp_dir.exists():
+            continue
+        for cp_file in sorted(cp_dir.glob("checkpoint_*.json")):
+            stage = cp_file.stem.replace("checkpoint_", "", 1)
+            data = _read_json_file(cp_file)
+            if not data:
+                continue
+            checkpoints[stage] = {
+                "status": data.get("status", ""),
+                "timestamp": data.get("timestamp", ""),
+                "path": str(cp_file),
+                "checkpoint_policy": data.get("checkpoint_policy", ""),
+                "human_approval_required": bool(data.get("human_approval_required", False)),
+                "human_approved": bool(data.get("human_approved", False)),
+            }
+        if checkpoints:
+            break
+    return checkpoints
+
+
 def _load_manifest_by_job_id(job_id: str) -> Optional[dict]:
     """Load manifest from temp/output/review locations."""
     for path in _manifest_path_candidates(job_id):
@@ -412,58 +445,119 @@ PIPELINE_STAGES = [
 
 
 def _get_pipeline_timeline(manifest: dict) -> list[dict]:
-    """Build timeline from manifest status and timings."""
-    status = manifest.get("status", "pending")
-    timings = manifest.get("timings", {})
+    """Build timeline from explicit stage_trace first, then fallback to timings/status."""
+    status = str(manifest.get("status", "pending") or "pending")
+    timings = manifest.get("timings", {}) if isinstance(manifest.get("timings"), dict) else {}
+    trace = manifest.get("stage_trace", []) if isinstance(manifest.get("stage_trace"), list) else []
 
-    # Determine which stages are complete based on status
-    status_order = [
-        "pending", "running",
-        "completed_content_gen", "completed_quality_gate",
-        "completed_tts", "completed_subtitles",
-        "completed_media", "completed_combine",
-        "completed_validated", "completed_render",
-        "completed_publish", "success",
+    stage_aliases: dict[str, list[str]] = {
+        "content_gen": ["content_gen", "research", "script", "scene_plan", "review"],
+        "quality_gate": ["quality_gate"],
+        "tts": ["tts"],
+        "subtitles": ["subtitles"],
+        "media": ["media", "assets", "download"],
+        "combine": ["combine"],
+        "validated": ["validated", "pre_render_validation"],
+        "render": ["render"],
+        "qa_post": ["qa_post"],
+        "publish": ["publish"],
+    }
+
+    def _stage_idx(stage_key: str) -> int:
+        for idx, stage_def in enumerate(PIPELINE_STAGES):
+            if stage_def["key"] == stage_key:
+                return idx
+        return -1
+
+    def _canonical_stage(raw_stage: str) -> str:
+        key = (raw_stage or "").strip().lower()
+        for timeline_key, aliases in stage_aliases.items():
+            if key in aliases:
+                return timeline_key
+        return key
+
+    trace_events: dict[str, list[dict]] = {}
+    for item in trace:
+        if not isinstance(item, dict):
+            continue
+        stage_key = _canonical_stage(str(item.get("stage", "")))
+        if stage_key not in stage_aliases:
+            continue
+        trace_events.setdefault(stage_key, []).append(item)
+
+    timeline: list[dict] = []
+    if trace_events:
+        for stage in PIPELINE_STAGES:
+            key = stage["key"]
+            events = trace_events.get(key, [])
+
+            state = "pending"
+            if any(str(e.get("state", "")).lower() == "error" for e in events):
+                state = "error"
+            elif any(str(e.get("state", "")).lower() == "running" for e in events):
+                state = "active"
+            elif any(str(e.get("state", "")).lower() in {"completed", "skipped"} for e in events):
+                state = "completed"
+
+            elapsed = round(sum(float(timings.get(alias, 0) or 0) for alias in stage_aliases[key]), 2)
+            if elapsed <= 0:
+                for e in events:
+                    try:
+                        elapsed += float(e.get("elapsed_seconds", 0) or 0)
+                    except Exception:
+                        pass
+
+            timeline.append({
+                **stage,
+                "state": state,
+                "elapsed": round(elapsed, 2),
+            })
+
+        return timeline
+
+    elapsed_list = [
+        round(sum(float(timings.get(alias, 0) or 0) for alias in stage_aliases[stage["key"]]), 2)
+        for stage in PIPELINE_STAGES
     ]
 
-    try:
-        current_idx = status_order.index(status)
-    except ValueError:
-        if status in ("success",):
-            current_idx = len(status_order) - 1
-        elif status in ("error", "manual_review"):
-            # Find the error stage
-            error_stage = manifest.get("error_stage", "")
-            try:
-                current_idx = status_order.index(f"completed_{error_stage}")
-            except ValueError:
-                current_idx = 0
-        else:
-            current_idx = 0
+    completed_idx = max([i for i, elapsed in enumerate(elapsed_list) if elapsed > 0], default=-1)
+    active_idx = completed_idx + 1 if completed_idx + 1 < len(PIPELINE_STAGES) else completed_idx
 
-    timeline = []
+    if status in {"success", "completed_publish"}:
+        completed_idx = len(PIPELINE_STAGES) - 1
+        active_idx = -1
+    elif status.startswith("completed_"):
+        canonical = _canonical_stage(status.replace("completed_", ""))
+        mapped = _stage_idx(canonical)
+        if mapped >= 0:
+            completed_idx = max(completed_idx, mapped)
+            active_idx = min(mapped + 1, len(PIPELINE_STAGES) - 1)
+    elif status == "running" and completed_idx < 0:
+        active_idx = 0
+
+    error_idx = -1
+    if status in {"error", "manual_review"}:
+        error_idx = _stage_idx(_canonical_stage(str(manifest.get("error_stage", ""))))
+        if error_idx < 0 and status == "manual_review":
+            error_idx = _stage_idx("qa_post")
+
     for i, stage in enumerate(PIPELINE_STAGES):
-        completed_key = f"completed_{stage['key']}"
-        try:
-            stage_idx = status_order.index(completed_key)
-        except ValueError:
-            stage_idx = i + 2  # rough mapping
-
-        if current_idx >= stage_idx:
+        state = "pending"
+        if i <= completed_idx:
             state = "completed"
-        elif current_idx == stage_idx - 1:
-            state = "active" if status not in ("error", "manual_review", "success") else "error"
-        else:
-            state = "pending"
+        elif i == active_idx and status in {"running", "pending"}:
+            state = "active"
 
-        # Check if this is the error stage
-        if status == "error" and manifest.get("error_stage") == stage["key"]:
-            state = "error"
+        if error_idx >= 0:
+            if i < error_idx:
+                state = "completed"
+            elif i == error_idx:
+                state = "error"
 
         timeline.append({
             **stage,
             "state": state,
-            "elapsed": timings.get(stage["key"], 0),
+            "elapsed": elapsed_list[i],
         })
 
     return timeline
@@ -475,6 +569,41 @@ def _get_pipeline_timeline(manifest: dict) -> list[dict]:
 
 def _get_decision_trail(manifest: dict) -> list[dict]:
     """Build a decision audit trail from manifest data."""
+    stage_icons = {
+        "content_gen": "📝",
+        "quality_gate": "🔍",
+        "tts": "🔊",
+        "subtitles": "💬",
+        "media": "🎨",
+        "combine": "🔗",
+        "validated": "✅",
+        "render": "🎬",
+        "qa_post": "🏥",
+        "publish": "🚀",
+        "pipeline": "⚙️",
+        "governance": "💰",
+    }
+
+    explicit = manifest.get("decision_trail", [])
+    if isinstance(explicit, list) and explicit:
+        normalized: list[dict] = []
+        for item in explicit:
+            if not isinstance(item, dict):
+                continue
+            stage = str(item.get("stage", "pipeline") or "pipeline")
+            normalized.append({
+                "stage": stage,
+                "icon": stage_icons.get(stage, "📌"),
+                "label": str(item.get("label", "Decision") or "Decision"),
+                "detail": str(item.get("detail", "") or "")[:220],
+                "timestamp": int(item.get("timestamp", manifest.get("timestamp", 0)) or 0),
+                "severity": str(item.get("severity", "info") or "info"),
+                "metadata": item.get("metadata", {}),
+            })
+
+        if normalized:
+            return sorted(normalized, key=lambda x: x.get("timestamp", 0))
+
     decisions = []
 
     # Content generation decision
@@ -587,6 +716,15 @@ async def index():
     return HTMLResponse("<h1>Dashboard not found. Check static/index.html</h1>")
 
 
+@app.get("/job/{job_id}/manifest", response_class=HTMLResponse)
+async def manifest_view(job_id: str):
+    """Serve dedicated manifest viewer route."""
+    html_path = _static_dir / "manifest.html"
+    if html_path.exists():
+        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Manifest viewer not found. Check static/manifest.html</h1>")
+
+
 @app.get("/api/status")
 async def system_status():
     """System health check."""
@@ -609,6 +747,20 @@ async def system_status():
 async def system_resources():
     """Real-time system resource monitor (CPU, RAM, Swap, Disk)."""
     return _get_system_resources()
+
+
+@app.get("/api/resources/stream")
+async def stream_resources(request: Request):
+    """Server-Sent Events stream with periodic system resource snapshots."""
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+            payload = _get_system_resources()
+            yield {"event": "resources", "data": json.dumps(payload)}
+            await asyncio.sleep(2.0)
+
+    return EventSourceResponse(event_generator())
 
 
 @app.get("/api/nichos")
@@ -777,6 +929,12 @@ async def job_detail(job_id: str):
     if not manifest:
         return {"error": f"Job {job_id} not found"}
 
+    manifest["stage_checkpoints"] = (
+        manifest.get("stage_checkpoints")
+        if isinstance(manifest.get("stage_checkpoints"), dict)
+        else _load_stage_checkpoints(job_id)
+    )
+
     manifest["associated_reference"] = {
         "url": manifest.get("reference_url", ""),
         "notes": manifest.get("reference_notes", ""),
@@ -813,6 +971,15 @@ async def job_analysis(job_id: str):
         "video_exists": bool(video_path and Path(video_path).exists()),
         "ffprobe": probe_data,
         "thumbnail": thumbnail,
+        "render_backend": manifest.get("render_backend", ""),
+        "qa_passed": bool(manifest.get("qa_passed", True)),
+        "qa_issues": manifest.get("qa_issues", []),
+        "post_render_report": manifest.get("post_render_report", {}),
+        "stage_checkpoints": (
+            manifest.get("stage_checkpoints")
+            if isinstance(manifest.get("stage_checkpoints"), dict)
+            else _load_stage_checkpoints(job_id)
+        ),
         "pipeline_timeline": _get_pipeline_timeline(manifest),
         "decision_trail": _get_decision_trail(manifest),
         "timings": manifest.get("timings", {}),
@@ -854,6 +1021,9 @@ async def review_queue():
                     "reference_url": data.get("reference_url", ""),
                     "timestamp": data.get("timestamp", 0),
                     "video_path": data.get("video_path", ""),
+                    "checkpoint_policy": data.get("checkpoint_policy", ""),
+                    "human_approval_required": bool(data.get("human_approval_required", False)),
+                    "human_approved": bool(data.get("human_approved", False)),
                     "manifest_path": str(path),
                 }
             )
@@ -880,6 +1050,14 @@ async def review_detail(job_id: str):
         "video_path": manifest.get("video_path", ""),
         "qa_issues": manifest.get("qa_issues", []),
         "timings": manifest.get("timings", {}),
+        "checkpoint_policy": manifest.get("checkpoint_policy", ""),
+        "human_approval_required": bool(manifest.get("human_approval_required", False)),
+        "human_approved": bool(manifest.get("human_approved", False)),
+        "stage_checkpoints": (
+            manifest.get("stage_checkpoints")
+            if isinstance(manifest.get("stage_checkpoints"), dict)
+            else _load_stage_checkpoints(job_id)
+        ),
         "associated_reference": {
             "url": manifest.get("reference_url", ""),
             "notes": manifest.get("reference_notes", ""),
@@ -918,8 +1096,28 @@ async def review_approve(job_id: str):
     manifest["status"] = JobStatus.SUCCESS.value
     manifest["error_stage"] = ""
     manifest["error_message"] = ""
+    manifest["checkpoint_policy"] = manifest.get("checkpoint_policy", "guided")
+    manifest["human_approval_required"] = False
+    manifest["human_approved"] = True
     manifest["review_resolution"] = "approved"
     manifest["review_resolved_at"] = now_iso
+    stage_checkpoints = manifest.get("stage_checkpoints") if isinstance(manifest.get("stage_checkpoints"), dict) else {}
+    stage_checkpoints["manual_review"] = {
+        "status": "completed",
+        "timestamp": now_iso,
+        "resolution": "approved",
+    }
+    manifest["stage_checkpoints"] = stage_checkpoints
+    trail = manifest.get("decision_trail") if isinstance(manifest.get("decision_trail"), list) else []
+    trail.append({
+        "stage": "qa_post",
+        "label": "Manual review approved",
+        "detail": "Reviewer approved post-render output",
+        "severity": "info",
+        "timestamp": int(time.time() * 1000),
+        "metadata": {"resolution": "approved"},
+    })
+    manifest["decision_trail"] = trail
 
     output_manifest_path = settings.output_dir / f"job_manifest_{job_id}.json"
     output_manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -954,8 +1152,28 @@ async def review_reject(job_id: str, payload: dict = Body({})):
     manifest["status"] = JobStatus.ERROR.value
     manifest["error_stage"] = "manual_review"
     manifest["error_message"] = reason
+    manifest["checkpoint_policy"] = manifest.get("checkpoint_policy", "guided")
+    manifest["human_approval_required"] = True
+    manifest["human_approved"] = False
     manifest["review_resolution"] = "rejected"
     manifest["review_resolved_at"] = datetime.now().isoformat(timespec="seconds")
+    stage_checkpoints = manifest.get("stage_checkpoints") if isinstance(manifest.get("stage_checkpoints"), dict) else {}
+    stage_checkpoints["manual_review"] = {
+        "status": "rejected",
+        "timestamp": manifest["review_resolved_at"],
+        "resolution": "rejected",
+    }
+    manifest["stage_checkpoints"] = stage_checkpoints
+    trail = manifest.get("decision_trail") if isinstance(manifest.get("decision_trail"), list) else []
+    trail.append({
+        "stage": "qa_post",
+        "label": "Manual review rejected",
+        "detail": reason[:220],
+        "severity": "warning",
+        "timestamp": int(time.time() * 1000),
+        "metadata": {"resolution": "rejected"},
+    })
+    manifest["decision_trail"] = trail
 
     review_manifest_path.write_text(
         json.dumps(_clean_manifest_for_save(manifest), ensure_ascii=False, indent=2),
@@ -976,10 +1194,16 @@ async def review_reject(job_id: str, payload: dict = Body({})):
 @app.get("/api/execution-mode")
 async def execution_mode_status():
     """Return current execution mode and active feature flags."""
+    budget_state = _read_json_file(settings.budget_state_path) or {}
+    today_key = date.today().isoformat()
+    month_key = f"month:{date.today().strftime('%Y-%m')}"
     return {
         "mode": settings.execution_mode_label(),
         "feature_flags": settings.active_feature_flags(),
         "daily_budget_usd": float(settings.daily_budget_usd),
+        "monthly_budget_usd": float(settings.monthly_budget_usd),
+        "today_spend_usd": float(budget_state.get(today_key, 0.0)),
+        "month_spend_usd": float(budget_state.get(month_key, 0.0)),
     }
 
 
@@ -1001,9 +1225,13 @@ async def costs_summary():
     """Return cost governance summary and recent per-job costs."""
     budget_state = _read_json_file(settings.budget_state_path) or {}
     today_key = date.today().isoformat()
+    month_key = f"month:{date.today().strftime('%Y-%m')}"
     today_spend = float(budget_state.get(today_key, 0.0))
+    month_spend = float(budget_state.get(month_key, 0.0))
     daily_budget = float(settings.daily_budget_usd)
+    monthly_budget = float(settings.monthly_budget_usd)
     remaining = round(max(daily_budget - today_spend, 0.0), 4) if daily_budget > 0 else None
+    remaining_monthly = round(max(monthly_budget - month_spend, 0.0), 4) if monthly_budget > 0 else None
 
     manifests = _collect_recent_manifests(limit=60)
     total_actual = round(sum(float(m.get("cost_actual_usd", 0.0)) for m in manifests), 4)
@@ -1027,8 +1255,11 @@ async def costs_summary():
         "mode": settings.execution_mode_label(),
         "feature_flags": settings.active_feature_flags(),
         "daily_budget_usd": daily_budget,
+        "monthly_budget_usd": monthly_budget,
         "today_spend_usd": round(today_spend, 4),
+        "month_spend_usd": round(month_spend, 4),
         "remaining_budget_usd": remaining,
+        "remaining_monthly_budget_usd": remaining_monthly,
         "recent_jobs_total_actual_usd": total_actual,
         "recent_jobs_total_estimate_usd": total_estimate,
         "budget_state": budget_state,

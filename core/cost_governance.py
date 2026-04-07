@@ -17,6 +17,9 @@ class CostGovernance:
         self.manifest = manifest
         settings.ensure_dirs()
         self.manifest.budget_daily_usd = float(settings.daily_budget_usd)
+        self.manifest.budget_monthly_usd = float(settings.monthly_budget_usd)
+        self.manifest.budget_month_key = self._month_key()
+        self.manifest.month_to_date_spend_usd = self.get_current_month_spend_usd()
 
     def reserve_stage(self, stage: str, provider: str = "") -> tuple[bool, str, float]:
         """Reserve a stage budget if governance is enabled.
@@ -26,7 +29,7 @@ class CostGovernance:
         estimated = round(settings.stage_estimated_cost_usd(stage), 4)
         self.manifest.cost_estimate_usd = round(self.manifest.cost_estimate_usd + estimated, 4)
 
-        if not settings.enable_cost_governance:
+        if not settings.cost_governance_enabled():
             return True, "", estimated
 
         if provider and not settings.provider_allowed(provider):
@@ -54,6 +57,21 @@ class CostGovernance:
                 )
                 return False, reason, estimated
 
+        monthly_budget = float(settings.monthly_budget_usd)
+        monthly_spend = self.get_current_month_spend_usd()
+        self.manifest.month_to_date_spend_usd = monthly_spend
+        self.manifest.budget_month_key = self._month_key()
+        if monthly_budget > 0:
+            projected_month = round(monthly_spend + self.manifest.cost_actual_usd + estimated, 4)
+            if projected_month > monthly_budget:
+                self.manifest.budget_blocked = True
+                self.manifest.budget_monthly_blocked = True
+                reason = (
+                    f"Monthly budget exceeded ({self.manifest.budget_month_key}): "
+                    f"projected ${projected_month:.4f} > limit ${monthly_budget:.4f}"
+                )
+                return False, reason, estimated
+
         self.manifest.cost_reserved_usd = round(self.manifest.cost_reserved_usd + estimated, 4)
         return True, "", estimated
 
@@ -72,17 +90,31 @@ class CostGovernance:
             4,
         )
 
-        if settings.enable_cost_governance:
+        if settings.cost_governance_enabled():
             state = self._read_budget_state()
             today = date.today().isoformat()
+            month = self._month_key()
             state[today] = round(float(state.get(today, 0.0)) + actual, 4)
+            month_state_key = f"month:{month}"
+            state[month_state_key] = round(float(state.get(month_state_key, 0.0)) + actual, 4)
             self._write_budget_state(state)
+
+        self.manifest.month_to_date_spend_usd = self.get_current_month_spend_usd()
+        self.manifest.budget_month_key = self._month_key()
 
         return actual
 
     def get_today_spend_usd(self) -> float:
         state = self._read_budget_state()
         return float(state.get(date.today().isoformat(), 0.0))
+
+    def get_current_month_spend_usd(self) -> float:
+        state = self._read_budget_state()
+        return float(state.get(f"month:{self._month_key()}", 0.0))
+
+    @staticmethod
+    def _month_key() -> str:
+        return date.today().strftime("%Y-%m")
 
     def _read_budget_state(self) -> dict[str, float]:
         path = settings.budget_state_path

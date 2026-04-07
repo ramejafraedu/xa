@@ -37,7 +37,9 @@ def generate_tts(
         logger.info("TTS audio already exists, skipping")
         return True, "cached"
 
-    strict_free = settings.free_mode and not settings.allow_freemium_in_free_mode
+    strict_free = settings.v15_strict_free_media_tools or (
+        settings.free_mode and not settings.allow_freemium_in_free_mode
+    )
 
     # In strict free mode, prefer fully offline TTS first when available.
     if strict_free and settings.use_piper_tts:
@@ -47,7 +49,7 @@ def generate_tts(
             return True, "piper"
 
     # Try Gemini TTS (unless blocked by provider policy)
-    if settings.gemini_api_key and settings.provider_allowed("gemini"):
+    if settings.gemini_api_key and settings.provider_allowed("gemini", usage="media"):
         success = _gemini_tts(text, output_mp3, voz_gemini)
         if success:
             # Create empty VTT for ASS generation (Gemini doesn't provide timing)
@@ -55,7 +57,7 @@ def generate_tts(
                 subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "gemini"
         logger.warning("Gemini TTS failed, trying Edge-TTS")
-    elif settings.gemini_api_key and not settings.provider_allowed("gemini"):
+    elif settings.gemini_api_key and not settings.provider_allowed("gemini", usage="media"):
         logger.info("Gemini TTS skipped by provider policy")
 
     # Fallback: Edge-TTS

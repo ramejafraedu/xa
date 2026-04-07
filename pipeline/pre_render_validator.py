@@ -22,6 +22,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from config import settings
+from core.openmontage_free import run_audio_probe
 from models.content import ErrorCode
 from pipeline.duration_validator import get_max_duration
 
@@ -77,6 +79,22 @@ def validate_pre_render(
     # 6. Music file (optional but check if referenced)
     if music_path and music_path.exists() and music_path.stat().st_size < 500:
         errors.append((ErrorCode.ASSET_CORRUPT, f"Music file too small: {music_path.name}"))
+
+    # 7. Optional OpenMontage audio probe check
+    if settings.enable_openmontage_free_tools and settings.openmontage_enable_analysis:
+        probe = run_audio_probe(audio_path)
+        if probe:
+            probe_duration = float(probe.get("duration_seconds", 0) or 0)
+            if probe_duration > 0 and abs(probe_duration - audio_duration) > 1.0:
+                errors.append(
+                    (
+                        ErrorCode.DURATION_EXCEEDED,
+                        (
+                            f"Audio duration mismatch: validator={audio_duration:.2f}s vs "
+                            f"openmontage_probe={probe_duration:.2f}s"
+                        ),
+                    )
+                )
 
     if errors:
         for code, msg in errors:

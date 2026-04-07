@@ -18,6 +18,9 @@ from pathlib import Path
 
 from loguru import logger
 
+from config import settings
+from core.openmontage_free import run_audio_probe, run_frame_sampler, run_visual_probe
+
 
 def post_render_qa(
     video_path: Path,
@@ -142,6 +145,42 @@ def post_render_qa(
     )
     if rhythm_issue:
         issues.append(rhythm_issue)
+
+    # 12. OpenMontage (optional): extra analysis checks via tool adapters
+    if settings.enable_openmontage_free_tools and settings.openmontage_enable_analysis:
+        om_probe = run_audio_probe(video_path)
+        if om_probe:
+            probed_duration = float(om_probe.get("duration_seconds", 0) or 0)
+            if probed_duration > 0 and abs(probed_duration - duration) > 0.8:
+                issues.append(
+                    "OpenMontage probe mismatch: "
+                    f"duration={probed_duration:.2f}s vs ffprobe={duration:.2f}s"
+                )
+
+        om_visual = run_visual_probe(
+            video_path,
+            expected={
+                "width": expected_width,
+                "height": expected_height,
+                "min_duration": min_duration,
+                "max_duration": max_duration,
+                "has_audio": True,
+            },
+        )
+        if om_visual:
+            validation_issues = om_visual.get("validation_issues", [])
+            if isinstance(validation_issues, list):
+                for issue in validation_issues[:3]:
+                    issues.append(f"OpenMontage visual QA: {issue}")
+
+        frame_dir = video_path.parent / "qa_frames"
+        sampled = run_frame_sampler(video_path, frame_dir, count=3)
+        if sampled:
+            frame_count = int(sampled.get("frame_count", 0) or 0)
+            if frame_count < 2:
+                issues.append(
+                    f"OpenMontage frame sampler extracted only {frame_count} frame(s)"
+                )
 
     passed = len(issues) == 0
 

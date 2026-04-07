@@ -244,9 +244,23 @@ class JobManifest(BaseModel):
     execution_mode: str = "normal"  # normal | reference | freemium | free
     feature_flags: dict[str, bool] = Field(default_factory=dict)
 
+    # Stage-aware governance (dual-write compatible with checkpoint model)
+    pipeline_type: str = "v15"
+    checkpoint_policy: str = "guided"
+    human_approval_required: bool = False
+    human_approved: bool = False
+    style_playbook: str = ""
+    decision_log_ref: str = ""
+    stage_checkpoints: dict[str, dict] = Field(default_factory=dict)
+    stage_artifacts: dict[str, dict] = Field(default_factory=dict)
+
     # Cost governance
     budget_daily_usd: float = 0.0
+    budget_monthly_usd: float = 0.0
     budget_blocked: bool = False
+    budget_monthly_blocked: bool = False
+    budget_month_key: str = ""
+    month_to_date_spend_usd: float = 0.0
     cost_estimate_usd: float = 0.0
     cost_reserved_usd: float = 0.0
     cost_actual_usd: float = 0.0
@@ -291,8 +305,16 @@ class JobManifest(BaseModel):
 
     # Timing (seconds per stage)
     timings: dict[str, float] = Field(default_factory=dict)
+    stage_trace: list[dict] = Field(default_factory=list)
     duration_seconds: float = 0
     tts_engine_used: str = ""
+
+    # Decision trail (explicit audit events persisted by pipeline)
+    decision_trail: list[dict] = Field(default_factory=list)
+
+    # Manual review resolution metadata
+    review_resolution: str = ""
+    review_resolved_at: str = ""
 
     # Error tracking
     error_stage: str = ""
@@ -304,6 +326,8 @@ class JobManifest(BaseModel):
     # Post-render QA
     qa_passed: bool = True
     qa_issues: list[str] = Field(default_factory=list)
+    post_render_report: dict = Field(default_factory=dict)
+    render_backend: str = ""
 
     class Config:
         use_enum_values = True

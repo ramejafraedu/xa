@@ -110,8 +110,20 @@ class Settings(BaseSettings):
     enable_reference_driven: bool = False
     enable_cost_governance: bool = False
 
+    # OpenMontage free-tools rollout (V15)
+    enable_openmontage_free_tools: bool = True
+    openmontage_root_dir: str = "OpenMontage-main"
+    openmontage_default_playbook: str = "clean-professional"
+    openmontage_enable_styles: bool = True
+    openmontage_enable_analysis: bool = True
+    openmontage_enable_subtitle: bool = True
+    openmontage_enable_enhancement: bool = False
+    openmontage_enable_video_utilities: bool = False
+    v15_strict_free_media_tools: bool = True
+
     # Budget governance (USD)
     daily_budget_usd: float = 0.0
+    monthly_budget_usd: float = 1.0
 
     # Stage estimates used by cost governance
     est_cost_research_usd: float = 0.0
@@ -206,7 +218,29 @@ class Settings(BaseSettings):
             "enable_cost_governance": self.enable_cost_governance,
             "scheduler_canary_mode": self.scheduler_canary_mode,
             "enable_tiktok_trending_api": self.enable_tiktok_trending_api,
+            "enable_openmontage_free_tools": self.enable_openmontage_free_tools,
+            "openmontage_enable_styles": self.openmontage_enable_styles,
+            "openmontage_enable_analysis": self.openmontage_enable_analysis,
+            "openmontage_enable_subtitle": self.openmontage_enable_subtitle,
+            "openmontage_enable_enhancement": self.openmontage_enable_enhancement,
+            "openmontage_enable_video_utilities": self.openmontage_enable_video_utilities,
+            "v15_strict_free_media_tools": self.v15_strict_free_media_tools,
         }
+
+    def openmontage_root(self) -> Path:
+        """Resolve OpenMontage workspace root.
+
+        Kept as a helper to avoid scattering path logic across adapters.
+        """
+        root_cfg = (self.openmontage_root_dir or "OpenMontage-main").strip()
+        root = Path(root_cfg)
+        if not root.is_absolute():
+            root = self.base_dir / root
+        return root.resolve()
+
+    def cost_governance_enabled(self) -> bool:
+        """Enable governance explicitly or by freemium execution mode."""
+        return self.enable_cost_governance or self.execution_mode_label() == "freemium"
 
     def resolve_scheduler_nichos(self, all_slugs: list[str]) -> list[str]:
         """Resolve target nichos for scheduler, supporting canary rollout."""
@@ -271,12 +305,31 @@ class Settings(BaseSettings):
         """Best-effort provider classification for budget policy."""
         return self.provider_tier(provider) != "free"
 
-    def provider_allowed(self, provider: str) -> bool:
-        """Return True when current policy allows using this provider."""
+    def provider_allowed(self, provider: str, usage: str = "") -> bool:
+        """Return True when current policy allows using this provider.
+
+        `usage` is optional and backward compatible. When provided for media
+        and rendering contexts in V15, strict-free policy can be enforced even
+        outside FREE_MODE.
+        """
+        usage_key = (usage or "").strip().lower()
+        strict_usages = {
+            "media",
+            "render",
+            "render_tools",
+            "analysis",
+            "subtitle",
+            "enhancement",
+            "video_tools",
+            "video_post",
+        }
+        tier = self.provider_tier(provider)
+        if self.v15_strict_free_media_tools and usage_key in strict_usages:
+            return tier == "free"
+
         if not self.free_mode:
             return True
 
-        tier = self.provider_tier(provider)
         if tier == "free":
             return True
         if tier == "freemium":

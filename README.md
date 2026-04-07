@@ -173,6 +173,23 @@ python dashboard.py --port 9000
 
 Incluye endpoints para estado, nichos, jobs, ejecuciones y stream de logs.
 
+Vista dedicada de manifest por job:
+
+```bash
+http://localhost:8000/job/<JOB_ID>/manifest
+```
+
+Monitoreo de recursos en tiempo real via SSE:
+
+```bash
+GET /api/resources/stream
+```
+
+Cost governance freemium:
+
+- DAILY_BUDGET_USD para tope diario opcional.
+- MONTHLY_BUDGET_USD (default recomendado: 1) para tope mensual en modo freemium.
+
 ## Scheduler
 
 El scheduler corre con timezone America/Mexico_City y evita solapamientos por configuracion de misfire/coalesce.

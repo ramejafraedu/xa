@@ -20,6 +20,12 @@ from typing import Any, Callable, Optional, TypeVar
 from loguru import logger
 
 from config import settings
+from core.openmontage_free import (
+    apply_bg_remove,
+    apply_face_restore,
+    apply_upscale,
+    strict_free_candidates,
+)
 from core.provider_selector import ProviderSelector
 from core.state import StoryState
 from models.config_models import NichoConfig
@@ -57,7 +63,8 @@ class AssetAgent:
 
         # --- 1. Stock fallback for uncovered scenes ---
         clips_needed = nicho.num_clips
-        stock_order = selector.get_provider_order("stock_video", ["pexels", "pixabay", "coverr"])
+        stock_candidates = strict_free_candidates(["pexels", "pixabay", "coverr"], usage="media")
+        stock_order = selector.get_provider_order("stock_video", stock_candidates)
         results["provider_orders"]["stock_video"] = stock_order
 
         if clips_needed > 0:
@@ -85,7 +92,8 @@ class AssetAgent:
             selector.mark_result("stock_video", stock_order[0], False, "no clips returned")
 
         # --- 2. Images (with visual direction from StoryState) ---
-        image_order = selector.get_provider_order("image_generation", ["leonardo", "pollinations"])
+        image_candidates = strict_free_candidates(["leonardo", "pollinations"], usage="media")
+        image_order = selector.get_provider_order("image_generation", image_candidates)
         results["provider_orders"]["image_generation"] = image_order
 
         image_payload = self._with_backoff(
@@ -102,6 +110,9 @@ class AssetAgent:
         )
         results["images"], image_stats = image_payload
 
+        if settings.enable_openmontage_free_tools and settings.openmontage_enable_enhancement:
+            results["images"] = self._enhance_images_openmontage(results["images"], temp_dir, timestamp)
+
         for provider, stats in image_stats.items():
             if stats.get("ok", 0) > 0:
                 selector.mark_result("image_generation", provider, True)
@@ -109,7 +120,8 @@ class AssetAgent:
                 selector.mark_result("image_generation", provider, False, "image generation failed")
 
         # --- 3. Music (mood from script) ---
-        music_order = selector.get_provider_order("music_generation", ["lyria", "pixabay", "jamendo"])
+        music_candidates = strict_free_candidates(["lyria", "pixabay", "jamendo"], usage="media")
+        music_order = selector.get_provider_order("music_generation", music_candidates)
         results["provider_orders"]["music_generation"] = music_order
 
         music_payload = self._with_backoff(
@@ -272,6 +284,44 @@ class AssetAgent:
             logger.debug(f"Music fetch failed: {e}")
 
         return None, "none"
+
+    def _enhance_images_openmontage(
+        self,
+        images: list[Path],
+        temp_dir: Path,
+        timestamp: int,
+    ) -> list[Path]:
+        """Best-effort OpenMontage enhancement chain for generated images.
+
+        Keeps original images whenever a tool is unavailable or fails.
+        """
+        if not images:
+            return images
+
+        enhanced: list[Path] = []
+        for idx, img in enumerate(images):
+            current = img
+            try:
+                face_path = temp_dir / f"img_face_{timestamp}_{idx}.png"
+                restored = apply_face_restore(current, face_path)
+                if restored:
+                    current = restored
+
+                nobg_path = temp_dir / f"img_nobg_{timestamp}_{idx}.png"
+                nobg = apply_bg_remove(current, nobg_path)
+                if nobg:
+                    current = nobg
+
+                upscale_path = temp_dir / f"img_up_{timestamp}_{idx}.png"
+                upscaled = apply_upscale(current, upscale_path, scale=2)
+                if upscaled:
+                    current = upscaled
+            except Exception as exc:
+                logger.debug(f"OpenMontage image enhancement skipped: {exc}")
+
+            enhanced.append(current)
+
+        return enhanced
 
     def _with_backoff(
         self,

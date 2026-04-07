@@ -142,7 +142,7 @@ def render_video_with_fallback(
     timeline_path: Optional[Path] = None,
     timeline_payload: Optional[dict] = None,
     render_fixes: Optional[dict] = None,
-) -> tuple[Optional[Path], Optional[Path], str]:
+) -> tuple[Optional[Path], Optional[Path], str, str]:
     """Try Remotion first, then fallback to FFmpeg renderer."""
     from pipeline.renderer import render_video
 
@@ -173,11 +173,11 @@ def render_video_with_fallback(
                 timeline_payload=timeline_payload,
             ):
                 thumb = _extract_thumbnail(remotion_output, temp_dir, timestamp)
-                return remotion_output, thumb, ""
+                return remotion_output, thumb, "", "remotion"
 
             logger.info("Remotion unavailable/failed, using FFmpeg fallback")
 
-    return render_video(
+    ff_video, ff_thumb, ff_error = render_video(
         clips=clips,
         audio_path=audio_path,
         subs_path=subs_path,
@@ -195,6 +195,7 @@ def render_video_with_fallback(
         duraciones_clips=duraciones_clips,
         render_fixes=render_fixes,
     )
+    return ff_video, ff_thumb, ff_error, "ffmpeg"
 
 
 def render_with_fallback(

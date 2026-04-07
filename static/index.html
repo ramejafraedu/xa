@@ -196,6 +196,7 @@
                 <div class="status-chip"><span class="dot" id="dot-ffmpeg"></span> FFmpeg: <span id="status-ffmpeg">checking...</span></div>
                 <div class="status-chip"><span class="dot" id="dot-disk"></span> Disk: <span id="status-disk">...</span></div>
                 <div class="status-chip"><span class="dot" id="dot-keys"></span> API Keys: <span id="status-keys">...</span></div>
+                <div class="status-chip">💸 <span id="status-mode">mode...</span></div>
                 <div class="status-chip">🕐 <span id="status-time"></span></div>
             </div>
 
@@ -205,6 +206,8 @@
                 <div class="nicho-grid" id="nicho-grid"></div>
                 <div class="section-header"><span class="section-title">📋 Recent Jobs</span><button class="btn btn-secondary btn-sm" data-page="jobs">View All →</button></div>
                 <div class="jobs-table-wrap"><table class="jobs-table" id="jobs-table-mini"><thead><tr><th>Nicho</th><th>Titulo</th><th>Status</th><th>Quality</th><th>Time</th></tr></thead><tbody id="jobs-body-mini"></tbody></table></div>
+                <div class="section-header" style="margin-top:20px"><span class="section-title">💸 Cost Governance</span></div>
+                <div class="detail-panel" id="cost-panel"><div class="empty-state">Loading costs...</div></div>
             </div>
 
             <!-- PAGE: JOBS -->
@@ -263,6 +266,7 @@
 <script>
 const API='';
 let logSource=null;
+let resourceSource=null;
 
 // NAV
 document.querySelectorAll('.nav-btn[data-page]').forEach(btn=>{
@@ -287,6 +291,17 @@ async function fetchStatus(){
         document.getElementById('dot-keys').className='dot '+(d.missing_keys.length===0?'dot-green':'dot-yellow');
         document.getElementById('status-keys').textContent=d.missing_keys.length===0?'✅ All set':d.missing_keys.length+' missing';
         document.getElementById('status-time').textContent=d.server_time;
+    }catch(e){console.error(e);}
+}
+
+async function fetchExecutionMode(){
+    try{
+        const r=await fetch(API+'/api/execution-mode'),d=await r.json();
+        const monthSpend=Number(d.month_spend_usd||0).toFixed(4);
+        const monthBudget=Number(d.monthly_budget_usd||0).toFixed(4);
+        const txt=`${d.mode||'normal'} | month $${monthSpend}/$${monthBudget}`;
+        const node=document.getElementById('status-mode');
+        if(node) node.textContent=txt;
     }catch(e){console.error(e);}
 }
 
@@ -316,7 +331,7 @@ async function fetchJobs(){
         jobs.slice(0,5).forEach(j=>{mini.innerHTML+=`<tr onclick="showJobDetail('${j.job_id}')"><td style="text-transform:capitalize;font-weight:500">${j.nicho}</td><td>${j.titulo||'—'}</td><td>${statusBadge(j.status)}</td><td>${scoreCell(j.quality_score)}</td><td style="font-size:11px">${formatTime(j.timestamp)}</td></tr>`;});
         if(!jobs.length) mini.innerHTML='<tr><td colspan="5" class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-text">No jobs yet.</div></td></tr>';
         const full=document.getElementById('jobs-body-full');full.innerHTML='';
-        jobs.forEach(j=>{full.innerHTML+=`<tr onclick="showJobDetail('${j.job_id}')"><td style="font-size:11px;font-family:monospace">${(j.job_id||'').substring(0,25)}</td><td style="text-transform:capitalize">${j.nicho}</td><td>${j.titulo||'—'}</td><td>${statusBadge(j.status)}</td><td>${scoreCell(j.quality_score)}</td><td>${j.duration?j.duration.toFixed(1)+'s':'—'}</td><td>${j.cost_actual_usd?'$'+j.cost_actual_usd.toFixed(4):'$0'}</td><td>${j.status&&!['success','error'].includes(j.status)?`<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();resumeJob('${j.job_id}')">Resume</button>`:''}</td></tr>`;});
+        jobs.forEach(j=>{full.innerHTML+=`<tr onclick="showJobDetail('${j.job_id}')"><td style="font-size:11px;font-family:monospace">${(j.job_id||'').substring(0,25)}</td><td style="text-transform:capitalize">${j.nicho}</td><td>${j.titulo||'—'}</td><td>${statusBadge(j.status)}</td><td>${scoreCell(j.quality_score)}</td><td>${j.duration?j.duration.toFixed(1)+'s':'—'}</td><td>${j.cost_actual_usd?'$'+j.cost_actual_usd.toFixed(4):'$0'}</td><td style="display:flex;gap:6px;align-items:center">${j.status&&!['success','error'].includes(j.status)?`<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();resumeJob('${j.job_id}')">Resume</button>`:''}<a class="btn btn-sm btn-secondary" href="/job/${encodeURIComponent(j.job_id)}/manifest" onclick="event.stopPropagation()" target="_blank" rel="noopener">Manifest</a></td></tr>`;});
     }catch(e){console.error(e);}
 }
 
@@ -346,9 +361,9 @@ async function showJobDetail(jobId){
         html+=`</div></div>`;
         // Job Info
         html+=`<div class="detail-grid"><div class="detail-panel"><h3>📋 Job Details</h3>`;
-        const info={ID:det.job_id,Nicho:det.nicho_slug,Status:det.status,Title:det.titulo,Execution:det.execution_mode,'Quality Score':det.quality_score,'Viral Score':det.viral_score,Duration:det.duration_seconds?det.duration_seconds.toFixed(1)+'s':'—',Cost:'$'+(det.cost_actual_usd||0).toFixed(4),TTS:det.tts_engine_used||'—','Error Stage':det.error_stage||'—','Error Msg':(det.error_message||'—').substring(0,80)};
+        const info={ID:det.job_id,Nicho:det.nicho_slug,Status:det.status,Title:det.titulo,Execution:det.execution_mode,'Quality Score':det.quality_score,'Viral Score':det.viral_score,Duration:det.duration_seconds?det.duration_seconds.toFixed(1)+'s':'—',Cost:'$'+(det.cost_actual_usd||0).toFixed(4),TTS:det.tts_engine_used||'—','Render Backend':ana.render_backend||det.render_backend||'—','Error Stage':det.error_stage||'—','Error Msg':(det.error_message||'—').substring(0,80)};
         for(const[k,v]of Object.entries(info)) html+=`<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`;
-        html+=`</div>`;
+        html+=`<div style="margin-top:12px;display:flex;gap:8px"><a class="btn btn-secondary btn-sm" href="/job/${encodeURIComponent(jobId)}/manifest" target="_blank" rel="noopener">🗂 Open Full Manifest</a></div></div>`;
         // Post-Render Analysis
         html+=`<div class="detail-panel"><h3>🔬 Post-Render Analysis</h3>`;
         if(ana.ffprobe){
@@ -362,6 +377,13 @@ async function showJobDetail(jobId){
             html+=`<div class="detail-row"><span class="detail-key">Quality Overall</span><span class="detail-val" style="color:${qs.overall>=8?'var(--accent-green)':qs.overall>=6?'var(--accent-orange)':'var(--accent-red)'}">${qs.overall||'—'}/10</span></div>`;
         } else {
             html+=`<div style="color:var(--text-muted);font-size:12px">No video file found for analysis</div>`;
+        }
+        const qaIssues=Array.isArray(ana.qa_issues)?ana.qa_issues:[];
+        const qaPassed=ana.qa_passed!==false;
+        html+=`<div class="detail-row"><span class="detail-key">QA Status</span><span class="detail-val" style="color:${qaPassed?'var(--accent-green)':'var(--accent-orange)'}">${qaPassed?'PASS':'REVIEW'}</span></div>`;
+        html+=`<div class="detail-row"><span class="detail-key">QA Issues</span><span class="detail-val">${qaIssues.length}</span></div>`;
+        if(qaIssues.length){
+            html+=`<div style="margin-top:8px;font-size:12px;color:var(--accent-orange)">⚠️ ${escapeHtml(qaIssues.join(' | ').slice(0,260))}</div>`;
         }
         if(ana.thumbnail) html+=`<div style="margin-top:12px"><img src="${ana.thumbnail}" class="thumb-img" alt="Thumbnail"></div>`;
         html+=`<div class="detail-row" style="margin-top:8px"><span class="detail-key">Total Pipeline Time</span><span class="detail-val">${(ana.total_elapsed||0).toFixed(1)}s</span></div></div></div>`;
@@ -382,17 +404,23 @@ async function showJobDetail(jobId){
 async function fetchResources(){
     try{
         const r=await fetch(API+'/api/resources'),d=await r.json(),g=document.getElementById('resource-grid');
-        const barColor=(p)=>p>85?'var(--accent-red)':p>60?'var(--accent-orange)':'var(--accent-green)';
-        g.innerHTML=`
-            <div class="resource-card"><div class="resource-label">CPU</div><div class="resource-value" style="color:${barColor(d.cpu?.percent||0)}">${d.cpu?.percent||0}%</div><div class="resource-sub">${d.cpu?.cores||0} cores / ${d.cpu?.threads||0} threads</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.cpu?.percent||0}%;background:${barColor(d.cpu?.percent||0)}"></div></div></div>
-            <div class="resource-card"><div class="resource-label">RAM</div><div class="resource-value" style="color:${barColor(d.ram?.percent||0)}">${d.ram?.percent||0}%</div><div class="resource-sub">${d.ram?.used_gb||0}/${d.ram?.total_gb||0} GB</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.ram?.percent||0}%;background:${barColor(d.ram?.percent||0)}"></div></div></div>
-            <div class="resource-card"><div class="resource-label">SWAP</div><div class="resource-value" style="color:${barColor(d.swap?.percent||0)}">${d.swap?.percent||0}%</div><div class="resource-sub">${d.swap?.used_gb||0}/${d.swap?.total_gb||0} GB</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.swap?.percent||0}%;background:${barColor(d.swap?.percent||0)}"></div></div></div>
-            <div class="resource-card"><div class="resource-label">DISK</div><div class="resource-value" style="color:${barColor(d.disk?.percent||0)}">${d.disk?.percent||0}%</div><div class="resource-sub">${d.disk?.free_gb||0} GB free</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.disk?.percent||0}%;background:${barColor(d.disk?.percent||0)}"></div></div></div>`;
+        if(g) renderResources(d);
+    }catch(e){console.error(e);}
+}
+
+function renderResources(d){
+    const g=document.getElementById('resource-grid');
+    if(!g) return;
+    const barColor=(p)=>p>85?'var(--accent-red)':p>60?'var(--accent-orange)':'var(--accent-green)';
+    g.innerHTML=`
+        <div class="resource-card"><div class="resource-label">CPU</div><div class="resource-value" style="color:${barColor(d.cpu?.percent||0)}">${d.cpu?.percent||0}%</div><div class="resource-sub">${d.cpu?.cores||0} cores / ${d.cpu?.threads||0} threads</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.cpu?.percent||0}%;background:${barColor(d.cpu?.percent||0)}"></div></div></div>
+        <div class="resource-card"><div class="resource-label">RAM</div><div class="resource-value" style="color:${barColor(d.ram?.percent||0)}">${d.ram?.percent||0}%</div><div class="resource-sub">${d.ram?.used_gb||0}/${d.ram?.total_gb||0} GB</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.ram?.percent||0}%;background:${barColor(d.ram?.percent||0)}"></div></div></div>
+        <div class="resource-card"><div class="resource-label">SWAP</div><div class="resource-value" style="color:${barColor(d.swap?.percent||0)}">${d.swap?.percent||0}%</div><div class="resource-sub">${d.swap?.used_gb||0}/${d.swap?.total_gb||0} GB</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.swap?.percent||0}%;background:${barColor(d.swap?.percent||0)}"></div></div></div>
+        <div class="resource-card"><div class="resource-label">DISK</div><div class="resource-value" style="color:${barColor(d.disk?.percent||0)}">${d.disk?.percent||0}%</div><div class="resource-sub">${d.disk?.free_gb||0} GB free</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.disk?.percent||0}%;background:${barColor(d.disk?.percent||0)}"></div></div></div>`;
         const pb=document.getElementById('procs-body');pb.innerHTML='';
         (d.top_processes||[]).forEach(p=>{pb.innerHTML+=`<tr><td>${p.pid}</td><td>${p.name}</td><td>${p.cpu}%</td><td>${p.mem}%</td></tr>`;});
         if(!d.top_processes?.length) pb.innerHTML='<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">No active processes</td></tr>';
         if(d.error) toast('Resource monitor: '+d.error,'error');
-    }catch(e){console.error(e);}
 }
 
 // VIDEOS
@@ -404,6 +432,35 @@ async function fetchVideos(){
     }catch(e){console.error(e);}
 }
 
+// COSTS
+async function fetchCosts(){
+    try{
+        const r=await fetch(API+'/api/costs'),c=await r.json(),panel=document.getElementById('cost-panel');
+        if(!panel) return;
+        const monthBudget=Number(c.monthly_budget_usd||0),monthSpend=Number(c.month_spend_usd||0);
+        const monthPct=monthBudget>0?Math.min(100,(monthSpend/monthBudget)*100):0;
+        const dailyBudget=Number(c.daily_budget_usd||0),dailySpend=Number(c.today_spend_usd||0);
+        const dailyPct=dailyBudget>0?Math.min(100,(dailySpend/dailyBudget)*100):0;
+        const monthColor=monthPct>=90?'var(--accent-red)':monthPct>=70?'var(--accent-orange)':'var(--accent-green)';
+        const dailyColor=dailyPct>=90?'var(--accent-red)':dailyPct>=70?'var(--accent-orange)':'var(--accent-green)';
+        panel.innerHTML=`
+            <div class="detail-grid">
+                <div>
+                    <div class="detail-row"><span class="detail-key">Mode</span><span class="detail-val">${escapeHtml(c.mode||'normal')}</span></div>
+                    <div class="detail-row"><span class="detail-key">Today Spend</span><span class="detail-val">$${dailySpend.toFixed(4)}</span></div>
+                    <div class="detail-row"><span class="detail-key">Daily Budget</span><span class="detail-val">$${dailyBudget.toFixed(4)}</span></div>
+                    <div class="resource-bar"><div class="resource-bar-fill" style="width:${dailyPct}%;background:${dailyColor}"></div></div>
+                </div>
+                <div>
+                    <div class="detail-row"><span class="detail-key">Month Spend</span><span class="detail-val">$${monthSpend.toFixed(4)}</span></div>
+                    <div class="detail-row"><span class="detail-key">Monthly Budget</span><span class="detail-val">$${monthBudget.toFixed(4)}</span></div>
+                    <div class="detail-row"><span class="detail-key">Remaining Month</span><span class="detail-val">$${Number(c.remaining_monthly_budget_usd||0).toFixed(4)}</span></div>
+                    <div class="resource-bar"><div class="resource-bar-fill" style="width:${monthPct}%;background:${monthColor}"></div></div>
+                </div>
+            </div>`;
+    }catch(e){console.error(e);}
+}
+
 // ACTIONS
 async function runNiche(s,d=false){try{const r=await fetch(API+'/api/run/'+s+(d?'?dry_run=true':''),{method:'POST'}),data=await r.json();if(data.error)toast(data.error,'error');else{toast(`${d?'🏜️ Dry':'▶ Pipeline'} started for ${s}`,'success');setTimeout(fetchNichos,1000)}}catch(e){toast('Failed: '+e.message,'error')}}
 async function runAll(){try{await fetch(API+'/api/run-all',{method:'POST'});toast('🚀 All queued','success');setTimeout(fetchNichos,1000)}catch(e){toast('Failed: '+e.message,'error')}}
@@ -411,6 +468,12 @@ async function resumeJob(id){try{await fetch(API+'/api/resume/'+id,{method:'POST
 
 // LOGS
 function connectLogs(){if(logSource)logSource.close();logSource=new EventSource(API+'/api/logs');logSource.addEventListener('log',(e)=>{try{addLogLine(JSON.parse(e.data))}catch(err){}});logSource.onerror=()=>{setTimeout(connectLogs,3000)};}
+function connectResourcesStream(){
+    if(resourceSource) resourceSource.close();
+    resourceSource=new EventSource(API+'/api/resources/stream');
+    resourceSource.addEventListener('resources',(e)=>{try{renderResources(JSON.parse(e.data));}catch(err){}});
+    resourceSource.onerror=()=>{setTimeout(connectResourcesStream,4000)};
+}
 function addLogLine(entry){const c=document.getElementById('log-console'),l=document.createElement('div');l.className='log-line';l.innerHTML=`<span class="log-time">${entry.time}</span><span class="log-level log-level-${entry.level}">${entry.level}</span><span class="log-msg">${escapeHtml(entry.message)}</span>`;c.appendChild(l);if(c.scrollHeight-c.scrollTop<400)c.scrollTop=c.scrollHeight;while(c.children.length>200)c.removeChild(c.firstChild);}
 function clearLogs(){document.getElementById('log-console').innerHTML='';}
 
@@ -420,7 +483,7 @@ function scoreCell(s){if(!s)return'—';const p=Math.min(100,s*10),c=s>=8?'var(-
 function formatTime(ts){if(!ts)return'—';return new Date(ts).toLocaleString('es-MX',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'});}
 function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function toast(m,t='info'){const c=document.getElementById('toast-container'),e=document.createElement('div');e.className='toast toast-'+t;e.textContent=m;c.appendChild(e);setTimeout(()=>e.remove(),4000);}
-async function refreshAll(){await Promise.all([fetchStatus(),fetchNichos(),fetchJobs(),fetchVideos()]);}
+async function refreshAll(){await Promise.all([fetchStatus(),fetchExecutionMode(),fetchNichos(),fetchJobs(),fetchVideos(),fetchCosts()]);}
 
 // CHECKPOINTS
 let activeCheckpointJob=null,isEditMode=false;
@@ -430,8 +493,8 @@ function toggleEditMode(){isEditMode=!isEditMode;document.getElementById('cp-edi
 async function submitCheckpoint(dec){if(!activeCheckpointJob)return;const n=document.getElementById('cp-edit-notes').value;if(dec==='edit'&&!n.trim()){toast('Escribe instrucciones','error');return;}try{await fetch(API+'/api/checkpoints/'+activeCheckpointJob+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:dec,notes:n})});toast('Pipeline reanudado','success');document.getElementById('copilot-modal').classList.remove('active');activeCheckpointJob=null;setTimeout(fetchJobs,1000)}catch(e){toast('Error: '+e.message,'error')}}
 
 // INIT
-refreshAll(); connectLogs();
-setInterval(fetchStatus,15000); setInterval(fetchNichos,10000); setInterval(fetchJobs,30000); setInterval(fetchCheckpoints,2000);
+refreshAll(); connectLogs(); connectResourcesStream();
+setInterval(fetchStatus,15000); setInterval(fetchExecutionMode,15000); setInterval(fetchNichos,10000); setInterval(fetchJobs,30000); setInterval(fetchCosts,20000); setInterval(fetchCheckpoints,2000);
 setInterval(()=>{if(document.getElementById('page-monitor').classList.contains('active'))fetchResources();},3000);
 </script>
 </body>

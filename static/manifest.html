@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manifest Viewer</title>
+    <style>
+        :root {
+            --bg: #0b0d12;
+            --card: #151923;
+            --border: rgba(255,255,255,0.08);
+            --text: #e5e7eb;
+            --muted: #94a3b8;
+            --ok: #10b981;
+            --warn: #f59e0b;
+            --err: #ef4444;
+            --accent: #3b82f6;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(circle at top right, #172032, var(--bg) 50%);
+            color: var(--text);
+        }
+        .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+        .title { font-size: 26px; font-weight: 700; margin: 0; }
+        .subtitle { color: var(--muted); font-size: 13px; }
+        .actions { display: flex; gap: 8px; }
+        .btn {
+            border: 1px solid var(--border);
+            background: #1d2432;
+            color: var(--text);
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 13px;
+        }
+        .btn:hover { border-color: rgba(59,130,246,0.5); }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+        }
+        .k { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+        .v { font-size: 15px; font-weight: 600; word-break: break-word; }
+        .status-ok { color: var(--ok); }
+        .status-warn { color: var(--warn); }
+        .status-err { color: var(--err); }
+        .timeline {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 8px;
+        }
+        .step {
+            min-width: 120px;
+            background: #111827;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .step .s { font-size: 11px; color: var(--muted); }
+        .step .l { font-weight: 600; margin-top: 4px; }
+        .step .t { font-size: 11px; margin-top: 6px; color: var(--muted); }
+        .step.completed { border-color: rgba(16,185,129,0.5); }
+        .step.active { border-color: rgba(59,130,246,0.6); }
+        .step.error { border-color: rgba(239,68,68,0.6); }
+        .trail { margin: 0; padding-left: 18px; }
+        .trail li { margin: 8px 0; color: var(--muted); }
+        pre {
+            margin: 0;
+            background: #0a0f18;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            overflow: auto;
+            max-height: 60vh;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .error { color: var(--err); }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="topbar">
+            <div>
+                <h1 class="title">Manifest Viewer</h1>
+                <div class="subtitle" id="job-subtitle">Loading...</div>
+            </div>
+            <div class="actions">
+                <a class="btn" href="/">Dashboard</a>
+                <button class="btn" id="btn-download">Download JSON</button>
+                <button class="btn" id="btn-refresh">Refresh</button>
+            </div>
+        </div>
+
+        <div class="grid" id="summary-grid"></div>
+
+        <div class="card" style="margin-bottom:12px;">
+            <div class="k">Pipeline Timeline</div>
+            <div class="timeline" id="timeline"></div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px;">
+            <div class="k">Decision Trail</div>
+            <ul class="trail" id="trail"></ul>
+        </div>
+
+        <div class="card">
+            <div class="k">Raw Manifest JSON</div>
+            <pre id="manifest-raw">Loading...</pre>
+        </div>
+    </div>
+
+    <script>
+        function parseJobId() {
+            const m = window.location.pathname.match(/^\/job\/([^\/]+)\/manifest$/);
+            return m ? decodeURIComponent(m[1]) : "";
+        }
+
+        function esc(v) {
+            const d = document.createElement("div");
+            d.textContent = String(v ?? "");
+            return d.innerHTML;
+        }
+
+        async function loadManifest() {
+            const jobId = parseJobId();
+            if (!jobId) {
+                document.getElementById("manifest-raw").innerHTML = '<span class="error">Invalid manifest route.</span>';
+                return;
+            }
+
+            document.getElementById("job-subtitle").textContent = "Job: " + jobId;
+
+            const [mRes, dRes] = await Promise.all([
+                fetch(`/api/jobs/${encodeURIComponent(jobId)}/manifest`),
+                fetch(`/api/jobs/${encodeURIComponent(jobId)}`),
+            ]);
+
+            const manifest = await mRes.json();
+            const detail = await dRes.json();
+
+            if (manifest.error) {
+                document.getElementById("manifest-raw").innerHTML = `<span class="error">${esc(manifest.error)}</span>`;
+                return;
+            }
+
+            const summary = [
+                ["Status", manifest.status || "pending"],
+                ["Nicho", manifest.nicho_slug || "-"],
+                ["Title", manifest.titulo || "-"],
+                ["Execution", manifest.execution_mode || "-"],
+                ["Quality", manifest.quality_score ?? 0],
+                ["Cost Actual", `$${Number(manifest.cost_actual_usd || 0).toFixed(4)}`],
+                ["Month Spend", `$${Number(manifest.month_to_date_spend_usd || 0).toFixed(4)}`],
+                ["Render", manifest.render_backend || "-"],
+            ];
+
+            const grid = document.getElementById("summary-grid");
+            grid.innerHTML = "";
+            for (const [k, v] of summary) {
+                const card = document.createElement("div");
+                card.className = "card";
+                card.innerHTML = `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`;
+                grid.appendChild(card);
+            }
+
+            const timeline = document.getElementById("timeline");
+            timeline.innerHTML = "";
+            for (const step of (detail.pipeline_timeline || [])) {
+                const el = document.createElement("div");
+                el.className = `step ${step.state || "pending"}`;
+                el.innerHTML = `
+                    <div class="s">${esc(step.icon || "")}</div>
+                    <div class="l">${esc(step.label || step.key || "stage")}</div>
+                    <div class="s">state: ${esc(step.state || "pending")}</div>
+                    <div class="t">${Number(step.elapsed || 0).toFixed(2)}s</div>
+                `;
+                timeline.appendChild(el);
+            }
+
+            const trail = document.getElementById("trail");
+            trail.innerHTML = "";
+            const events = detail.decision_trail || [];
+            if (!events.length) {
+                trail.innerHTML = "<li>No decision events available.</li>";
+            } else {
+                for (const e of events) {
+                    const li = document.createElement("li");
+                    li.innerHTML = `<strong>${esc(e.icon || "📌")} ${esc(e.label || "Decision")}</strong> - ${esc(e.detail || "")}`;
+                    trail.appendChild(li);
+                }
+            }
+
+            document.getElementById("manifest-raw").textContent = JSON.stringify(manifest, null, 2);
+
+            const downloadBtn = document.getElementById("btn-download");
+            downloadBtn.onclick = () => {
+                const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `job_manifest_${jobId}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            };
+        }
+
+        document.getElementById("btn-refresh").addEventListener("click", loadManifest);
+        loadManifest().catch((err) => {
+            document.getElementById("manifest-raw").innerHTML = `<span class="error">${esc(err.message || err)}</span>`;
+        });
+    </script>
+</body>
+</html>

@@ -9,6 +9,7 @@ loguru>=0.7,<1
 typer>=0.15,<1
 rich>=13.9,<14
 pyyaml>=6.0,<7          # V16: YAML niche manifests (nichos/*.yaml)
+jsonschema>=4.20,<5     # OpenMontage styles/playbook validation
 
 # HTTP (single library, no mixing)
 httpx>=0.28,<1
