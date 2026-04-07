@@ -782,8 +782,11 @@ async def list_nichos():
 
 
 @app.get("/api/jobs")
-async def list_jobs():
+async def list_jobs(limit: int = 30, offset: int = 0):
     """List recent jobs from manifest files."""
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+
     jobs = []
     # Check temp for in-progress
     state = StateManager(settings.temp_dir)
@@ -856,7 +859,8 @@ async def list_jobs():
             except Exception:
                 pass
 
-    return sorted(jobs, key=lambda x: x.get("timestamp", 0), reverse=True)[:30]
+    ordered_jobs = sorted(jobs, key=lambda x: x.get("timestamp", 0), reverse=True)
+    return ordered_jobs[offset: offset + limit]
 
 
 @app.post("/api/run/{nicho_slug}")
