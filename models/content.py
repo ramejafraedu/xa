@@ -148,7 +148,8 @@ class VideoContent(BaseModel):
     def sanitize_guion(cls, v: str) -> str:
         import re
         text = str(v)
-        text = re.sub(r'[\"\'\\u201C\\u201D\\u2018\\u2019#@\[\]{}()<>|\\*^~`%=+_]', " ", text)
+        # Keep letters intact; only remove punctuation/symbols that break prompts/subtitles.
+        text = re.sub(r'["\'“”‘’#@\[\]{}()<>|\\*^~`%=+_]', " ", text)
         text = re.sub(r"\.{2,}", " ", text)
         text = re.sub(r" - ", " ", text)
         text = re.sub(r"\s{2,}", " ", text)
