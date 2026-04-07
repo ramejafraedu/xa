@@ -146,6 +146,14 @@ def _preflight_checks() -> bool:
     else:
         checks.append(("WhisperX (subs)", "⬜ Disabled", "dim"))
 
+    if settings.use_piper_tts:
+        if settings.piper_ready():
+            checks.append(("Piper TTS (offline)", "✅ Ready", "green"))
+        else:
+            checks.append(("Piper TTS (offline)", "⚠️ Model missing", "yellow"))
+    else:
+        checks.append(("Piper TTS (offline)", "⬜ Disabled", "dim"))
+
     if settings.use_remotion:
         from pipeline.renderer_remotion import is_remotion_available
         if is_remotion_available():
@@ -776,6 +784,7 @@ def run(
     resume: str = typer.Option("", "--resume", help="Resume a crashed job by JOB_ID"),
     render_only: str = typer.Option("", "--render-only", help="Re-render from existing assets by JOB_ID"),
     publish_only: str = typer.Option("", "--publish-only", help="Re-publish already-rendered video by JOB_ID"),
+    reference_url: str = typer.Option("", "--reference-url", help="Reference URL to guide script/scene generation (V15)"),
     # ── V15 PRO flags ──
     director: bool = typer.Option(False, "--director", help="🎬 V15 Interactive mode (approve each stage)"),
     v15: bool = typer.Option(False, "--v15", help="🚀 V15 Autonomous mode (multi-agent + coherence)"),
@@ -840,7 +849,7 @@ def run(
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
             mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
-            run_pipeline_v15("finanzas", mode=mode)
+            run_pipeline_v15("finanzas", mode=mode, reference_url=reference_url)
         else:
             console.print("\n[yellow]🧪 TEST MODE — V14 Classic (finanzas)[/yellow]\n")
             run_pipeline("finanzas")
@@ -851,7 +860,7 @@ def run(
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
             mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
-            run_pipeline_v15(niche, mode=mode, dry_run=True)
+            run_pipeline_v15(niche, mode=mode, dry_run=True, reference_url=reference_url)
         else:
             console.print(f"\n[yellow]🏜️ DRY RUN V14 — {niche}[/yellow]\n")
             run_pipeline(niche, dry_run=True)
@@ -865,7 +874,7 @@ def run(
             if use_v15:
                 from core.pipeline_v15 import run_pipeline_v15
                 from core.director import DirectorMode
-                run_pipeline_v15(slug, mode=DirectorMode.AUTO)
+                run_pipeline_v15(slug, mode=DirectorMode.AUTO, reference_url=reference_url)
             else:
                 run_pipeline(slug)
 
@@ -883,7 +892,7 @@ def run(
         console.print("[dim]You'll approve/edit at each stage[/dim]\n")
         from core.pipeline_v15 import run_pipeline_v15
         from core.director import DirectorMode
-        run_pipeline_v15(niche, mode=DirectorMode.INTERACTIVE)
+        run_pipeline_v15(niche, mode=DirectorMode.INTERACTIVE, reference_url=reference_url)
 
     elif v15 and niche:
         # V15 Autonomous mode
@@ -894,7 +903,7 @@ def run(
         console.print(f"\n[cyan]🚀 V15 AUTONOMOUS — {niche}[/cyan]\n")
         from core.pipeline_v15 import run_pipeline_v15
         from core.director import DirectorMode
-        run_pipeline_v15(niche, mode=DirectorMode.AUTO)
+        run_pipeline_v15(niche, mode=DirectorMode.AUTO, reference_url=reference_url)
 
     elif niche:
         # Default: V14 classic (backward compatible)
@@ -905,7 +914,7 @@ def run(
         if use_v15:
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
-            run_pipeline_v15(niche, mode=DirectorMode.AUTO)
+            run_pipeline_v15(niche, mode=DirectorMode.AUTO, reference_url=reference_url)
         else:
             run_pipeline(niche)
 

@@ -50,13 +50,13 @@ def fetch_stock_videos(
                     str_path = cached_path.as_posix()
                     if str_path not in seen_paths:
                         seen_paths.add(str_path)
-                                all_items.append(
-                                    {
-                                        "url": "",
-                                        "local_path": str_path,
-                                        "provider": _infer_provider_from_filename(filename),
-                                    }
-                                )
+                        all_items.append(
+                            {
+                                "url": "",
+                                "local_path": str_path,
+                                "provider": _infer_provider_from_filename(filename),
+                            }
+                        )
 
     # 2. Fetch more following selected provider order.
     provider_order = provider_order or ["pexels", "pixabay", "coverr"]

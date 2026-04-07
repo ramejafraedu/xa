@@ -39,6 +39,16 @@ class ResearchAgent:
         """
         t0 = time.time()
         brief = ResearchBrief()
+        brief.precedence_rule = (
+            "REFERENCE > RESEARCH > NICHO_DEFAULT"
+            if state.reference_url
+            else "RESEARCH > NICHO_DEFAULT"
+        )
+
+        if state.reference_key_points:
+            brief.reference_signals = state.reference_key_points[:5]
+        elif state.reference_summary:
+            brief.reference_signals = [state.reference_summary[:220]]
 
         # 1. Trending topics (existing V14 services)
         try:
@@ -56,6 +66,10 @@ class ResearchAgent:
             logger.debug(f"Trending fetch failed: {e}")
             brief.trending_context_raw = f"Tendencias no disponibles — usa contexto del nicho: {nicho.nombre}"
 
+        # Optional: web research plus (extra RSS enrichment)
+        if settings.enable_web_research_plus:
+            self._augment_web_research_plus(nicho, brief)
+
         # 2. Supabase memory (what worked before)
         memoria = "Sin memoria previa"
         try:
@@ -71,15 +85,19 @@ class ResearchAgent:
 
         # 3. LLM-powered angle recommendations
         try:
-            brief.recommended_angles = self._generate_angles(nicho, brief, memoria)
+            brief.recommended_angles = self._generate_angles(nicho, brief, memoria, state)
         except Exception as e:
             logger.debug(f"Angle generation failed: {e}")
             # Fallback angles based on nicho
             brief.recommended_angles = self._fallback_angles(nicho)
 
+        if brief.reference_signals:
+            seeded = self._angles_from_reference_signals(brief.reference_signals)
+            brief.recommended_angles = self._merge_unique(seeded + brief.recommended_angles)[:4]
+
         # 4. Hook suggestions
         try:
-            brief.hook_suggestions = self._generate_hooks(nicho, brief)
+            brief.hook_suggestions = self._generate_hooks(nicho, brief, state)
         except Exception as e:
             logger.debug(f"Hook generation failed: {e}")
 
@@ -94,8 +112,31 @@ class ResearchAgent:
         )
         return brief
 
+    def _augment_web_research_plus(self, nicho: NichoConfig, brief: ResearchBrief) -> None:
+        """Enrich research with extra web headlines (RSS-based, low-risk)."""
+        try:
+            from services.trends import get_google_news_rss
+
+            q1 = nicho.nombre
+            q2 = (brief.recommended_angles[0] if brief.recommended_angles else nicho.slug)
+            headlines = self._merge_unique(get_google_news_rss(q1, limit=4) + get_google_news_rss(q2, limit=4))
+            if headlines:
+                brief.web_sources = headlines[:6]
+                web_line = "WEB HEADLINES: " + "; ".join(brief.web_sources[:4])
+                brief.trending_context_raw = (
+                    f"{brief.trending_context_raw} | {web_line}"
+                    if brief.trending_context_raw
+                    else web_line
+                )
+        except Exception as exc:
+            logger.debug(f"Web research plus failed: {exc}")
+
     def _generate_angles(
-        self, nicho: NichoConfig, brief: ResearchBrief, memoria: str,
+        self,
+        nicho: NichoConfig,
+        brief: ResearchBrief,
+        memoria: str,
+        state: StoryState,
     ) -> list[str]:
         """Use LLM to suggest content angles based on trends + memory."""
         from services.http_client import request_with_retry
@@ -110,10 +151,12 @@ class ResearchAgent:
         user = (
             f"NICHO: {nicho.nombre}\n"
             f"TONO: {nicho.tono}\n"
+            f"PRECEDENCIA: {brief.precedence_rule}\n"
             f"TRENDING: {brief.trending_context_raw[:300]}\n"
+            f"SEÑALES_REFERENCIA: {' | '.join(brief.reference_signals[:4]) if brief.reference_signals else 'N/A'}\n"
             f"HISTORIAL: {str(memoria)[:300]}\n"
             f"ESTILO: {nicho.estilo_narrativo}\n\n"
-            f"Sugiere 3 ángulos virales ORIGINALES."
+            f"Sugiere 3 ángulos virales ORIGINALES respetando PRECEDENCIA."
         )
 
         payload = {
@@ -149,7 +192,7 @@ class ResearchAgent:
 
         return self._fallback_angles(nicho)
 
-    def _generate_hooks(self, nicho: NichoConfig, brief: ResearchBrief) -> list[str]:
+    def _generate_hooks(self, nicho: NichoConfig, brief: ResearchBrief, state: StoryState) -> list[str]:
         """Generate viral hook suggestions."""
         from services.http_client import request_with_retry
 
@@ -164,6 +207,8 @@ class ResearchAgent:
         user = (
             f"NICHO: {nicho.nombre}\n"
             f"ÁNGULO: {angle}\n"
+            f"PRECEDENCIA: {brief.precedence_rule}\n"
+            f"REFERENCIA: {state.reference_summary[:180] if state.reference_summary else 'N/A'}\n"
             f"ESTILO: {nicho.estilo_narrativo[:100]}\n\n"
             f"5 hooks virales, formato: [\"hook1\", \"hook2\", ...]"
         )
@@ -235,3 +280,30 @@ class ResearchAgent:
             "Error común que casi todos cometen",
             "Secreto que cambia la perspectiva",
         ])
+
+    @staticmethod
+    def _angles_from_reference_signals(signals: list[str]) -> list[str]:
+        """Convert reference signals into angle seeds."""
+        seeds = []
+        for s in signals[:3]:
+            part = s.strip()
+            if not part:
+                continue
+            seeds.append(f"Revelar la implicación oculta de: {part[:110]}")
+        return seeds
+
+    @staticmethod
+    def _merge_unique(items: list[str]) -> list[str]:
+        """Preserve order while removing duplicates and empties."""
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            clean = (item or "").strip()
+            if not clean:
+                continue
+            key = clean.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(clean)
+        return out

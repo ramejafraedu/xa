@@ -76,6 +76,7 @@ class SceneAgent:
         correction_notes: str,
     ) -> list[SceneBlueprint]:
         """LLM-powered scene splitting."""
+        reference_block = self._build_reference_scene_block(state)
 
         correction_block = ""
         if correction_notes:
@@ -101,7 +102,9 @@ REGLAS DE ESCENAS:
 - Incluye nota de cámara (slow zoom in, static, pan left, dutch angle, close up)
 - Incluye tipo de transición (cut, fade, whip, zoom_cut)
 - Las escenas deben progresar narrativamente
+- Si hay conflicto de fuentes, respeta: {state.precedence_rule}
 {correction_block}
+{reference_block}
 
 Devuelve SOLO JSON válido. Formato:
 [
@@ -169,6 +172,11 @@ Divide en escenas cinematográficas. Incluye el hook como escena 1 y el CTA como
             "wide": "establishing shot, full environment visible",
         }
 
+        reference_hint = ""
+        if state.has_reference():
+            key_anchor = state.reference_key_points[0] if state.reference_key_points else state.reference_summary[:140]
+            reference_hint = f" Reference anchor: {key_anchor}."
+
         for scene in scenes:
             mood_extra = mood_visuals.get(scene.mood, "")
             cam_extra = camera_visuals.get(scene.camera_notes.lower(), "")
@@ -180,10 +188,25 @@ Divide en escenas cinematográficas. Incluye el hook como escena 1 y el CTA como
                 f"{mood_extra}. "
                 f"{cam_extra}. "
                 f"{char_desc}. "
+                f"{reference_hint} "
                 f"No text overlays, no watermarks, cinematic quality."
             ).strip()
 
         return scenes
+
+    def _build_reference_scene_block(self, state: StoryState) -> str:
+        """Build reference constraints block for scene decomposition."""
+        if not state.has_reference():
+            return "REFERENCE: N/A"
+
+        lines = [
+            f"REFERENCE_URL: {state.reference_url}",
+            f"REFERENCE_TITLE: {state.reference_title or 'N/A'}",
+            f"REFERENCE_SUMMARY: {state.reference_summary[:260] if state.reference_summary else 'N/A'}",
+        ]
+        if state.reference_key_points:
+            lines.append("REFERENCE_KEY_POINTS: " + " | ".join(state.reference_key_points[:4]))
+        return "\n".join(lines)
 
     def _fallback_split(self, state: StoryState) -> list[SceneBlueprint]:
         """Simple sentence-based splitting when LLM fails."""

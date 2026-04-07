@@ -19,7 +19,7 @@ from loguru import logger
 from rich.console import Console
 from rich.table import Table
 
-from config import NICHOS
+from config import NICHOS, settings
 
 console = Console()
 
@@ -51,7 +51,14 @@ def start_scheduler():
     table.add_column("Hours")
     table.add_column("Timezone")
 
+    all_slugs = list(NICHOS.keys())
+    target_slugs = settings.resolve_scheduler_nichos(all_slugs)
+    target_set = set(target_slugs)
+
     for slug, nicho in NICHOS.items():
+        if slug not in target_set:
+            continue
+
         hours_str = ",".join(str(h) for h in nicho.horas)
         trigger = CronTrigger(hour=hours_str, timezone="America/Mexico_City")
 
@@ -68,6 +75,11 @@ def start_scheduler():
             slug,
             ", ".join(f"{h:02d}:00" for h in nicho.horas),
             "America/Mexico_City",
+        )
+
+    if settings.scheduler_canary_mode:
+        console.print(
+            f"[yellow]⚠️ Canary mode activo. Nichos programados: {', '.join(target_slugs)}[/yellow]"
         )
 
     console.print(table)

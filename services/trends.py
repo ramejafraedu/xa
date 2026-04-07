@@ -6,12 +6,17 @@ Google News are more reliable. TikTok trending via RapidAPI is optional.
 from __future__ import annotations
 
 import re
+import time
 import xml.etree.ElementTree as ET
 from typing import Optional
 
 from loguru import logger
 
+from config import settings
 from services.http_client import request_with_retry, get_json
+
+
+_tiktok_cooldown_until = 0.0
 
 
 def get_google_trends_rss(nicho: str, limit: int = 6) -> list[str]:
@@ -33,6 +38,32 @@ def get_google_trends_rss(nicho: str, limit: int = 6) -> list[str]:
 
     except Exception as e:
         logger.debug(f"Google Trends RSS failed: {e}")
+        return []
+
+
+def get_google_news_rss(query: str, limit: int = 6) -> list[str]:
+    """Fetch topic headlines from Google News RSS for extra web context."""
+    if not query:
+        return []
+
+    try:
+        from urllib.parse import quote_plus
+
+        encoded = quote_plus(query)
+        url = (
+            "https://news.google.com/rss/search"
+            f"?q={encoded}&hl=es-419&gl=MX&ceid=MX:es-419"
+        )
+        resp = request_with_retry("GET", url, max_retries=2, timeout=12)
+        if resp.status_code != 200:
+            return []
+
+        root = ET.fromstring(resp.text)
+        items = root.findall(".//item/title")
+        headlines = [item.text.strip() for item in items[:limit] if item.text]
+        return headlines
+    except Exception as e:
+        logger.debug(f"Google News RSS failed: {e}")
         return []
 
 
@@ -65,7 +96,15 @@ def get_google_trends_pytrends(nicho: str) -> list[str]:
 
 def get_tiktok_trending(rapidapi_key: str) -> list[str]:
     """Get TikTok trending hashtags via RapidAPI."""
+    global _tiktok_cooldown_until
+
+    if not settings.enable_tiktok_trending_api:
+        return []
+
     if not rapidapi_key:
+        return []
+
+    if time.time() < _tiktok_cooldown_until:
         return []
 
     try:
@@ -88,6 +127,13 @@ def get_tiktok_trending(rapidapi_key: str) -> list[str]:
         return hashtags
 
     except Exception as e:
+        err = str(e).lower()
+        if "404" in err or "not found" in err:
+            _tiktok_cooldown_until = time.time() + (6 * 3600)
+            logger.warning("TikTok trending endpoint returned 404. Cooling down for 6h.")
+        elif "429" in err or "rate" in err:
+            _tiktok_cooldown_until = time.time() + (20 * 60)
+            logger.warning("TikTok trending rate limited. Cooling down for 20m.")
         logger.debug(f"TikTok trending failed: {e}")
         return []
 

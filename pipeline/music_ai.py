@@ -14,11 +14,15 @@ Provider hierarchy:
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from loguru import logger
 
 from config import settings
+
+
+_lyria_cooldown_until = 0.0
 
 
 def generate_music_ai(
@@ -38,6 +42,8 @@ def generate_music_ai(
     Returns:
         True if successful.
     """
+    global _lyria_cooldown_until
+
     if not settings.gemini_api_key:
         logger.debug("No GEMINI_API_KEY — skipping Lyria")
         return False
@@ -48,6 +54,9 @@ def generate_music_ai(
 
     if not settings.provider_allowed("lyria"):
         logger.info("Lyria music skipped by provider policy")
+        return False
+
+    if time.time() < _lyria_cooldown_until:
         return False
 
     # Idempotency check
@@ -96,6 +105,11 @@ def generate_music_ai(
         return False
 
     except Exception as e:
+        err = str(e).lower()
+        if "not_found" in err or "404" in err or "is not found" in err:
+            _lyria_cooldown_until = time.time() + (6 * 3600)
+            logger.warning("Lyria model unavailable (404). Cooling down for 6h.")
+            return False
         logger.warning(f"Lyria music generation failed: {e}")
         return False
 

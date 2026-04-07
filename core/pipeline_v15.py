@@ -42,6 +42,7 @@ from config import NICHOS, app_config, settings
 from core.cost_governance import CostGovernance
 from core.director import CheckpointResult, Director, DirectorMode
 from core.feedback_loop import review_content, should_iterate
+from core.reference_context import load_reference_context
 from core.state import StoryState, get_style_for_platform
 from models.content import (
     BlockScores,
@@ -61,6 +62,7 @@ def run_pipeline_v15(
     mode: DirectorMode = DirectorMode.AUTO,
     dry_run: bool = False,
     resume_job_id: str = "",
+    reference_url: str = "",
 ) -> JobManifest:
     """Execute the V15 multi-agent pipeline.
 
@@ -80,7 +82,8 @@ def run_pipeline_v15(
     from pipeline.subtitles import vtt_to_ass, generate_timed_ass_from_text
     from pipeline.quality_gate import validate_and_score
     from pipeline.self_healer import attempt_healing
-    from pipeline.renderer import download_clips, render_video
+    from pipeline.renderer import download_clips
+    from pipeline.renderer_remotion import render_video_with_fallback
     from pipeline.duration_validator import validate_duration
     from pipeline.pre_render_validator import validate_pre_render
     from pipeline.cleanup import cleanup_temp, cleanup_stale_temp
@@ -108,6 +111,9 @@ def run_pipeline_v15(
     manifest.execution_mode = settings.execution_mode_label()
     manifest.feature_flags = settings.active_feature_flags()
     manifest.budget_daily_usd = float(settings.daily_budget_usd)
+    manifest.reference_url = (reference_url or "").strip()
+    if manifest.reference_url:
+        manifest.reference_notes = "reference_received"
 
     cost_governance = CostGovernance(manifest)
 
@@ -120,6 +126,12 @@ def run_pipeline_v15(
         nicho_slug=nicho_slug,
         visual_direction=nicho.direccion_visual,
         style_profile=get_style_for_platform(nicho.plataforma),
+        reference_url=manifest.reference_url,
+        precedence_rule=(
+            "REFERENCE > RESEARCH > NICHO_DEFAULT"
+            if manifest.reference_url
+            else "RESEARCH > NICHO_DEFAULT"
+        ),
     )
 
     settings.ensure_dirs()
@@ -145,6 +157,18 @@ def run_pipeline_v15(
         )
 
         try:
+            # Optional reference-driven context loading.
+            if manifest.reference_url:
+                cache_path = settings.temp_dir / "reference_context_cache.json"
+                ref_ctx = load_reference_context(manifest.reference_url, cache_path)
+                if ref_ctx:
+                    story.reference_title = str(ref_ctx.get("title", ""))
+                    story.reference_summary = str(ref_ctx.get("summary", ""))
+                    story.reference_key_points = list(ref_ctx.get("key_points", []))[:6]
+                    manifest.reference_notes = "reference_context_loaded"
+                else:
+                    manifest.reference_notes = "reference_context_unavailable"
+
             # ── Stage 1: Research ────────────────────────────────────
             t = time.time()
             progress.update(main_task, description="[cyan]🔍 Research Agent...")
@@ -155,7 +179,9 @@ def run_pipeline_v15(
             research_summary = (
                 f"📊 Trending: {', '.join(story.research.trending_topics[:3]) or 'N/A'}\n"
                 f"🎯 Ángulos: {', '.join(story.research.recommended_angles) or 'N/A'}\n"
-                f"🪝 Hooks sugeridos: {', '.join(story.research.hook_suggestions[:3]) or 'N/A'}"
+                f"🪝 Hooks sugeridos: {', '.join(story.research.hook_suggestions[:3]) or 'N/A'}\n"
+                f"📚 Prioridad: {story.precedence_rule}\n"
+                f"🔗 Reference: {story.reference_url or 'N/A'}"
             )
             result = director.checkpoint("research", research_summary, story)
             if not result.approved and result.decision.value == "reject":
@@ -260,6 +286,8 @@ def run_pipeline_v15(
                 manifest.block_scores = quality.block_scores
                 manifest.ab_variant = raw_content.get("_ab_variant", "A")
                 manifest.input_hash = content.input_hash
+                if raw_content.get("_reference_applied"):
+                    manifest.reference_notes = "reference_applied_in_script"
 
                 if not quality.is_approved:
                     manifest.status = JobStatus.MANUAL_REVIEW.value
@@ -516,7 +544,7 @@ def run_pipeline_v15(
                 notify_error(manifest)
                 return manifest
 
-            video_path, thumb_path, render_error = render_video(
+            video_path, thumb_path, render_error = render_video_with_fallback(
                 clips=clips,
                 audio_path=audio_path,
                 subs_path=ass_path if ass_path.exists() else None,
@@ -545,7 +573,7 @@ def run_pipeline_v15(
                 if fix:
                     try:
                         render_fixes = json.loads(fix) if isinstance(fix, str) else fix
-                        video_path, thumb_path, render_error2 = render_video(
+                        video_path, thumb_path, render_error2 = render_video_with_fallback(
                             clips=clips,
                             audio_path=audio_path,
                             subs_path=ass_path if ass_path.exists() else None,
@@ -737,6 +765,8 @@ def _print_v15_summary(manifest: JobManifest, story: StoryState):
 
     table.add_row("Job ID", manifest.job_id)
     table.add_row("Mode", manifest.execution_mode)
+    if manifest.reference_url:
+        table.add_row("Reference", manifest.reference_url[:60])
     table.add_row("Nicho", manifest.nicho_slug)
     table.add_row("Platform", story.platform)
     table.add_row("Título", (manifest.titulo or story.topic)[:60])

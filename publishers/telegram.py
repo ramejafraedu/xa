@@ -4,11 +4,16 @@ Replaces n8n nodes: 📲 Telegram Notificar + 🚨 Telegram Error Calidad.
 """
 from __future__ import annotations
 
+import time
+
 from loguru import logger
 
 from config import settings
 from models.content import PipelineResult
 from services.http_client import request_with_retry
+
+
+_telegram_cooldown_until = 0.0
 
 
 def notify_success(result: PipelineResult, drive_link: str = "N/A") -> bool:
@@ -74,22 +79,56 @@ def notify_review(result: PipelineResult) -> bool:
 
 def _send_message(text: str) -> bool:
     """Send a message via Telegram Bot API."""
+    global _telegram_cooldown_until
+
+    if time.time() < _telegram_cooldown_until:
+        return False
+
     try:
         url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+        safe_text = (text or "")[:3900]
+
+        payload = {
+            "chat_id": settings.telegram_chat_id,
+            "text": safe_text,
+            "parse_mode": "Markdown",
+        }
         response = request_with_retry(
             "POST", url,
-            json_data={
-                "chat_id": settings.telegram_chat_id,
-                "text": text,
-                "parse_mode": "Markdown",
-            },
+            json_data=payload,
             max_retries=2,
             timeout=15,
         )
         if response.status_code < 400:
             logger.debug("Telegram notification sent")
             return True
-        logger.warning(f"Telegram send failed: {response.status_code}")
+
+        # Common issue: invalid Markdown entities. Retry as plain text.
+        if response.status_code == 400:
+            plain_payload = {
+                "chat_id": settings.telegram_chat_id,
+                "text": safe_text,
+            }
+            response_plain = request_with_retry(
+                "POST", url,
+                json_data=plain_payload,
+                max_retries=1,
+                timeout=15,
+            )
+            if response_plain.status_code < 400:
+                logger.debug("Telegram notification sent (plain text fallback)")
+                return True
+
+            _telegram_cooldown_until = time.time() + (60 * 60)
+            logger.warning("Telegram 400 persists after plain fallback. Cooling down for 60m.")
+            return False
+
+        if response.status_code == 429:
+            _telegram_cooldown_until = time.time() + (20 * 60)
+            logger.warning("Telegram rate limited (429). Cooling down for 20m.")
+            return False
+
+        logger.warning(f"Telegram send failed: {response.status_code} body={response.text[:180]}")
         return False
     except Exception as e:
         logger.warning(f"Telegram error: {e}")

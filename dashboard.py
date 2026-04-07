@@ -15,7 +15,7 @@ import queue
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -70,6 +70,59 @@ app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 # Active pipeline runs
 _active_runs: dict[str, dict] = {}
+
+
+def _read_json_file(path: Path) -> Optional[dict]:
+    """Read JSON file and return dict when valid."""
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _manifest_path_candidates(job_id: str) -> list[Path]:
+    """Return potential locations for a manifest file."""
+    filename = f"job_manifest_{job_id}.json"
+    return [
+        settings.temp_dir / filename,
+        settings.output_dir / filename,
+        settings.review_dir / filename,
+    ]
+
+
+def _load_manifest_by_job_id(job_id: str) -> Optional[dict]:
+    """Load manifest from temp/output/review locations."""
+    for path in _manifest_path_candidates(job_id):
+        data = _read_json_file(path)
+        if data:
+            data["_manifest_path"] = str(path)
+            return data
+    return None
+
+
+def _collect_recent_manifests(limit: int = 50) -> list[dict]:
+    """Collect recent manifests across temp/output/review."""
+    manifest_files: list[Path] = []
+    for folder in [settings.temp_dir, settings.output_dir, settings.review_dir]:
+        if folder.exists():
+            manifest_files.extend(folder.glob("job_manifest_*.json"))
+
+    manifest_files = sorted(
+        set(manifest_files),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[:limit]
+
+    results: list[dict] = []
+    for path in manifest_files:
+        data = _read_json_file(path)
+        if data:
+            data["_manifest_path"] = str(path)
+            results.append(data)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +184,11 @@ async def list_jobs():
     resumable = state.list_resumable_jobs()
     for j in resumable:
         j["source"] = "temp"
+        manifest = _load_manifest_by_job_id(j.get("job_id", ""))
+        if manifest:
+            j["execution_mode"] = manifest.get("execution_mode", settings.execution_mode_label())
+            j["reference_url"] = manifest.get("reference_url", "")
+            j["cost_actual_usd"] = manifest.get("cost_actual_usd", 0.0)
         jobs.append(j)
 
     # Check output for completed
@@ -152,6 +210,9 @@ async def list_jobs():
                     "timings": data.get("timings", {}),
                     "healing_count": len(data.get("healing_attempts", [])),
                     "error_message": data.get("error_message", ""),
+                    "execution_mode": data.get("execution_mode", settings.execution_mode_label()),
+                    "reference_url": data.get("reference_url", ""),
+                    "cost_actual_usd": data.get("cost_actual_usd", 0.0),
                     "source": "output",
                 })
             except Exception:
@@ -170,6 +231,9 @@ async def list_jobs():
                     "titulo": data.get("titulo", "")[:50],
                     "quality_score": data.get("quality_score", 0),
                     "timestamp": data.get("timestamp", 0),
+                    "execution_mode": data.get("execution_mode", settings.execution_mode_label()),
+                    "reference_url": data.get("reference_url", ""),
+                    "cost_actual_usd": data.get("cost_actual_usd", 0.0),
                     "source": "review",
                 })
             except Exception:
@@ -179,16 +243,30 @@ async def list_jobs():
 
 
 @app.post("/api/run/{nicho_slug}")
-async def run_niche(nicho_slug: str, background_tasks: BackgroundTasks, dry_run: bool = False):
+async def run_niche(
+    nicho_slug: str,
+    background_tasks: BackgroundTasks,
+    dry_run: bool = False,
+    reference_url: str = "",
+):
     """Trigger a pipeline run for a niche."""
     if nicho_slug not in NICHOS:
         return {"error": f"Unknown niche: {nicho_slug}"}
     if nicho_slug in _active_runs:
         return {"error": f"{nicho_slug} is already running", "job_id": _active_runs[nicho_slug].get("job_id")}
 
-    _active_runs[nicho_slug] = {"started": time.time(), "job_id": "starting..."}
-    background_tasks.add_task(_run_pipeline_bg, nicho_slug, dry_run)
-    return {"status": "started", "nicho": nicho_slug, "dry_run": dry_run}
+    _active_runs[nicho_slug] = {
+        "started": time.time(),
+        "job_id": "starting...",
+        "reference_url": reference_url,
+    }
+    background_tasks.add_task(_run_pipeline_bg, nicho_slug, dry_run, "", reference_url)
+    return {
+        "status": "started",
+        "nicho": nicho_slug,
+        "dry_run": dry_run,
+        "reference_url": reference_url,
+    }
 
 
 @app.post("/api/run-all")
@@ -206,8 +284,18 @@ async def resume_job(job_id: str, background_tasks: BackgroundTasks):
     if not manifest:
         return {"error": f"Job {job_id} not found"}
 
-    _active_runs[manifest.nicho_slug] = {"started": time.time(), "job_id": job_id}
-    background_tasks.add_task(_run_pipeline_bg, manifest.nicho_slug, False, job_id)
+    _active_runs[manifest.nicho_slug] = {
+        "started": time.time(),
+        "job_id": job_id,
+        "reference_url": getattr(manifest, "reference_url", ""),
+    }
+    background_tasks.add_task(
+        _run_pipeline_bg,
+        manifest.nicho_slug,
+        False,
+        job_id,
+        getattr(manifest, "reference_url", ""),
+    )
     return {"status": "resuming", "job_id": job_id}
 
 
@@ -215,6 +303,83 @@ async def resume_job(job_id: str, background_tasks: BackgroundTasks):
 async def active_runs():
     """List currently running pipelines."""
     return _active_runs
+
+
+@app.get("/api/jobs/{job_id}")
+async def job_detail(job_id: str):
+    """Return full manifest details for a specific job."""
+    manifest = _load_manifest_by_job_id(job_id)
+    if not manifest:
+        return {"error": f"Job {job_id} not found"}
+
+    manifest["associated_reference"] = {
+        "url": manifest.get("reference_url", ""),
+        "notes": manifest.get("reference_notes", ""),
+    }
+    return manifest
+
+
+@app.get("/api/execution-mode")
+async def execution_mode_status():
+    """Return current execution mode and active feature flags."""
+    return {
+        "mode": settings.execution_mode_label(),
+        "feature_flags": settings.active_feature_flags(),
+        "daily_budget_usd": float(settings.daily_budget_usd),
+    }
+
+
+@app.get("/api/providers/status")
+async def provider_status():
+    """Return provider health/scoring state used by ProviderSelector."""
+    provider_state_path = settings.temp_dir / "provider_health.json"
+    provider_state = _read_json_file(provider_state_path) or {}
+    return {
+        "mode": settings.execution_mode_label(),
+        "feature_flags": settings.active_feature_flags(),
+        "provider_state_path": str(provider_state_path),
+        "provider_health": provider_state,
+    }
+
+
+@app.get("/api/costs")
+async def costs_summary():
+    """Return cost governance summary and recent per-job costs."""
+    budget_state = _read_json_file(settings.budget_state_path) or {}
+    today_key = date.today().isoformat()
+    today_spend = float(budget_state.get(today_key, 0.0))
+    daily_budget = float(settings.daily_budget_usd)
+    remaining = round(max(daily_budget - today_spend, 0.0), 4) if daily_budget > 0 else None
+
+    manifests = _collect_recent_manifests(limit=60)
+    total_actual = round(sum(float(m.get("cost_actual_usd", 0.0)) for m in manifests), 4)
+    total_estimate = round(sum(float(m.get("cost_estimate_usd", 0.0)) for m in manifests), 4)
+
+    recent_jobs = []
+    for m in manifests[:20]:
+        recent_jobs.append({
+            "job_id": m.get("job_id", ""),
+            "nicho": m.get("nicho_slug", ""),
+            "status": m.get("status", ""),
+            "execution_mode": m.get("execution_mode", settings.execution_mode_label()),
+            "reference_url": m.get("reference_url", ""),
+            "cost_actual_usd": float(m.get("cost_actual_usd", 0.0)),
+            "cost_estimate_usd": float(m.get("cost_estimate_usd", 0.0)),
+            "budget_blocked": bool(m.get("budget_blocked", False)),
+            "timestamp": m.get("timestamp", 0),
+        })
+
+    return {
+        "mode": settings.execution_mode_label(),
+        "feature_flags": settings.active_feature_flags(),
+        "daily_budget_usd": daily_budget,
+        "today_spend_usd": round(today_spend, 4),
+        "remaining_budget_usd": remaining,
+        "recent_jobs_total_actual_usd": total_actual,
+        "recent_jobs_total_estimate_usd": total_estimate,
+        "budget_state": budget_state,
+        "jobs": recent_jobs,
+    }
 
 
 @app.get("/api/logs")
@@ -272,12 +437,23 @@ async def resolve_checkpoint(job_id: str, payload: dict = Body(...)):
 # Background pipeline runners
 # ---------------------------------------------------------------------------
 
-def _run_pipeline_bg(nicho_slug: str, dry_run: bool = False, resume_id: str = ""):
+def _run_pipeline_bg(
+    nicho_slug: str,
+    dry_run: bool = False,
+    resume_id: str = "",
+    reference_url: str = "",
+):
     """Run pipeline in background thread using V15 mode WEB."""
     try:
         from core.pipeline_v15 import run_pipeline_v15
         logger.info(f"🚀 Starting V15 WEB Pipeline for {nicho_slug}")
-        result = run_pipeline_v15(nicho_slug, dry_run=dry_run, resume_job_id=resume_id, mode=DirectorMode.WEB)
+        result = run_pipeline_v15(
+            nicho_slug,
+            dry_run=dry_run,
+            resume_job_id=resume_id,
+            mode=DirectorMode.WEB,
+            reference_url=reference_url,
+        )
         if result:
             _active_runs[nicho_slug] = {
                 "job_id": result.job_id,

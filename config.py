@@ -5,6 +5,7 @@ Uses pathlib for all paths — Windows/Linux portable.
 """
 from __future__ import annotations
 
+import json
 import platform
 import shutil
 from pathlib import Path
@@ -76,6 +77,8 @@ class Settings(BaseSettings):
     # Supabase
     supabase_url: str = ""
     supabase_anon_key: str = ""
+    supabase_videos_table: str = "videos"
+    supabase_performance_table: str = "video_performance"
 
     # Google Drive/Sheets
     use_drive: bool = False
@@ -84,6 +87,7 @@ class Settings(BaseSettings):
 
     # TikTok Trending
     rapidapi_key: str = ""
+    enable_tiktok_trending_api: bool = False
 
     # --- MEGA Upgrade: Provider Toggles ---
     # Lyria 3 (AI music via Gemini)
@@ -91,6 +95,10 @@ class Settings(BaseSettings):
 
     # WhisperX (local word-level subtitles)
     use_whisperx: bool = True
+
+    # Piper (offline TTS fallback)
+    use_piper_tts: bool = False
+    piper_model_path: str = ""
 
     # Remotion (premium renderer)
     use_remotion: bool = False  # False by default — needs npx remotion setup first
@@ -120,6 +128,11 @@ class Settings(BaseSettings):
     workspace_dir: str = "./workspace"
     output_retention_days: int = 0
     min_disk_space_gb: float = 2.0
+    niches_config_path: str = ""
+
+    # Scheduler rollout
+    scheduler_canary_mode: bool = False
+    scheduler_canary_nichos: str = ""
 
     # Hashtags
     default_hashtags: str = "#viral #fyp #faceless"
@@ -162,6 +175,23 @@ class Settings(BaseSettings):
         """
         return self.next_gemini_key()
 
+    def resolved_piper_model_path(self) -> Path:
+        """Return Piper model path resolved against project base dir."""
+        model_cfg = (self.piper_model_path or "").strip()
+        if not model_cfg:
+            return Path("")
+        model_path = Path(model_cfg)
+        if not model_path.is_absolute():
+            model_path = self.base_dir / model_path
+        return model_path
+
+    def piper_ready(self) -> bool:
+        """Whether Piper offline TTS is configured and model file exists."""
+        if not self.use_piper_tts:
+            return False
+        model_path = self.resolved_piper_model_path()
+        return bool(model_path and model_path.exists())
+
     # --- Rollout / policy helpers ---
 
     def active_feature_flags(self) -> dict[str, bool]:
@@ -170,10 +200,26 @@ class Settings(BaseSettings):
             "free_mode": self.free_mode,
             "allow_freemium_in_free_mode": self.allow_freemium_in_free_mode,
             "use_remotion": self.use_remotion,
+            "use_piper_tts": self.use_piper_tts,
             "enable_web_research_plus": self.enable_web_research_plus,
             "enable_reference_driven": self.enable_reference_driven,
             "enable_cost_governance": self.enable_cost_governance,
+            "scheduler_canary_mode": self.scheduler_canary_mode,
+            "enable_tiktok_trending_api": self.enable_tiktok_trending_api,
         }
+
+    def resolve_scheduler_nichos(self, all_slugs: list[str]) -> list[str]:
+        """Resolve target nichos for scheduler, supporting canary rollout."""
+        if not self.scheduler_canary_mode:
+            return all_slugs
+
+        configured = [s.strip() for s in self.scheduler_canary_nichos.split(",") if s.strip()]
+        selected = [slug for slug in configured if slug in all_slugs]
+        if selected:
+            return selected
+
+        # Safe fallback: schedule only the first niche in canary mode.
+        return all_slugs[:1]
 
     def execution_mode_label(self) -> str:
         """Human-readable execution mode used in job manifests."""
@@ -339,7 +385,7 @@ class Settings(BaseSettings):
         missing = []
         if not self.github_token:
             missing.append("GITHUB_TOKEN")
-        if not self.gemini_api_key:
+        if not self.gemini_api_key and not self.piper_ready():
             missing.append("GEMINI_API_KEY")
         if not self.pexels_keys:
             missing.append("PEXELS_API_KEY (at least one)")
@@ -358,8 +404,11 @@ class Settings(BaseSettings):
             critical_missing.append("GITHUB_TOKEN (needed for AI content generation via Azure)")
         if not self.pexels_keys:
             critical_missing.append("PEXELS_API_KEY (needed for stock videos — at least 1 of 4)")
-        if not self.get_gemini_keys():
-            critical_missing.append("GEMINI_API_KEY (needed for TTS + ScriptAgent — at least 1 of 4)")
+        if not self.get_gemini_keys() and not self.piper_ready():
+            critical_missing.append(
+                "GEMINI_API_KEY (needed for TTS + ScriptAgent — at least 1 of 4) "
+                "or enable USE_PIPER_TTS with a valid PIPER_MODEL_PATH"
+            )
 
         if critical_missing:
             msg = (
@@ -463,6 +512,70 @@ NICHOS: dict[str, NichoConfig] = {
 }
 
 
+def _load_nichos_from_file(
+    base_nichos: dict[str, NichoConfig],
+    config_path: str,
+    base_dir: Path,
+) -> dict[str, NichoConfig]:
+    """Load niche templates from JSON file with backward-compatible fallback."""
+    path_value = (config_path or "").strip()
+    if not path_value:
+        return base_nichos
+
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = base_dir / path
+
+    if not path.exists():
+        logger.warning(f"Niches config file not found: {path}")
+        return base_nichos
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning(f"Failed reading niches config: {exc}")
+        return base_nichos
+
+    try:
+        loaded: dict[str, NichoConfig] = {}
+
+        if isinstance(raw, dict) and isinstance(raw.get("nichos"), list):
+            items = raw["nichos"]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                nicho = NichoConfig(**item)
+                loaded[nicho.slug] = nicho
+
+        elif isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                nicho = NichoConfig(**item)
+                loaded[nicho.slug] = nicho
+
+        elif isinstance(raw, dict):
+            for slug, payload in raw.items():
+                if not isinstance(payload, dict):
+                    continue
+                payload = dict(payload)
+                payload.setdefault("slug", str(slug))
+                nicho = NichoConfig(**payload)
+                loaded[nicho.slug] = nicho
+
+        if not loaded:
+            logger.warning(f"Niches config has no valid entries: {path}")
+            return base_nichos
+
+        logger.info(f"Loaded {len(loaded)} niche templates from {path}")
+        return loaded
+
+    except Exception as exc:
+        logger.warning(f"Failed parsing niches config schema: {exc}")
+        return base_nichos
+
+
 # Singleton
 settings = Settings()
 app_config = AppConfig()
+NICHOS = _load_nichos_from_file(NICHOS, settings.niches_config_path, settings.base_dir)

@@ -87,6 +87,8 @@ class ScriptAgent:
 
     def _generate_outline(self, state: StoryState, nicho: NichoConfig) -> str:
         """Step 1: Generate a narrative outline (not the full script)."""
+        precedence_block = self._build_precedence_block(state, nicho)
+
         system = (
             "Eres un director creativo de contenido viral. "
             "Genera un OUTLINE (esquema) para un video corto. "
@@ -108,12 +110,15 @@ class ScriptAgent:
             research_ctx += f"HOOKS SUGERIDOS: {', '.join(state.research.hook_suggestions[:3])}\n"
         if state.research.avoid_topics:
             research_ctx += f"EVITAR: {', '.join(state.research.avoid_topics)}\n"
+        if state.research.web_sources:
+            research_ctx += f"WEB HEADLINES: {'; '.join(state.research.web_sources[:4])}\n"
 
         user = (
             f"NICHO: {nicho.nombre}\n"
             f"TONO: {nicho.tono}\n"
             f"PLATAFORMA: {state.platform}\n"
             f"ESTILO: {nicho.estilo_narrativo}\n"
+            f"{precedence_block}\n"
             f"{research_ctx}\n"
             f"TRENDING: {state.research.trending_context_raw[:200]}\n\n"
             f"Genera el OUTLINE del video."
@@ -136,6 +141,7 @@ class ScriptAgent:
         platform = _resolve_platform(nicho.plataforma)
         ab_variant = _choose_ab_variant(nicho.nombre, platform)
         hook_rule = _hook_rules(platform, ab_variant)
+        precedence_block = self._build_precedence_block(state, nicho)
 
         correction_block = ""
         if correction_notes:
@@ -175,6 +181,7 @@ REGLAS MAESTRAS:
 - Incluir 2 a 4 muletillas humanas naturales (mira, o sea, te digo algo, ...).
 - PROHIBIDO: No uses comillas dobles en los textos generados.
 - Mantener coherencia total con el OUTLINE y el CONTEXTO NARRATIVO.
+- Si hay conflicto de fuentes, respeta estrictamente: {state.precedence_rule}.
 
 RUBRICA OBLIGATORIA (0-10):
 - hook_score: fuerza de apertura y curiosidad inmediata.
@@ -185,6 +192,7 @@ AB TEST: Variante {ab_variant} | Plataforma: {platform}
 Regla hook: {hook_rule}
 ESTILO: {nicho.estilo_narrativo}
 DIRECCIÓN VISUAL: {nicho.direccion_visual}
+{precedence_block}
 {correction_block}
 
 Devuelve SOLO JSON válido, sin texto extra."""
@@ -225,8 +233,35 @@ Devuelve EXACTAMENTE este JSON:
             parsed["_ab_variant"] = ab_variant
             parsed["_platform"] = platform
             parsed["_model_used"] = settings.inference_model
+            parsed["_source_precedence"] = state.precedence_rule
+            parsed["_reference_applied"] = bool(state.has_reference())
+            parsed["_reference_url"] = state.reference_url if state.has_reference() else ""
 
         return parsed
+
+    def _build_precedence_block(self, state: StoryState, nicho: NichoConfig) -> str:
+        """Build source-priority context injected into prompts."""
+        lines = [f"PRECEDENCIA DE FUENTES: {state.precedence_rule}"]
+
+        if state.has_reference():
+            lines.append(f"REFERENCE_URL: {state.reference_url}")
+            if state.reference_title:
+                lines.append(f"REFERENCE_TITLE: {state.reference_title}")
+            if state.reference_key_points:
+                points = " | ".join(state.reference_key_points[:4])
+                lines.append(f"REFERENCE_KEY_POINTS: {points}")
+            elif state.reference_summary:
+                lines.append(f"REFERENCE_SUMMARY: {state.reference_summary[:320]}")
+        else:
+            lines.append("REFERENCE: N/A")
+
+        if state.research.recommended_angles:
+            lines.append(f"RESEARCH_ANGLES: {', '.join(state.research.recommended_angles[:3])}")
+        else:
+            lines.append("RESEARCH_ANGLES: N/A")
+
+        lines.append(f"NICHO_DEFAULT: {nicho.estilo_narrativo[:180]}")
+        return "\n".join(lines)
 
     def _call_llm(self, system: str, user: str, temperature: float = 0.9) -> str:
         """Call Gemini usando google-genai SDK con rotación de las 4 API keys."""

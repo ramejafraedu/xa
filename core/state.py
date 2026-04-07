@@ -135,6 +135,9 @@ class ResearchBrief(BaseModel):
     hook_suggestions: list[str] = Field(default_factory=list)
     audience_insight: str = ""
     trending_context_raw: str = ""     # For backward compat with V14 prompts
+    web_sources: list[str] = Field(default_factory=list)
+    reference_signals: list[str] = Field(default_factory=list)
+    precedence_rule: str = "RESEARCH > NICHO_DEFAULT"
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +179,11 @@ class StoryState(BaseModel):
     style_profile: StyleProfile = Field(default_factory=StyleProfile)
     visual_direction: str = ""                 # Global visual style string
     color_palette: str = ""                    # "warm sepia, emerald accents"
+    reference_url: str = ""
+    reference_title: str = ""
+    reference_summary: str = ""
+    reference_key_points: list[str] = Field(default_factory=list)
+    precedence_rule: str = "RESEARCH > NICHO_DEFAULT"
 
     # --- Scores (from ReviewerAgent / QualityGate) ---
     hook_score: float = 0
@@ -199,6 +207,10 @@ class StoryState(BaseModel):
         """All scene visual prompts (for Veo/image gen)."""
         return [s.visual_prompt for s in self.scenes if s.visual_prompt]
 
+    def has_reference(self) -> bool:
+        """Whether a reference context was attached to this story."""
+        return bool(self.reference_url and (self.reference_summary or self.reference_key_points))
+
     def to_context_string(self) -> str:
         """Compact string for LLM context injection."""
         chars = "; ".join(
@@ -215,4 +227,8 @@ class StoryState(BaseModel):
             f"CHARACTERS: {chars}\n"
             f"VISUAL STYLE: {self.visual_direction}\n"
             f"COLOR PALETTE: {self.color_palette}\n"
+            f"PRECEDENCE RULE: {self.precedence_rule}\n"
+            f"REFERENCE URL: {self.reference_url or 'N/A'}\n"
+            f"REFERENCE TITLE: {self.reference_title or 'N/A'}\n"
+            f"REFERENCE SUMMARY: {self.reference_summary[:240] if self.reference_summary else 'N/A'}\n"
         )

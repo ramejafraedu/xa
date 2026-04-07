@@ -136,6 +136,75 @@ def render_with_remotion(
         return False
 
 
+def render_video_with_fallback(
+    clips: list[Path],
+    audio_path: Path,
+    subs_path: Optional[Path],
+    music_path: Optional[Path],
+    images: list[Path],
+    timestamp: int,
+    temp_dir: Path,
+    output_dir: Path,
+    nicho_slug: str,
+    gancho: str,
+    titulo: str,
+    duracion_audio: float,
+    velocidad: str = "rapido",
+    num_clips: int = 8,
+    duraciones_clips: Optional[list[float]] = None,
+    render_fixes: Optional[dict] = None,
+) -> tuple[Optional[Path], Optional[Path], str]:
+    """Try Remotion first (when enabled), then fallback to FFmpeg renderer API."""
+    from pipeline.renderer import render_video
+
+    if settings.use_remotion:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_name = f"{_slugify(nicho_slug, 24)}_{_slugify(gancho, 38)}_{timestamp}.mp4"
+        remotion_output = output_dir / final_name
+
+        # If there are no stock clips, Remotion can still work with generated images.
+        remotion_inputs = clips if clips else images
+        remotion_meta = {
+            "timestamp": timestamp,
+            "titulo": titulo,
+            "nicho": nicho_slug,
+            "duration": duracion_audio,
+            "transition": "crossfade",
+        }
+
+        if render_with_remotion(
+            remotion_inputs,
+            audio_path,
+            subs_path,
+            music_path,
+            remotion_output,
+            remotion_meta,
+        ):
+            thumb = _extract_thumbnail(remotion_output, temp_dir, timestamp)
+            return remotion_output, thumb, ""
+
+        logger.info("Remotion unavailable/failed, using FFmpeg fallback")
+
+    return render_video(
+        clips=clips,
+        audio_path=audio_path,
+        subs_path=subs_path,
+        music_path=music_path,
+        images=images,
+        timestamp=timestamp,
+        temp_dir=temp_dir,
+        output_dir=output_dir,
+        nicho_slug=nicho_slug,
+        gancho=gancho,
+        titulo=titulo,
+        duracion_audio=duracion_audio,
+        velocidad=velocidad,
+        num_clips=num_clips,
+        duraciones_clips=duraciones_clips,
+        render_fixes=render_fixes,
+    )
+
+
 def render_with_fallback(
     clips: list[Path],
     audio_path: Path,
@@ -144,22 +213,40 @@ def render_with_fallback(
     output_path: Path,
     metadata: dict,
 ) -> bool:
-    """Try Remotion first, fall back to FFmpeg.
+    """Backward-compatible wrapper kept for older callers."""
+    return render_with_remotion(clips, audio_path, subtitles_path, music_path, output_path, metadata)
 
-    This is the main entry point — replaces direct calls to renderer.
-    """
-    # Try Remotion
-    if render_with_remotion(clips, audio_path, subtitles_path, music_path, output_path, metadata):
-        return True
 
-    # Fallback: FFmpeg
-    logger.info("Falling back to FFmpeg renderer")
+def _extract_thumbnail(video_path: Path, temp_dir: Path, timestamp: int) -> Optional[Path]:
+    """Extract a thumbnail frame from a rendered Remotion video."""
+    thumb = temp_dir / f"thumb_{timestamp}.jpg"
     try:
-        from pipeline.renderer import render_video
-        return render_video(clips, audio_path, subtitles_path, music_path, output_path)
-    except Exception as e:
-        logger.error(f"FFmpeg fallback also failed: {e}")
-        return False
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-ss", "00:00:02",
+                "-i", str(video_path.as_posix()),
+                "-frames:v", "1",
+                str(thumb.as_posix()),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0 and thumb.exists() and thumb.stat().st_size > 100:
+            return thumb
+    except Exception:
+        pass
+    return None
+
+
+def _slugify(text: str, max_len: int = 32) -> str:
+    """Convert text to a filename-safe slug."""
+    import re
+
+    slug = (text or "").lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", slug)
+    slug = slug.strip("_")
+    return slug[:max_len] or "video"
 
 
 def _build_remotion_props(

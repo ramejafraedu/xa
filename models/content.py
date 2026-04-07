@@ -258,6 +258,8 @@ class JobManifest(BaseModel):
     guion: str = ""
     cta: str = ""
     caption: str = ""
+    reference_url: str = ""
+    reference_notes: str = ""
     input_hash: str = ""  # Hash of guion+gancho+titulo for idempotency
 
     # Config

@@ -10,11 +10,35 @@ MODULE CONTRACT:
 """
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from loguru import logger
 
+from config import settings
 from services.http_client import get_json, post_json
+
+
+_table_cooldown_until: dict[str, float] = {}
+
+
+def _table_endpoint(supabase_url: str, table_name: str) -> str:
+    table = (table_name or "").strip() or "videos"
+    return f"{supabase_url}/rest/v1/{table}"
+
+
+def _is_table_on_cooldown(table_name: str) -> bool:
+    until = _table_cooldown_until.get(table_name, 0.0)
+    return time.time() < until
+
+
+def _mark_table_cooldown(table_name: str, seconds: int = 1800) -> None:
+    _table_cooldown_until[table_name] = time.time() + seconds
+
+
+def _is_not_found_error(exc: Exception) -> bool:
+    err = str(exc).lower()
+    return "404" in err or "not found" in err
 
 
 def read_memory(supabase_url: str, anon_key: str, nicho_slug: str, limit: int = 10) -> str:
@@ -22,8 +46,12 @@ def read_memory(supabase_url: str, anon_key: str, nicho_slug: str, limit: int = 
     if not supabase_url or not anon_key:
         return "Sin memoria previa"
 
+    table = settings.supabase_videos_table or "videos"
+    if _is_table_on_cooldown(table):
+        return "Sin memoria previa"
+
     try:
-        url = f"{supabase_url}/rest/v1/videos"
+        url = _table_endpoint(supabase_url, table)
         headers = {
             "apikey": anon_key,
             "Authorization": f"Bearer {anon_key}",
@@ -48,6 +76,9 @@ def read_memory(supabase_url: str, anon_key: str, nicho_slug: str, limit: int = 
         return " | ".join(entries) if entries else "Sin memoria previa"
 
     except Exception as e:
+        if _is_not_found_error(e):
+            _mark_table_cooldown(table)
+            logger.warning(f"Supabase table '{table}' unavailable (404). Cooling down for 30m.")
         logger.warning(f"Supabase read failed: {e}")
         return "Sin memoria previa"
 
@@ -68,8 +99,12 @@ def save_result(
     if not supabase_url or not anon_key:
         return False
 
+    table = settings.supabase_videos_table or "videos"
+    if _is_table_on_cooldown(table):
+        return False
+
     try:
-        url = f"{supabase_url}/rest/v1/videos"
+        url = _table_endpoint(supabase_url, table)
         headers = {
             "apikey": anon_key,
             "Authorization": f"Bearer {anon_key}",
@@ -92,6 +127,9 @@ def save_result(
         return True
 
     except Exception as e:
+        if _is_not_found_error(e):
+            _mark_table_cooldown(table)
+            logger.warning(f"Supabase table '{table}' unavailable (404). Cooling down for 30m.")
         logger.warning(f"Supabase save failed: {e}")
         return False
 
@@ -128,8 +166,12 @@ def save_performance(
     if not supabase_url or not anon_key:
         return False
 
+    table = settings.supabase_performance_table or "video_performance"
+    if _is_table_on_cooldown(table):
+        return False
+
     try:
-        url = f"{supabase_url}/rest/v1/video_performance"
+        url = _table_endpoint(supabase_url, table)
         headers = {
             "apikey": anon_key,
             "Authorization": f"Bearer {anon_key}",
@@ -158,6 +200,9 @@ def save_performance(
         return True
 
     except Exception as e:
+        if _is_not_found_error(e):
+            _mark_table_cooldown(table)
+            logger.warning(f"Supabase table '{table}' unavailable (404). Cooling down for 30m.")
         logger.debug(f"Performance save failed (non-critical): {e}")
         return False
 
@@ -189,8 +234,12 @@ def get_niche_analytics(supabase_url: str, anon_key: str, nicho_slug: str) -> di
     if not supabase_url or not anon_key:
         return defaults
 
+    table = settings.supabase_performance_table or "video_performance"
+    if _is_table_on_cooldown(table):
+        return defaults
+
     try:
-        url = f"{supabase_url}/rest/v1/video_performance"
+        url = _table_endpoint(supabase_url, table)
         headers = {
             "apikey": anon_key,
             "Authorization": f"Bearer {anon_key}",
@@ -234,5 +283,8 @@ def get_niche_analytics(supabase_url: str, anon_key: str, nicho_slug: str) -> di
         }
 
     except Exception as e:
+        if _is_not_found_error(e):
+            _mark_table_cooldown(table)
+            logger.warning(f"Supabase table '{table}' unavailable (404). Cooling down for 30m.")
         logger.debug(f"Niche analytics failed: {e}")
         return defaults
