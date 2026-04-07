@@ -95,6 +95,24 @@ class Settings(BaseSettings):
     # Remotion (premium renderer)
     use_remotion: bool = False  # False by default — needs npx remotion setup first
 
+    # --- V16 rollout feature flags ---
+    free_mode: bool = False
+    allow_freemium_in_free_mode: bool = True
+    enable_web_research_plus: bool = False
+    enable_reference_driven: bool = False
+    enable_cost_governance: bool = False
+
+    # Budget governance (USD)
+    daily_budget_usd: float = 0.0
+
+    # Stage estimates used by cost governance
+    est_cost_research_usd: float = 0.0
+    est_cost_script_usd: float = 0.0
+    est_cost_scene_usd: float = 0.0
+    est_cost_assets_usd: float = 0.10
+    est_cost_tts_usd: float = 0.03
+    est_cost_render_usd: float = 0.0
+
     # Backup Gemini API key (for rotation/rate limits)
     gemini_api_key_backup: str = ""
 
@@ -144,6 +162,94 @@ class Settings(BaseSettings):
         """
         return self.next_gemini_key()
 
+    # --- Rollout / policy helpers ---
+
+    def active_feature_flags(self) -> dict[str, bool]:
+        """Expose all rollout flags in a single dict for auditing."""
+        return {
+            "free_mode": self.free_mode,
+            "allow_freemium_in_free_mode": self.allow_freemium_in_free_mode,
+            "use_remotion": self.use_remotion,
+            "enable_web_research_plus": self.enable_web_research_plus,
+            "enable_reference_driven": self.enable_reference_driven,
+            "enable_cost_governance": self.enable_cost_governance,
+        }
+
+    def execution_mode_label(self) -> str:
+        """Human-readable execution mode used in job manifests."""
+        if self.free_mode:
+            if self.allow_freemium_in_free_mode:
+                return "freemium"
+            return "free"
+        if self.enable_reference_driven:
+            return "reference"
+        return "normal"
+
+    def provider_tier(self, provider: str) -> str:
+        """Classify providers as free, freemium, or premium."""
+        name = (provider or "").strip().lower()
+        if not name:
+            return "free"
+
+        free_providers = {
+            "edge_tts",
+            "edge-tts",
+            "pixabay",
+            "jamendo",
+            "coverr",
+            "pollinations",
+            "freesound",
+        }
+        freemium_providers = {
+            "gemini",
+            "lyria",
+            "pexels",
+            "leonardo",
+            "assemblyai",
+        }
+        premium_providers = {
+            "azure_inference",
+            "azure_openai",
+            "veo",
+        }
+
+        if name in free_providers:
+            return "free"
+        if name in freemium_providers:
+            return "freemium"
+        if name in premium_providers:
+            return "premium"
+        return "freemium"
+
+    def provider_is_paid(self, provider: str) -> bool:
+        """Best-effort provider classification for budget policy."""
+        return self.provider_tier(provider) != "free"
+
+    def provider_allowed(self, provider: str) -> bool:
+        """Return True when current policy allows using this provider."""
+        if not self.free_mode:
+            return True
+
+        tier = self.provider_tier(provider)
+        if tier == "free":
+            return True
+        if tier == "freemium":
+            return self.allow_freemium_in_free_mode
+        return False
+
+    def stage_estimated_cost_usd(self, stage: str) -> float:
+        """Return stage-level estimate consumed by cost governance."""
+        stage_key = (stage or "").strip().lower()
+        mapping = {
+            "research": self.est_cost_research_usd,
+            "script": self.est_cost_script_usd,
+            "scene_plan": self.est_cost_scene_usd,
+            "assets": self.est_cost_assets_usd,
+            "tts": self.est_cost_tts_usd,
+            "render": self.est_cost_render_usd,
+        }
+        return max(0.0, float(mapping.get(stage_key, 0.0)))
+
     # --- Derived paths (pathlib) ---
 
     @property
@@ -168,6 +274,16 @@ class Settings(BaseSettings):
     @property
     def review_dir(self) -> Path:
         return self.workspace / "output" / "review_manual"
+
+    @property
+    def budget_state_path(self) -> Path:
+        return self.temp_dir / "daily_budget_state.json"
+
+    @property
+    def video_cache_dir(self) -> Path:
+        return self.workspace / "video_cache"
+
+    max_cache_size_gb: float = 50.0
 
     @property
     def logs_dir(self) -> Path:

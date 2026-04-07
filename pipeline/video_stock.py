@@ -6,7 +6,10 @@ Rotates through up to 4 Pexels API keys to avoid rate limits.
 from __future__ import annotations
 
 import urllib.parse
-from typing import Optional
+import json
+import hashlib
+from typing import Optional, Union
+from pathlib import Path
 
 from loguru import logger
 
@@ -17,48 +20,100 @@ from services.http_client import get_json, request_with_retry
 def fetch_stock_videos(
     keywords: list[str],
     num_needed: int = 8,
-) -> list[str]:
-    """Fetch stock video URLs from multiple sources.
+    provider_order: Optional[list[str]] = None,
+) -> list[dict]:
+    """Fetch stock video URLs and manage local cache via index.json.
 
-    Tries Pexels with key rotation, then Pixabay, then Coverr.
-    Returns list of video download URLs.
+    Returns list of dicts: {"url": "http...", "cache_path": "C:/..."}
+    If 'url' is empty, it means the file is already fully cached.
     """
-    all_urls: list[str] = []
+    settings.video_cache_dir.mkdir(parents=True, exist_ok=True)
+    index_file = settings.video_cache_dir / "index.json"
+    
+    # Load index
+    try:
+        index_data = json.loads(index_file.read_text("utf-8")) if index_file.exists() else {}
+    except Exception:
+        index_data = {}
+
+    all_items: list[dict] = []
+    seen_paths = set()
     pexels_keys = settings.pexels_keys
 
-    # --- Pexels Multi-Key ---
+    # 1. First, check cache for all requested keywords
     for kw in keywords:
-        if len(all_urls) >= num_needed * 2:
-            break  # Got enough
-        urls = _fetch_pexels(kw, pexels_keys)
-        all_urls.extend(urls)
+        kw_clean = kw.strip().lower()
+        if kw_clean in index_data:
+            for filename in index_data[kw_clean]:
+                cached_path = settings.video_cache_dir / filename
+                if cached_path.exists() and cached_path.stat().st_size > 1000:
+                    str_path = cached_path.as_posix()
+                    if str_path not in seen_paths:
+                        seen_paths.add(str_path)
+                                all_items.append(
+                                    {
+                                        "url": "",
+                                        "local_path": str_path,
+                                        "provider": _infer_provider_from_filename(filename),
+                                    }
+                                )
 
-    # --- Pixabay Fallback ---
-    if len(all_urls) < num_needed:
-        for kw in keywords[:4]:
-            if len(all_urls) >= num_needed:
+    # 2. Fetch more following selected provider order.
+    provider_order = provider_order or ["pexels", "pixabay", "coverr"]
+
+    for provider in provider_order:
+        if len(all_items) >= num_needed * 2:
+            break
+
+        keyword_limit = len(keywords)
+        if provider == "pixabay":
+            keyword_limit = min(len(keywords), 4)
+        elif provider == "coverr":
+            keyword_limit = min(len(keywords), 3)
+
+        for kw in keywords[:keyword_limit]:
+            if len(all_items) >= num_needed * 2:
                 break
-            urls = _fetch_pixabay_video(kw)
-            all_urls.extend(urls)
 
-    # --- Coverr Fallback ---
-    if len(all_urls) < num_needed:
-        for kw in keywords[:3]:
-            if len(all_urls) >= num_needed:
-                break
-            urls = _fetch_coverr(kw)
-            all_urls.extend(urls)
+            if provider == "pexels":
+                urls = _fetch_pexels(kw, pexels_keys)
+            elif provider == "pixabay":
+                urls = _fetch_pixabay_video(kw)
+            elif provider == "coverr":
+                urls = _fetch_coverr(kw)
+            else:
+                urls = []
 
-    # Deduplicate
-    seen = set()
-    unique = []
-    for url in all_urls:
-        if url not in seen:
-            seen.add(url)
-            unique.append(url)
+            for u in urls:
+                dest = (settings.video_cache_dir / u["filename"]).as_posix()
+                if dest in seen_paths:
+                    continue
 
-    logger.info(f"Stock videos found: {len(unique)} (needed: {num_needed})")
-    return unique
+                seen_paths.add(dest)
+                all_items.append(
+                    {
+                        "url": u["url"],
+                        "local_path": dest,
+                        "provider": provider,
+                    }
+                )
+
+                # Update index optimistically (renderer will download it there)
+                kw_clean = kw.strip().lower()
+                if kw_clean not in index_data:
+                    index_data[kw_clean] = []
+                if u["filename"] not in index_data[kw_clean]:
+                    index_data[kw_clean].append(u["filename"])
+
+    # Save index
+    try:
+        index_file.write_text(json.dumps(index_data, indent=2), "utf-8")
+    except Exception as e:
+        logger.warning(f"Could not save video cache index: {e}")
+
+    logger.info(f"Stock videos found: {len(all_items)} (needed: {num_needed})")
+    # Return at most num_needed * 2
+    return all_items[:num_needed * 2]
 
 
 def _fetch_pexels(keyword: str, keys: list[str]) -> list[str]:
@@ -98,7 +153,10 @@ def _fetch_pexels(keyword: str, keys: list[str]) -> list[str]:
                     or (files[0] if files else None)
                 )
                 if best and best.get("link"):
-                    urls.append(best["link"])
+                    vid_id = v.get("id")
+                    if not vid_id:
+                        vid_id = hashlib.md5(best["link"].encode()).hexdigest()[:8]
+                    urls.append({"url": best["link"], "filename": f"pexels_{vid_id}.mp4"})
 
             if urls:
                 logger.debug(f"Pexels key{i+1} '{keyword}' → {len(urls)} videos")
@@ -130,7 +188,10 @@ def _fetch_pixabay_video(keyword: str) -> list[str]:
             for quality in ["medium", "large", "small"]:
                 video_url = vids.get(quality, {}).get("url")
                 if video_url:
-                    urls.append(video_url)
+                    vid_id = h.get("id")
+                    if not vid_id:
+                        vid_id = hashlib.md5(video_url.encode()).hexdigest()[:8]
+                    urls.append({"url": video_url, "filename": f"pixabay_{vid_id}.mp4"})
                     break
         return urls
 
@@ -161,13 +222,27 @@ def _fetch_coverr(keyword: str) -> list[str]:
             if isinstance(src, list) and src:
                 mp4 = src[0].get("src") or src[0].get("url")
                 if mp4:
-                    urls.append(mp4)
+                    vid_id = item.get("id", item.get("objectID", hashlib.md5(mp4.encode()).hexdigest()[:8]))
+                    urls.append({"url": mp4, "filename": f"coverr_{vid_id}.mp4"})
                     continue
             mp4 = item.get("mp4") or item.get("url")
             if mp4:
-                urls.append(mp4)
+                vid_id = item.get("id", item.get("objectID", hashlib.md5(mp4.encode()).hexdigest()[:8]))
+                urls.append({"url": mp4, "filename": f"coverr_{vid_id}.mp4"})
         return urls
 
     except Exception as e:
         logger.debug(f"Coverr error: {e}")
         return []
+
+
+def _infer_provider_from_filename(filename: str) -> str:
+    """Infer cached provider from filename prefix."""
+    lower = (filename or "").lower()
+    if lower.startswith("pexels_"):
+        return "pexels"
+    if lower.startswith("pixabay_"):
+        return "pixabay"
+    if lower.startswith("coverr_"):
+        return "coverr"
+    return "cache"

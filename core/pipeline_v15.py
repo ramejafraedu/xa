@@ -39,6 +39,7 @@ from agents.research_agent import ResearchAgent
 from agents.scene_agent import SceneAgent
 from agents.script_agent import ScriptAgent
 from config import NICHOS, app_config, settings
+from core.cost_governance import CostGovernance
 from core.director import CheckpointResult, Director, DirectorMode
 from core.feedback_loop import review_content, should_iterate
 from core.state import StoryState, get_style_for_platform
@@ -104,6 +105,11 @@ def run_pipeline_v15(
         plataforma=nicho.plataforma,
         model_version=f"v15_{settings.inference_model}",
     )
+    manifest.execution_mode = settings.execution_mode_label()
+    manifest.feature_flags = settings.active_feature_flags()
+    manifest.budget_daily_usd = float(settings.daily_budget_usd)
+
+    cost_governance = CostGovernance(manifest)
 
     # Build initial StoryState
     story = StoryState(
@@ -323,6 +329,16 @@ def run_pipeline_v15(
             t = time.time()
             progress.update(main_task, description="[cyan]🎨 Asset Agent...")
 
+            allowed_assets, reason_assets, est_assets = cost_governance.reserve_stage("assets")
+            if not allowed_assets:
+                manifest.status = JobStatus.ERROR.value
+                manifest.error_stage = "assets_budget"
+                manifest.error_message = reason_assets
+                manifest.error_code = ErrorCode.UNKNOWN.value
+                state_mgr.save(manifest)
+                notify_error(manifest)
+                return manifest
+
             assets = asset_agent.run(story, nicho, timestamp, settings.temp_dir)
 
             stock_urls = assets.get("stock_clips", [])
@@ -341,6 +357,9 @@ def run_pipeline_v15(
                 f"🔊 SFX: {len(sfx_paths)}"
             )
             result = director.checkpoint("assets", asset_summary, story)
+
+            assets_actual = 0.0 if manifest.execution_mode == "free" else est_assets
+            cost_governance.record_stage_actual("assets", assets_actual)
 
             manifest.timings["assets"] = round(time.time() - t, 2)
             state_mgr.mark_stage(manifest, "media")
@@ -368,6 +387,20 @@ def run_pipeline_v15(
             # ── Stage 8: TTS ─────────────────────────────────────────
             t = time.time()
             progress.update(main_task, description="[cyan]🗣️ TTS...")
+
+            preferred_tts_provider = "gemini" if settings.provider_allowed("gemini") else "edge_tts"
+            allowed_tts, reason_tts, _ = cost_governance.reserve_stage(
+                "tts",
+                provider=preferred_tts_provider,
+            )
+            if not allowed_tts:
+                manifest.status = JobStatus.ERROR.value
+                manifest.error_stage = "tts_budget"
+                manifest.error_message = reason_tts
+                manifest.error_code = ErrorCode.UNKNOWN.value
+                state_mgr.save(manifest)
+                notify_error(manifest)
+                return manifest
 
             # Use scene-joined text or V14 style
             guion_tts = story.scene_texts_joined() or " ".join(
@@ -400,6 +433,10 @@ def run_pipeline_v15(
             manifest.tts_engine_used = tts_engine
             audio_duration = get_audio_duration(audio_path)
             manifest.duration_seconds = audio_duration
+
+            tts_actual = settings.est_cost_tts_usd if tts_engine == "gemini" else 0.0
+            cost_governance.record_stage_actual("tts", tts_actual)
+
             manifest.timings["tts"] = round(time.time() - t, 2)
             progress.advance(main_task)
 
@@ -413,7 +450,8 @@ def run_pipeline_v15(
                 events = generate_ass_whisperx(audio_path, ass_path)
                 if events <= 0:
                     raise Exception("WhisperX produced no events")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"⚠️ WhisperX falló o no está instalado, usando método de respaldo: {e}")
                 if vtt_path.exists() and vtt_path.stat().st_size > 20:
                     vtt_to_ass(vtt_path, ass_path)
                 else:
@@ -434,6 +472,16 @@ def run_pipeline_v15(
             # ── Stage 10: Edit Decisions + Render ────────────────────
             t = time.time()
             progress.update(main_task, description="[cyan]🎥 Rendering...")
+
+            allowed_render, reason_render, est_render = cost_governance.reserve_stage("render")
+            if not allowed_render:
+                manifest.status = JobStatus.ERROR.value
+                manifest.error_stage = "render_budget"
+                manifest.error_message = reason_render
+                manifest.error_code = ErrorCode.UNKNOWN.value
+                state_mgr.save(manifest)
+                notify_error(manifest)
+                return manifest
 
             # Get scene-aware edit decisions
             edit_decisions = editor_agent.run(story, nicho, len(clips), audio_duration)
@@ -530,6 +578,7 @@ def run_pipeline_v15(
 
             manifest.video_path = str(video_path)
             manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
+            cost_governance.record_stage_actual("render", est_render)
             manifest.timings["render"] = round(time.time() - t, 2)
             progress.advance(main_task)
 
@@ -687,6 +736,7 @@ def _print_v15_summary(manifest: JobManifest, story: StoryState):
     table.add_column("Value")
 
     table.add_row("Job ID", manifest.job_id)
+    table.add_row("Mode", manifest.execution_mode)
     table.add_row("Nicho", manifest.nicho_slug)
     table.add_row("Platform", story.platform)
     table.add_row("Título", (manifest.titulo or story.topic)[:60])
@@ -697,6 +747,10 @@ def _print_v15_summary(manifest: JobManifest, story: StoryState):
     table.add_row("Duration", f"{manifest.duration_seconds:.1f}s")
     table.add_row("Video", manifest.video_path or "N/A")
     table.add_row("Healing", str(len(manifest.healing_attempts)))
+    table.add_row("Cost", f"actual=${manifest.cost_actual_usd:.4f}, estimate=${manifest.cost_estimate_usd:.4f}")
+
+    if manifest.budget_blocked:
+        table.add_row("Budget", "[yellow]Blocked by governance policy[/yellow]")
 
     if manifest.timings:
         timing_str = ", ".join(f"{k}={v:.1f}s" for k, v in manifest.timings.items())

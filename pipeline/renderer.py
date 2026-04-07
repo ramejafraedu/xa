@@ -37,19 +37,41 @@ def download_clips(
     Returns list of successfully downloaded clip paths.
     """
     results = []
-    for i, url in enumerate(video_urls, 1):
-        if not url or url in ("undefined", "null", "None", ""):
+    for i, item in enumerate(video_urls, 1):
+        if not item or item in ("undefined", "null", "None", ""):
             continue
-        if isinstance(url, dict):
-            url = url.get("url", "")
-        dest = temp_dir / f"clip{i}_{timestamp}.mp4"
-        if download_file(str(url), dest, timeout=90):
-            results.append(dest)
-            logger.debug(f"Clip {i} OK ({dest.stat().st_size // 1024} KB)")
-        else:
-            logger.warning(f"Clip {i} failed: {str(url)[:60]}")
+        
+        if isinstance(item, dict):
+            url = item.get("url", "")
+            local_path_str = item.get("local_path")
+            if not local_path_str:
+                continue
+            
+            dest = Path(local_path_str)
+            
+            # Already in cache
+            if not url and dest.exists():
+                results.append(dest)
+                logger.debug(f"Clip {i} CACHED: {dest.name}")
+                continue
+                
+            # Needs download
+            if url and download_file(url, dest, timeout=90):
+                results.append(dest)
+                logger.debug(f"Clip {i} DOWNLOADED: {dest.name}")
+            else:
+                logger.warning(f"Clip {i} failed to download: {url[:60]}")
+                
+        elif isinstance(item, str):
+            # Legacy string URL
+            dest = temp_dir / f"clip{i}_{timestamp}.mp4"
+            if download_file(item, dest, timeout=90):
+                results.append(dest)
+                logger.debug(f"Clip {i} OK ({dest.stat().st_size // 1024} KB)")
+            else:
+                logger.warning(f"Clip {i} fallback failed")
 
-    logger.info(f"Downloaded {len(results)}/{len(video_urls)} clips")
+    logger.info(f"Loaded/Downloaded {len(results)}/{len(video_urls)} clips")
     return results
 
 

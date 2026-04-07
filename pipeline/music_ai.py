@@ -46,6 +46,10 @@ def generate_music_ai(
         logger.debug("Lyria music disabled in config")
         return False
 
+    if not settings.provider_allowed("lyria"):
+        logger.info("Lyria music skipped by provider policy")
+        return False
+
     # Idempotency check
     if output_path.exists() and output_path.stat().st_size > 10000:
         logger.debug(f"Music already exists: {output_path.name}")
@@ -127,15 +131,40 @@ def fetch_music_with_fallback(
 
     This is the main entry point — replaces direct calls to fetch_music().
     """
-    # Try Lyria 3 first
-    if generate_music_ai(mood, output_path, duration_seconds, nicho):
-        return True
+    success, _source = fetch_music_with_fallback_source(
+        mood,
+        output_path,
+        duration_seconds=duration_seconds,
+        nicho=nicho,
+    )
+    return success
 
-    # Fallback: existing Pixabay/Jamendo
-    logger.info("Falling back to Pixabay/Jamendo for music")
-    try:
-        from pipeline.music import fetch_music
-        return fetch_music(mood, output_path)
-    except Exception as e:
-        logger.warning(f"Music fallback also failed: {e}")
-        return False
+
+def fetch_music_with_fallback_source(
+    mood: str,
+    output_path: Path,
+    duration_seconds: float = 60,
+    nicho: str = "",
+    provider_order: list[str] | None = None,
+) -> tuple[bool, str]:
+    """Try providers in order and return (success, source)."""
+    provider_order = provider_order or ["lyria", "pixabay", "jamendo"]
+
+    for provider in provider_order:
+        if provider == "lyria":
+            if generate_music_ai(mood, output_path, duration_seconds, nicho):
+                return True, "lyria"
+            continue
+
+        if provider in ("pixabay", "jamendo"):
+            try:
+                from pipeline.music import fetch_music_by_order
+
+                ok, src = fetch_music_by_order(mood, output_path, provider_order=[provider])
+                if ok:
+                    return True, src
+            except Exception as e:
+                logger.debug(f"Music provider {provider} failed: {e}")
+
+    logger.warning("Music generation failed for all providers")
+    return False, "none"

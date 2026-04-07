@@ -240,6 +240,18 @@ class JobManifest(BaseModel):
     status: JobStatus = JobStatus.PENDING
     model_version: str = ""
 
+    # Rollout / mode metadata
+    execution_mode: str = "normal"  # normal | reference | freemium | free
+    feature_flags: dict[str, bool] = Field(default_factory=dict)
+
+    # Cost governance
+    budget_daily_usd: float = 0.0
+    budget_blocked: bool = False
+    cost_estimate_usd: float = 0.0
+    cost_reserved_usd: float = 0.0
+    cost_actual_usd: float = 0.0
+    cost_breakdown: dict[str, float] = Field(default_factory=dict)
+
     # Content
     titulo: str = ""
     gancho: str = ""

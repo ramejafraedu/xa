@@ -15,23 +15,33 @@ from services.http_client import download_file, get_json
 
 def fetch_music(genre: str, output_path: Path) -> tuple[bool, str]:
     """Download background music. Returns (success, source)."""
+    return fetch_music_by_order(genre, output_path)
+
+
+def fetch_music_by_order(
+    genre: str,
+    output_path: Path,
+    provider_order: Optional[list[str]] = None,
+) -> tuple[bool, str]:
+    """Download music using a preferred provider order."""
     if output_path.exists() and output_path.stat().st_size > 1000:
         logger.info("Music already cached, skipping")
         return True, "cached"
 
-    # Try Pixabay Music
-    url = _get_pixabay_music(genre)
-    if url:
-        if download_file(url, output_path, timeout=30):
-            logger.info(f"Music downloaded (Pixabay): {genre}")
-            return True, "pixabay"
+    provider_order = provider_order or ["pixabay", "jamendo"]
 
-    # Try Jamendo
-    url = _get_jamendo_music(genre)
-    if url:
-        if download_file(url, output_path, timeout=30):
-            logger.info(f"Music downloaded (Jamendo): {genre}")
-            return True, "jamendo"
+    for provider in provider_order:
+        if provider == "pixabay":
+            url = _get_pixabay_music(genre)
+            if url and download_file(url, output_path, timeout=30):
+                logger.info(f"Music downloaded (Pixabay): {genre}")
+                return True, "pixabay"
+
+        elif provider == "jamendo":
+            url = _get_jamendo_music(genre)
+            if url and download_file(url, output_path, timeout=30):
+                logger.info(f"Music downloaded (Jamendo): {genre}")
+                return True, "jamendo"
 
     logger.warning(f"No music found for genre: {genre}")
     return False, "none"

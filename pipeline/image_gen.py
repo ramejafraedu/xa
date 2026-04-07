@@ -31,10 +31,36 @@ def generate_images(
     timestamp: int,
     temp_dir: Path,
     count: int = 4,
+    provider_order: Optional[list[str]] = None,
 ) -> list[Path]:
     """Generate AI images for the video.
 
     Returns list of successfully generated image paths.
+    """
+    results, _stats = generate_images_with_stats(
+        prompt_base,
+        visual_nicho,
+        ab_variant,
+        timestamp,
+        temp_dir,
+        count=count,
+        provider_order=provider_order,
+    )
+    return results
+
+
+def generate_images_with_stats(
+    prompt_base: str,
+    visual_nicho: str,
+    ab_variant: str,
+    timestamp: int,
+    temp_dir: Path,
+    count: int = 4,
+    provider_order: Optional[list[str]] = None,
+) -> tuple[list[Path], dict[str, dict[str, int]]]:
+    """Generate images and return per-provider stats.
+
+    Stats shape: {provider: {"ok": int, "fail": int}}
     """
     base_style = (
         "cinematic vertical key art 9:16, high contrast lighting, "
@@ -48,7 +74,12 @@ def generate_images(
         else "centered composition, bold foreground separation"
     )
 
-    results = []
+    provider_order = provider_order or ["leonardo", "pollinations"]
+    stats = {
+        "leonardo": {"ok": 0, "fail": 0},
+        "pollinations": {"ok": 0, "fail": 0},
+    }
+    results: list[Path] = []
 
     for idx in range(1, count + 1):
         extra = POSITION_EXTRAS.get(idx, "")
@@ -57,20 +88,38 @@ def generate_images(
         ]))
 
         output = temp_dir / f"imagen_{idx}_{timestamp}.jpg"
+        generated = False
 
-        # Try Pollinations first
-        if _download_pollinations(full_prompt, output):
-            results.append(output)
-            logger.info(f"Image {idx}/4 OK (Pollinations)")
-            continue
+        for provider in provider_order:
+            if provider == "leonardo":
+                if not settings.leonardo_api_key:
+                    continue
+                if not settings.provider_allowed("leonardo"):
+                    logger.debug("Leonardo skipped by provider policy")
+                    continue
 
-        # Fallback: Leonardo.ai
-        if settings.leonardo_api_key and _download_leonardo(full_prompt, output):
-            results.append(output)
-            logger.info(f"Image {idx}/4 OK (Leonardo)")
-            continue
+                if _download_leonardo(full_prompt, output):
+                    results.append(output)
+                    stats["leonardo"]["ok"] += 1
+                    logger.info(f"Image {idx}/4 OK (Leonardo)")
+                    generated = True
+                    break
 
-        logger.warning(f"Image {idx}/4 FAILED")
+                stats["leonardo"]["fail"] += 1
+                continue
+
+            if provider == "pollinations":
+                if _download_pollinations(full_prompt, output):
+                    results.append(output)
+                    stats["pollinations"]["ok"] += 1
+                    logger.info(f"Image {idx}/4 OK (Pollinations Fallback)")
+                    generated = True
+                    break
+
+                stats["pollinations"]["fail"] += 1
+
+        if not generated:
+            logger.warning(f"Image {idx}/4 FAILED")
 
     # Copy image 1 as legacy filename (safe — fixes WinError 2)
     if results:
@@ -83,7 +132,7 @@ def generate_images(
                 logger.debug(f"Legacy image copy skipped: {e}")
 
     logger.info(f"Images generated: {len(results)}/{count}")
-    return results
+    return results, stats
 
 
 def _download_pollinations(prompt: str, output: Path) -> bool:
@@ -111,8 +160,8 @@ def _download_leonardo(prompt: str, output: Path) -> bool:
         payload = {
             "prompt": prompt[:1000],
             "modelId": "b24e16ff-06e3-43eb-8d33-4416c2d75876",
-            "width": 576,
-            "height": 1024,
+            "width": 1080,
+            "height": 1920,
             "num_images": 1,
             "public": False,
         }

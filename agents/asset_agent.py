@@ -15,13 +15,16 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional, TypeVar
 
 from loguru import logger
 
 from config import settings
+from core.provider_selector import ProviderSelector
 from core.state import StoryState
 from models.config_models import NichoConfig
+
+T = TypeVar("T")
 
 
 class AssetAgent:
@@ -42,29 +45,92 @@ class AssetAgent:
         Returns dict with keys: clips, images, music_path, sfx_paths
         """
         t0 = time.time()
+        selector = ProviderSelector()
         results = {
             "stock_clips": [],
             "images": [],
             "music_path": None,
             "sfx_paths": [],
+            "provider_orders": {},
+            "provider_sources": {},
         }
 
         # --- 1. Stock fallback for uncovered scenes ---
         clips_needed = nicho.num_clips
+        stock_order = selector.get_provider_order("stock_video", ["pexels", "pixabay", "coverr"])
+        results["provider_orders"]["stock_video"] = stock_order
+
         if clips_needed > 0:
-            results["stock_clips"] = self._fetch_stock_clips(
-                state, nicho, clips_needed
+            results["stock_clips"] = self._with_backoff(
+                "stock clips",
+                lambda: self._fetch_stock_clips(
+                    state,
+                    nicho,
+                    clips_needed,
+                    provider_order=stock_order,
+                ),
+                is_success=lambda value: len(value) > 0,
+                max_attempts=2,
             )
 
+        stock_sources = {
+            item.get("provider", "")
+            for item in results["stock_clips"]
+            if isinstance(item, dict) and item.get("provider")
+        }
+        if stock_sources:
+            for provider in stock_sources:
+                selector.mark_result("stock_video", provider, True)
+        elif stock_order:
+            selector.mark_result("stock_video", stock_order[0], False, "no clips returned")
+
         # --- 2. Images (with visual direction from StoryState) ---
-        results["images"] = self._generate_images(
-            state, nicho, timestamp, temp_dir
+        image_order = selector.get_provider_order("image_generation", ["leonardo", "pollinations"])
+        results["provider_orders"]["image_generation"] = image_order
+
+        image_payload = self._with_backoff(
+            "image generation",
+            lambda: self._generate_images(
+                state,
+                nicho,
+                timestamp,
+                temp_dir,
+                provider_order=image_order,
+            ),
+            is_success=lambda value: len(value[0]) > 0,
+            max_attempts=2,
         )
+        results["images"], image_stats = image_payload
+
+        for provider, stats in image_stats.items():
+            if stats.get("ok", 0) > 0:
+                selector.mark_result("image_generation", provider, True)
+            elif stats.get("fail", 0) > 0:
+                selector.mark_result("image_generation", provider, False, "image generation failed")
 
         # --- 3. Music (mood from script) ---
-        results["music_path"] = self._fetch_music(
-            state, nicho, timestamp, temp_dir
+        music_order = selector.get_provider_order("music_generation", ["lyria", "pixabay", "jamendo"])
+        results["provider_orders"]["music_generation"] = music_order
+
+        music_payload = self._with_backoff(
+            "music generation",
+            lambda: self._fetch_music(
+                state,
+                nicho,
+                timestamp,
+                temp_dir,
+                provider_order=music_order,
+            ),
+            is_success=lambda value: value[0] is not None,
+            max_attempts=2,
         )
+        results["music_path"], music_source = music_payload
+        results["provider_sources"]["music"] = music_source
+
+        if music_source and music_source != "none":
+            selector.mark_result("music_generation", music_source, True)
+        elif music_order:
+            selector.mark_result("music_generation", music_order[0], False, "no music source succeeded")
 
         # --- 4. SFX ---
         try:
@@ -88,7 +154,8 @@ class AssetAgent:
         state: StoryState,
         nicho: NichoConfig,
         count: int,
-    ) -> list[str]:
+        provider_order: Optional[list[str]] = None,
+    ) -> list[dict]:
         """Fetch stock clips using scene-aware keywords."""
         try:
             from pipeline.video_stock import fetch_stock_videos
@@ -104,7 +171,7 @@ class AssetAgent:
                     words = scene.text.split()[:2]
                     keywords.extend(words)
 
-            urls = fetch_stock_videos(keywords, count)
+            urls = fetch_stock_videos(keywords, count, provider_order=provider_order)
             logger.info(f"📦 Stock: fetching {count} clips")
             return urls
 
@@ -118,10 +185,11 @@ class AssetAgent:
         nicho: NichoConfig,
         timestamp: int,
         temp_dir: Path,
-    ) -> list[Path]:
+        provider_order: Optional[list[str]] = None,
+    ) -> tuple[list[Path], dict[str, dict[str, int]]]:
         """Generate images with visual direction from StoryState."""
         try:
-            from pipeline.image_gen import generate_images
+            from pipeline.image_gen import generate_images_with_stats
 
             raw_content = getattr(state, "_raw_content", {})
 
@@ -136,18 +204,22 @@ class AssetAgent:
 
             ab_variant = raw_content.get("_ab_variant", "A")
 
-            images = generate_images(
+            images, stats = generate_images_with_stats(
                 prompt_base,
                 nicho.direccion_visual,
                 ab_variant,
                 timestamp,
                 temp_dir,
+                provider_order=provider_order,
             )
-            return images
+            return images, stats
 
         except Exception as e:
             logger.warning(f"Image generation failed: {e}")
-            return []
+            return [], {
+                "leonardo": {"ok": 0, "fail": 0},
+                "pollinations": {"ok": 0, "fail": 0},
+            }
 
     def _fetch_music(
         self,
@@ -155,7 +227,8 @@ class AssetAgent:
         nicho: NichoConfig,
         timestamp: int,
         temp_dir: Path,
-    ) -> Optional[Path]:
+        provider_order: Optional[list[str]] = None,
+    ) -> tuple[Optional[Path], str]:
         """Fetch music based on script mood."""
         music_path = temp_dir / f"musica_{timestamp}.mp3"
 
@@ -177,23 +250,48 @@ class AssetAgent:
             mood = mood_mapping.get(dominant, mood)
 
         try:
-            from pipeline.music_ai import fetch_music_with_fallback
-            fetch_music_with_fallback(
+            from pipeline.music_ai import fetch_music_with_fallback_source
+
+            ok, source = fetch_music_with_fallback_source(
                 mood, music_path,
                 duration_seconds=state.total_duration() or 30,
                 nicho=nicho.slug,
+                provider_order=provider_order,
             )
-            if music_path.exists() and music_path.stat().st_size > 1000:
-                return music_path
+            if ok and music_path.exists() and music_path.stat().st_size > 1000:
+                return music_path, source
         except Exception:
             pass
 
         try:
             from pipeline.music import fetch_music
-            fetch_music(mood, music_path)
+            ok, source = fetch_music(mood, music_path)
             if music_path.exists() and music_path.stat().st_size > 1000:
-                return music_path
+                return music_path, source if ok else "none"
         except Exception as e:
             logger.debug(f"Music fetch failed: {e}")
 
-        return None
+        return None, "none"
+
+    def _with_backoff(
+        self,
+        label: str,
+        func: Callable[[], T],
+        is_success: Callable[[T], bool],
+        max_attempts: int = 2,
+        base_delay: float = 1.6,
+    ) -> T:
+        """Retry a stage-level operation with exponential backoff."""
+        result = func()
+        if is_success(result):
+            return result
+
+        for attempt in range(2, max_attempts + 1):
+            delay = round(base_delay ** (attempt - 1), 2)
+            logger.warning(f"{label} retry {attempt}/{max_attempts} in {delay}s")
+            time.sleep(delay)
+            result = func()
+            if is_success(result):
+                return result
+
+        return result

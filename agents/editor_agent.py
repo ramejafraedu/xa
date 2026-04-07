@@ -73,6 +73,11 @@ class EditorAgent:
         decisions = []
 
         scenes = state.scenes
+        if num_clips <= 0:
+            # No clip decisions to make when render will be image-only.
+            logger.warning("EditorAgent: no clips available, skipping clip edit decisions")
+            return []
+
         if not scenes:
             # Fallback: even distribution with default settings
             return self._default_decisions(num_clips, audio_duration, nicho)
@@ -181,7 +186,7 @@ class EditorAgent:
         If scenes > clips: merge short scenes into single clips.
         If clips > scenes: repeat last scene's settings for extra clips.
         """
-        if not scenes:
+        if not scenes or num_clips <= 0:
             return []
 
         # Calculate target duration per clip

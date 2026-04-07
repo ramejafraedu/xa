@@ -40,6 +40,7 @@ def cleanup_temp(timestamp: int) -> None:
                 logger.debug(f"Cleanup error: {e}")
 
     logger.info(f"Cleaned {removed} temp files for TS={timestamp}")
+    cleanup_video_cache()
 
 
 def cleanup_old_outputs() -> None:
@@ -97,3 +98,41 @@ def cleanup_stale_temp() -> None:
 
     if removed:
         logger.info(f"Cleaned {removed} stale temp files (>24h)")
+
+
+def cleanup_video_cache() -> None:
+    """Enforce video cache size limit by deleting oldest files first."""
+    cache_dir = settings.video_cache_dir
+    if not cache_dir.exists():
+        return
+
+    max_bytes = settings.max_cache_size_gb * 1024 * 1024 * 1024
+    files = [f for f in cache_dir.glob("*.mp4") if f.is_file()]
+    if not files:
+        return
+        
+    total_size = sum(f.stat().st_size for f in files)
+    if total_size <= max_bytes:
+        return
+
+    # Sort by modification time (oldest first)
+    files.sort(key=lambda x: x.stat().st_mtime)
+    
+    removed = 0
+    freed = 0
+    for f in files:
+        if total_size <= max_bytes:
+            break
+        try:
+            size = f.stat().st_size
+            f.unlink()
+            total_size -= size
+            freed += size
+            removed += 1
+            # Note: We rely on `fetch_stock_videos` checking `cached_path.exists()` 
+            # so we do not need to strictly parse and rewrite index.json here.
+        except Exception:
+            pass
+            
+    if removed:
+        logger.info(f"Video Cache GC: removed {removed} files, freed {freed / (1024*1024):.1f} MB")
