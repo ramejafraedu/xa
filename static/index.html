@@ -1591,7 +1591,7 @@
                                 '<div class="nicho-name">' + (icons[nicho.slug] || "📁") + " " + escapeHtml(nicho.slug || "nicho") + "</div>" +
                                 '<div class="nicho-desc">' + escapeHtml(nicho.nombre || "-") + "</div>" +
                             "</div>" +
-                            '<span class="nicho-badge ' + (nicho.is_running ? "badge-running">RUN" : "badge-idle">IDLE") + "</span>" +
+                            '<span class="nicho-badge ' + (nicho.is_running ? 'badge-running' : 'badge-idle') + '">' + (nicho.is_running ? 'RUN' : 'IDLE') + '</span>' +
                         "</div>" +
                         '<div class="nicho-stats">' +
                             '<div class="nicho-stat"><span class="nicho-stat-label">Clips</span><span class="nicho-stat-value">' + escapeHtml(nicho.num_clips || 0) + "</span></div>" +
