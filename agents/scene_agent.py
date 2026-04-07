@@ -175,7 +175,13 @@ Divide en escenas cinematográficas. Incluye el hook como escena 1 y el CTA como
         reference_hint = ""
         if state.has_reference():
             key_anchor = state.reference_key_points[0] if state.reference_key_points else state.reference_summary[:140]
-            reference_hint = f" Reference anchor: {key_anchor}."
+            cadence_hint = ""
+            if state.reference_avg_cut_seconds > 0:
+                cadence_hint = f" Avg cut target {state.reference_avg_cut_seconds:.2f}s."
+            promise_hint = ""
+            if state.reference_delivery_promise:
+                promise_hint = f" Delivery promise {state.reference_delivery_promise}."
+            reference_hint = f" Reference anchor: {key_anchor}.{promise_hint}{cadence_hint}"
 
         for scene in scenes:
             mood_extra = mood_visuals.get(scene.mood, "")
@@ -204,6 +210,12 @@ Divide en escenas cinematográficas. Incluye el hook como escena 1 y el CTA como
             f"REFERENCE_TITLE: {state.reference_title or 'N/A'}",
             f"REFERENCE_SUMMARY: {state.reference_summary[:260] if state.reference_summary else 'N/A'}",
         ]
+        if state.reference_delivery_promise:
+            lines.append(f"REFERENCE_DELIVERY_PROMISE: {state.reference_delivery_promise}")
+        if state.reference_hook_seconds > 0:
+            lines.append(f"REFERENCE_HOOK_SECONDS: {state.reference_hook_seconds:.2f}")
+        if state.reference_avg_cut_seconds > 0:
+            lines.append(f"REFERENCE_AVG_CUT_SECONDS: {state.reference_avg_cut_seconds:.2f}")
         if state.reference_key_points:
             lines.append("REFERENCE_KEY_POINTS: " + " | ".join(state.reference_key_points[:4]))
         return "\n".join(lines)

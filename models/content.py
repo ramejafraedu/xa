@@ -260,6 +260,11 @@ class JobManifest(BaseModel):
     caption: str = ""
     reference_url: str = ""
     reference_notes: str = ""
+    reference_delivery_promise: str = ""
+    reference_hook_seconds: float = 0.0
+    reference_avg_cut_seconds: float = 0.0
+    reference_video_available: bool = False
+    reference_analysis: dict = Field(default_factory=dict)
     input_hash: str = ""  # Hash of guion+gancho+titulo for idempotency
 
     # Config
@@ -280,6 +285,7 @@ class JobManifest(BaseModel):
     music_path: str = ""
     sfx_paths: list[str] = Field(default_factory=list)
     video_path: str = ""
+    timeline_json_path: str = ""
     thumbnail_path: str = ""
     drive_link: str = ""
 

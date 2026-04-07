@@ -49,3 +49,8 @@ workspace/temp/
 workspace/output/
 workspace/review_manual/
 workspace/video_cache/
+
+# Remotion runtime artifacts
+remotion-composer/node_modules/
+remotion-composer/out/
+remotion-composer/.cache/

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+import shutil
 import sys
 import threading
 import time
@@ -125,6 +126,11 @@ def _collect_recent_manifests(limit: int = 50) -> list[dict]:
     return results
 
 
+def _clean_manifest_for_save(manifest: dict) -> dict:
+    """Remove transient keys before writing manifest JSON."""
+    return {k: v for k, v in manifest.items() if not str(k).startswith("_")}
+
+
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
@@ -188,6 +194,9 @@ async def list_jobs():
         if manifest:
             j["execution_mode"] = manifest.get("execution_mode", settings.execution_mode_label())
             j["reference_url"] = manifest.get("reference_url", "")
+            j["reference_delivery_promise"] = manifest.get("reference_delivery_promise", "")
+            j["reference_hook_seconds"] = manifest.get("reference_hook_seconds", 0.0)
+            j["reference_avg_cut_seconds"] = manifest.get("reference_avg_cut_seconds", 0.0)
             j["cost_actual_usd"] = manifest.get("cost_actual_usd", 0.0)
         jobs.append(j)
 
@@ -212,6 +221,10 @@ async def list_jobs():
                     "error_message": data.get("error_message", ""),
                     "execution_mode": data.get("execution_mode", settings.execution_mode_label()),
                     "reference_url": data.get("reference_url", ""),
+                    "reference_delivery_promise": data.get("reference_delivery_promise", ""),
+                    "reference_hook_seconds": data.get("reference_hook_seconds", 0.0),
+                    "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
+                    "timeline_json_path": data.get("timeline_json_path", ""),
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
                     "source": "output",
                 })
@@ -233,6 +246,10 @@ async def list_jobs():
                     "timestamp": data.get("timestamp", 0),
                     "execution_mode": data.get("execution_mode", settings.execution_mode_label()),
                     "reference_url": data.get("reference_url", ""),
+                    "reference_delivery_promise": data.get("reference_delivery_promise", ""),
+                    "reference_hook_seconds": data.get("reference_hook_seconds", 0.0),
+                    "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
+                    "timeline_json_path": data.get("timeline_json_path", ""),
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
                     "source": "review",
                 })
@@ -315,8 +332,151 @@ async def job_detail(job_id: str):
     manifest["associated_reference"] = {
         "url": manifest.get("reference_url", ""),
         "notes": manifest.get("reference_notes", ""),
+        "delivery_promise": manifest.get("reference_delivery_promise", ""),
+        "hook_seconds": manifest.get("reference_hook_seconds", 0.0),
+        "avg_cut_seconds": manifest.get("reference_avg_cut_seconds", 0.0),
+        "video_available": manifest.get("reference_video_available", False),
+        "analysis": manifest.get("reference_analysis", {}),
     }
     return manifest
+
+
+@app.get("/api/review")
+async def review_queue():
+    """List jobs currently in manual review queue."""
+    items = []
+    if settings.review_dir.exists():
+        for path in sorted(settings.review_dir.glob("job_manifest_*.json"), reverse=True)[:50]:
+            data = _read_json_file(path)
+            if not data:
+                continue
+            items.append(
+                {
+                    "job_id": data.get("job_id", ""),
+                    "nicho": data.get("nicho_slug", ""),
+                    "status": data.get("status", ""),
+                    "titulo": data.get("titulo", "")[:70],
+                    "qa_issues": data.get("qa_issues", []),
+                    "reference_url": data.get("reference_url", ""),
+                    "timestamp": data.get("timestamp", 0),
+                    "video_path": data.get("video_path", ""),
+                    "manifest_path": str(path),
+                }
+            )
+
+    items = sorted(items, key=lambda x: x.get("timestamp", 0), reverse=True)
+    return {
+        "count": len(items),
+        "items": items,
+    }
+
+
+@app.get("/api/review/{job_id}")
+async def review_detail(job_id: str):
+    """Return full review payload for a single manual-review job."""
+    manifest = _load_manifest_by_job_id(job_id)
+    if not manifest:
+        return {"error": f"Job {job_id} not found"}
+
+    return {
+        "job_id": manifest.get("job_id", ""),
+        "status": manifest.get("status", ""),
+        "nicho": manifest.get("nicho_slug", ""),
+        "titulo": manifest.get("titulo", ""),
+        "video_path": manifest.get("video_path", ""),
+        "qa_issues": manifest.get("qa_issues", []),
+        "timings": manifest.get("timings", {}),
+        "associated_reference": {
+            "url": manifest.get("reference_url", ""),
+            "notes": manifest.get("reference_notes", ""),
+            "delivery_promise": manifest.get("reference_delivery_promise", ""),
+            "hook_seconds": manifest.get("reference_hook_seconds", 0.0),
+            "avg_cut_seconds": manifest.get("reference_avg_cut_seconds", 0.0),
+            "video_available": manifest.get("reference_video_available", False),
+            "analysis": manifest.get("reference_analysis", {}),
+        },
+        "manifest_path": manifest.get("_manifest_path", ""),
+    }
+
+
+@app.post("/api/review/{job_id}/approve")
+async def review_approve(job_id: str):
+    """Approve a manual-review job and move manifest/video to output."""
+    manifest = _load_manifest_by_job_id(job_id)
+    if not manifest:
+        return {"error": f"Job {job_id} not found"}
+
+    source_manifest_path = Path(str(manifest.get("_manifest_path", "")))
+    now_iso = datetime.now().isoformat(timespec="seconds")
+
+    # Move reviewed video to output if currently under review dir.
+    video_path_str = str(manifest.get("video_path", "") or "")
+    if video_path_str:
+        video_path = Path(video_path_str)
+        if video_path.exists() and settings.review_dir in video_path.parents:
+            target_video = settings.output_dir / video_path.name
+            if target_video.exists():
+                target_video = settings.output_dir / f"{video_path.stem}_{job_id}.mp4"
+            target_video.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(video_path), str(target_video))
+            manifest["video_path"] = str(target_video)
+
+    manifest["status"] = JobStatus.SUCCESS.value
+    manifest["error_stage"] = ""
+    manifest["error_message"] = ""
+    manifest["review_resolution"] = "approved"
+    manifest["review_resolved_at"] = now_iso
+
+    output_manifest_path = settings.output_dir / f"job_manifest_{job_id}.json"
+    output_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    output_manifest_path.write_text(
+        json.dumps(_clean_manifest_for_save(manifest), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    if source_manifest_path.exists() and source_manifest_path != output_manifest_path:
+        source_manifest_path.unlink(missing_ok=True)
+
+    return {
+        "status": "approved",
+        "job_id": job_id,
+        "manifest_path": str(output_manifest_path),
+        "video_path": manifest.get("video_path", ""),
+    }
+
+
+@app.post("/api/review/{job_id}/reject")
+async def review_reject(job_id: str, payload: dict = Body({})):
+    """Reject a manual-review job and persist rejection reason."""
+    manifest = _load_manifest_by_job_id(job_id)
+    if not manifest:
+        return {"error": f"Job {job_id} not found"}
+
+    reason = str(payload.get("reason", "") or "Rejected in manual review").strip()
+    source_manifest_path = Path(str(manifest.get("_manifest_path", "")))
+    review_manifest_path = settings.review_dir / f"job_manifest_{job_id}.json"
+    review_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest["status"] = JobStatus.ERROR.value
+    manifest["error_stage"] = "manual_review"
+    manifest["error_message"] = reason
+    manifest["review_resolution"] = "rejected"
+    manifest["review_resolved_at"] = datetime.now().isoformat(timespec="seconds")
+
+    review_manifest_path.write_text(
+        json.dumps(_clean_manifest_for_save(manifest), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    if source_manifest_path.exists() and source_manifest_path != review_manifest_path:
+        source_manifest_path.unlink(missing_ok=True)
+
+    return {
+        "status": "rejected",
+        "job_id": job_id,
+        "reason": reason,
+        "manifest_path": str(review_manifest_path),
+    }
 
 
 @app.get("/api/execution-mode")
@@ -380,6 +540,37 @@ async def costs_summary():
         "budget_state": budget_state,
         "jobs": recent_jobs,
     }
+
+
+@app.get("/api/health/trends")
+async def trends_health(nicho_slug: str = "finanzas"):
+    """Quick health snapshot of research/trending sources for a niche."""
+    nicho_obj = NICHOS.get(nicho_slug)
+    query = nicho_obj.nombre if nicho_obj else nicho_slug
+
+    try:
+        from services.trends import get_trending_signals
+
+        signals = get_trending_signals(query, settings.rapidapi_key)
+        return {
+            "nicho_slug": nicho_slug,
+            "query": query,
+            "sources": {
+                "google_trends": len(signals.get("google_trends", [])),
+                "youtube_hot": len(signals.get("youtube_hot", [])),
+                "reddit_hot": len(signals.get("reddit_hot", [])),
+                "news_headlines": len(signals.get("news_headlines", [])),
+                "tiktok_hashtags": len(signals.get("tiktok_hashtags", [])),
+            },
+            "merged_topics": signals.get("merged_topics", []),
+            "cache_ttl_seconds": signals.get("cache_ttl_seconds", 0),
+        }
+    except Exception as exc:
+        return {
+            "nicho_slug": nicho_slug,
+            "query": query,
+            "error": str(exc),
+        }
 
 
 @app.get("/api/logs")

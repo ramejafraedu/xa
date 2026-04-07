@@ -52,16 +52,28 @@ class ResearchAgent:
 
         # 1. Trending topics (existing V14 services)
         try:
-            from services.trends import get_trending_context
+            from services.trends import get_trending_context, get_trending_signals
+
+            signals = get_trending_signals(nicho.nombre, settings.rapidapi_key)
             raw_trending = get_trending_context(nicho.nombre, settings.rapidapi_key)
             brief.trending_context_raw = raw_trending
 
-            # Parse individual topics from the raw string
-            if "TRENDING" in raw_trending:
-                parts = raw_trending.split(":")
-                for part in parts[1:]:
-                    topics = [t.strip() for t in part.split(",") if t.strip() and not t.strip().startswith("#")]
-                    brief.trending_topics.extend(topics[:6])
+            merged_topics = signals.get("merged_topics", [])
+            if merged_topics:
+                brief.trending_topics = merged_topics[:8]
+
+            web_pool = (
+                signals.get("youtube_hot", [])
+                + signals.get("reddit_hot", [])
+                + signals.get("news_headlines", [])
+            )
+            if web_pool:
+                brief.web_sources = self._merge_unique(web_pool)[:8]
+
+            if signals.get("tiktok_hashtags", []):
+                brief.trending_topics = self._merge_unique(
+                    brief.trending_topics + [f"#{tag}" for tag in signals.get("tiktok_hashtags", [])]
+                )[:10]
         except Exception as e:
             logger.debug(f"Trending fetch failed: {e}")
             brief.trending_context_raw = f"Tendencias no disponibles — usa contexto del nicho: {nicho.nombre}"
@@ -121,7 +133,7 @@ class ResearchAgent:
             q2 = (brief.recommended_angles[0] if brief.recommended_angles else nicho.slug)
             headlines = self._merge_unique(get_google_news_rss(q1, limit=4) + get_google_news_rss(q2, limit=4))
             if headlines:
-                brief.web_sources = headlines[:6]
+                brief.web_sources = self._merge_unique(brief.web_sources + headlines)[:8]
                 web_line = "WEB HEADLINES: " + "; ".join(brief.web_sources[:4])
                 brief.trending_context_raw = (
                     f"{brief.trending_context_raw} | {web_line}"

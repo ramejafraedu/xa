@@ -26,6 +26,7 @@ sse-starlette>=2.2,<3
 
 # Video/Audio (optional, for async file ops)
 aiofiles>=23.2,<24
+yt-dlp>=2025.1
 
 # Gemini API (Veo 3.1, Lyria 3, Imagen, TTS)
 google-genai>=1.14

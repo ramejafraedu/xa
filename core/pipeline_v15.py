@@ -35,6 +35,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 
 from agents.asset_agent import AssetAgent
 from agents.editor_agent import EditorAgent
+from agents.reference_agent import ReferenceAgent
 from agents.research_agent import ResearchAgent
 from agents.scene_agent import SceneAgent
 from agents.script_agent import ScriptAgent
@@ -139,6 +140,7 @@ def run_pipeline_v15(
 
     # Agents
     research_agent = ResearchAgent()
+    reference_agent = ReferenceAgent()
     script_agent = ScriptAgent()
     scene_agent = SceneAgent()
     asset_agent = AssetAgent()
@@ -159,12 +161,40 @@ def run_pipeline_v15(
         try:
             # Optional reference-driven context loading.
             if manifest.reference_url:
+                if settings.enable_reference_driven:
+                    ref_analysis = reference_agent.run(manifest.reference_url, settings.temp_dir)
+                    if ref_analysis:
+                        manifest.reference_analysis = ref_analysis
+                        story.reference_delivery_promise = str(ref_analysis.get("delivery_promise", ""))
+                        story.reference_hook_seconds = float(ref_analysis.get("hook_seconds", 0.0) or 0.0)
+                        story.reference_avg_cut_seconds = float(ref_analysis.get("avg_cut_seconds", 0.0) or 0.0)
+                        story.reference_video_available = bool(ref_analysis.get("video_available", False))
+                        manifest.reference_delivery_promise = story.reference_delivery_promise
+                        manifest.reference_hook_seconds = story.reference_hook_seconds
+                        manifest.reference_avg_cut_seconds = story.reference_avg_cut_seconds
+                        manifest.reference_video_available = story.reference_video_available
+                        extra_points = [str(x) for x in ref_analysis.get("key_moments", []) if x]
+                        if extra_points:
+                            story.reference_key_points = (story.reference_key_points + extra_points)[:6]
+
                 cache_path = settings.temp_dir / "reference_context_cache.json"
                 ref_ctx = load_reference_context(manifest.reference_url, cache_path)
                 if ref_ctx:
                     story.reference_title = str(ref_ctx.get("title", ""))
                     story.reference_summary = str(ref_ctx.get("summary", ""))
-                    story.reference_key_points = list(ref_ctx.get("key_points", []))[:6]
+                    text_points = [str(x).strip() for x in ref_ctx.get("key_points", []) if str(x).strip()]
+                    if text_points:
+                        merged_points: list[str] = []
+                        seen_points: set[str] = set()
+                        for point in list(story.reference_key_points) + text_points:
+                            key = point.lower()
+                            if key in seen_points:
+                                continue
+                            seen_points.add(key)
+                            merged_points.append(point)
+                            if len(merged_points) >= 6:
+                                break
+                        story.reference_key_points = merged_points
                     manifest.reference_notes = "reference_context_loaded"
                 else:
                     manifest.reference_notes = "reference_context_unavailable"
@@ -517,6 +547,21 @@ def run_pipeline_v15(
             # Build duraciones from edit decisions
             duraciones = [d.duration for d in edit_decisions] if edit_decisions else None
 
+            # Build structured timeline JSON for Remotion (Phase 1 integration)
+            render_inputs = clips if clips else images
+            timeline_path = settings.temp_dir / f"timeline_{timestamp}.json"
+            timeline_payload = editor_agent.build_timeline_json(
+                state=story,
+                media_paths=render_inputs,
+                decisions=edit_decisions,
+                audio_duration=audio_duration,
+                timeline_path=timeline_path,
+                subtitles_path=ass_path if ass_path.exists() else None,
+                narration_audio_path=audio_path,
+                music_path=music_path if music_path and music_path.exists() else None,
+            )
+            manifest.timeline_json_path = str(timeline_path)
+
             # Determine velocidad from dominant mood
             velocidad = raw_content.get("velocidad_cortes", "rapido") if raw_content else "rapido"
 
@@ -560,6 +605,8 @@ def run_pipeline_v15(
                 velocidad=velocidad,
                 num_clips=len(clips),
                 duraciones_clips=duraciones,
+                timeline_path=timeline_path,
+                timeline_payload=timeline_payload,
             )
 
             if render_error or not video_path:
@@ -588,6 +635,9 @@ def run_pipeline_v15(
                             duracion_audio=audio_duration,
                             velocidad=velocidad,
                             num_clips=len(clips),
+                            duraciones_clips=duraciones,
+                            timeline_path=timeline_path,
+                            timeline_payload=timeline_payload,
                             render_fixes=render_fixes,
                         )
                         if render_error2:
@@ -620,6 +670,8 @@ def run_pipeline_v15(
                     min_duration=10.0, max_duration=120.0,
                     subs_path=ass_path if ass_path.exists() else None,
                     platform=nicho.plataforma,
+                    reference_promise=story.reference_delivery_promise,
+                    reference_avg_cut_seconds=story.reference_avg_cut_seconds,
                 )
                 manifest.qa_passed = qa_passed
                 manifest.qa_issues = qa_issues
@@ -631,6 +683,7 @@ def run_pipeline_v15(
                         shutil.move(str(video_path), str(review_path))
                         manifest.video_path = str(review_path)
                         video_path = review_path
+                    output_target = settings.review_dir
             except Exception as e:
                 logger.debug(f"Post-render QA skipped: {e}")
 
@@ -702,9 +755,15 @@ def run_pipeline_v15(
 
             # Cleanup
             cleanup_temp(timestamp)
-            state_mgr.archive_manifest(
-                manifest, output_target if video_path else settings.output_dir
-            )
+            archive_dir = settings.output_dir
+            if manifest.status == JobStatus.MANUAL_REVIEW.value:
+                archive_dir = settings.review_dir
+            elif manifest.video_path:
+                vpath = Path(manifest.video_path)
+                if settings.review_dir in vpath.parents:
+                    archive_dir = settings.review_dir
+
+            state_mgr.archive_manifest(manifest, archive_dir)
 
         except Exception as e:
             logger.exception(f"V15 Pipeline crashed: {e}")

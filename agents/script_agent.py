@@ -303,6 +303,12 @@ Devuelve EXACTAMENTE este JSON:
             lines.append(f"REFERENCE_URL: {state.reference_url}")
             if state.reference_title:
                 lines.append(f"REFERENCE_TITLE: {state.reference_title}")
+            if state.reference_delivery_promise:
+                lines.append(f"REFERENCE_DELIVERY_PROMISE: {state.reference_delivery_promise}")
+            if state.reference_hook_seconds > 0:
+                lines.append(f"REFERENCE_HOOK_SECONDS: {state.reference_hook_seconds:.2f}")
+            if state.reference_avg_cut_seconds > 0:
+                lines.append(f"REFERENCE_AVG_CUT_SECONDS: {state.reference_avg_cut_seconds:.2f}")
             if state.reference_key_points:
                 points = " | ".join(state.reference_key_points[:4])
                 lines.append(f"REFERENCE_KEY_POINTS: {points}")

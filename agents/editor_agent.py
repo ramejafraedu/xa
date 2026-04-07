@@ -12,6 +12,8 @@ MODULE CONTRACT:
 """
 from __future__ import annotations
 
+import json
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -46,6 +48,20 @@ class EditDecision:
         self.transition_out = transition_out
         self.color_grade = color_grade
         self.speed_factor = speed_factor
+
+    def to_dict(self) -> dict:
+        """Serialize decision for logs/manifests/timeline debug."""
+        return {
+            "clip_index": self.clip_index,
+            "duration": self.duration,
+            "zoom_type": self.zoom_type,
+            "zoom_intensity": self.zoom_intensity,
+            "fade_in": self.fade_in,
+            "fade_out": self.fade_out,
+            "transition_out": self.transition_out,
+            "color_grade": self.color_grade,
+            "speed_factor": self.speed_factor,
+        }
 
 
 class EditorAgent:
@@ -87,7 +103,12 @@ class EditorAgent:
 
         for i, (scene, duration) in enumerate(clip_scenes):
             decision = self._scene_to_decision(i, scene, duration)
+            decision = self._apply_reference_pacing(state, i, decision)
             decisions.append(decision)
+
+        # Keep total edit length aligned with usable narration duration.
+        target_total = max(4.0, audio_duration - 2.0)
+        self._rescale_decisions(decisions, target_total)
 
         elapsed = round(time.time() - t0, 2)
         logger.info(
@@ -95,6 +116,253 @@ class EditorAgent:
             f"total {sum(d.duration for d in decisions):.1f}s ({elapsed}s)"
         )
         return decisions
+
+    def build_timeline_json(
+        self,
+        state: StoryState,
+        media_paths: list[Path],
+        decisions: list[EditDecision],
+        audio_duration: float,
+        timeline_path: Path,
+        subtitles_path: Optional[Path] = None,
+        narration_audio_path: Optional[Path] = None,
+        music_path: Optional[Path] = None,
+    ) -> dict:
+        """Build and persist a Remotion-compatible timeline JSON.
+
+        The timeline is a structured artifact consumed by the Remotion renderer.
+        """
+        timeline = self._build_timeline_payload(
+            state=state,
+            media_paths=media_paths,
+            decisions=decisions,
+            audio_duration=audio_duration,
+            subtitles_path=subtitles_path,
+            narration_audio_path=narration_audio_path,
+            music_path=music_path,
+        )
+
+        timeline_path.parent.mkdir(parents=True, exist_ok=True)
+        timeline_path.write_text(
+            json.dumps(timeline, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        logger.info(
+            f"🧭 Timeline JSON generado: {timeline_path.name} "
+            f"({len(timeline.get('scenes', []))} escenas)"
+        )
+        return timeline
+
+    def _build_timeline_payload(
+        self,
+        state: StoryState,
+        media_paths: list[Path],
+        decisions: list[EditDecision],
+        audio_duration: float,
+        subtitles_path: Optional[Path],
+        narration_audio_path: Optional[Path],
+        music_path: Optional[Path],
+    ) -> dict:
+        """Create timeline payload with scene timing, style and captions."""
+        valid_media = [p for p in media_paths if p and p.exists()]
+        scenes: list[dict] = []
+        cursor = 0.0
+
+        # Guarantee there is one decision per media item (or a safe fallback).
+        working_decisions = list(decisions)
+        if not working_decisions and valid_media:
+            fallback_dur = max(1.2, audio_duration / max(len(valid_media), 1))
+            working_decisions = [
+                EditDecision(clip_index=i, duration=fallback_dur)
+                for i in range(len(valid_media))
+            ]
+
+        if valid_media:
+            for idx, media_path in enumerate(valid_media):
+                decision = working_decisions[min(idx, len(working_decisions) - 1)]
+                duration = max(0.8, float(decision.duration or 0.0))
+                scene_text = state.scenes[idx].text if idx < len(state.scenes) else ""
+
+                scenes.append(
+                    {
+                        "id": f"scene_{idx + 1}",
+                        "kind": "video",
+                        "src": str(media_path.resolve().as_posix()),
+                        "startSeconds": round(cursor, 3),
+                        "durationSeconds": round(duration, 3),
+                        "tone": self._tone_for_grade(decision.color_grade),
+                        "fadeInFrames": max(0, int(round(decision.fade_in * 30))),
+                        "fadeOutFrames": max(0, int(round(decision.fade_out * 30))),
+                        "filter": self._css_filter_for_grade(decision.color_grade),
+                        # Extra fields kept for traceability/debug in render stage.
+                        "zoomType": decision.zoom_type,
+                        "zoomIntensity": decision.zoom_intensity,
+                        "transitionOut": decision.transition_out,
+                        "speedFactor": decision.speed_factor,
+                        "sceneText": scene_text[:220],
+                    }
+                )
+                cursor += duration
+        else:
+            # Last-resort title card so Remotion receives a valid composition payload.
+            scenes.append(
+                {
+                    "id": "title_fallback",
+                    "kind": "title",
+                    "text": state.hook or state.topic or "Video Factory",
+                    "startSeconds": 0.0,
+                    "durationSeconds": round(max(3.0, audio_duration), 3),
+                    "accent": "#86d8ff",
+                    "intensity": 1.0,
+                }
+            )
+
+        if scenes and audio_duration > 0:
+            total = sum(float(s.get("durationSeconds", 0.0)) for s in scenes)
+            if total < audio_duration:
+                scenes[-1]["durationSeconds"] = round(
+                    float(scenes[-1].get("durationSeconds", 0.0)) + (audio_duration - total),
+                    3,
+                )
+
+        captions_words = self._parse_ass_word_captions(subtitles_path)
+        captions = None
+        if captions_words:
+            captions = {
+                "words": captions_words,
+                "wordsPerPage": 4,
+                "fontSize": 52,
+                "color": "#F8FAFC",
+                "highlightColor": "#FBBF24",
+                "backgroundColor": "rgba(0, 0, 0, 0.60)",
+            }
+
+        soundtrack = None
+        if narration_audio_path and narration_audio_path.exists():
+            soundtrack = {
+                "src": str(narration_audio_path.resolve().as_posix()),
+                "volume": 1.0,
+                "fadeInSeconds": 0.15,
+                "fadeOutSeconds": 0.20,
+            }
+
+        music = None
+        if music_path and music_path.exists():
+            music = {
+                "src": str(music_path.resolve().as_posix()),
+                "volume": 0.16,
+                "fadeInSeconds": 0.5,
+                "fadeOutSeconds": 1.2,
+            }
+
+        return {
+            "timelineVersion": "1.0",
+            "generatedBy": "EditorAgent",
+            "meta": {
+                "topic": state.topic,
+                "platform": state.platform,
+                "audioDurationSeconds": round(audio_duration, 3),
+                "sceneCount": len(scenes),
+            },
+            "scenes": scenes,
+            "soundtrack": soundtrack,
+            "music": music,
+            "captions": captions,
+            "titleFontSize": 72,
+            "titleWidth": 860,
+            "signalLineCount": 18,
+        }
+
+    @staticmethod
+    def _tone_for_grade(color_grade: str) -> str:
+        """Map V15 color grades to CinematicRenderer tones."""
+        grade = (color_grade or "default").lower()
+        mapping = {
+            "warm": "neutral",
+            "cold": "cold",
+            "dark": "void",
+            "default": "steel",
+        }
+        return mapping.get(grade, "steel")
+
+    @staticmethod
+    def _css_filter_for_grade(color_grade: str) -> str:
+        """Map V15 color grades to CSS filter chain used by Remotion."""
+        grade = (color_grade or "default").lower()
+        mapping = {
+            "warm": "contrast(1.05) saturate(1.10) brightness(1.02)",
+            "cold": "contrast(1.10) saturate(0.86) brightness(0.97)",
+            "dark": "contrast(1.12) saturate(0.82) brightness(0.90)",
+            "default": "contrast(1.06) saturate(0.90) brightness(0.98)",
+        }
+        return mapping.get(grade, mapping["default"])
+
+    def _parse_ass_word_captions(self, subtitles_path: Optional[Path]) -> list[dict]:
+        """Parse ASS dialogue events into word-level caption timing."""
+        if not subtitles_path or not subtitles_path.exists():
+            return []
+
+        words: list[dict] = []
+        try:
+            for line in subtitles_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if not line.startswith("Dialogue:"):
+                    continue
+
+                parts = line.split(",", 9)
+                if len(parts) < 10:
+                    continue
+
+                start_s = self._ass_time_to_seconds(parts[1])
+                end_s = self._ass_time_to_seconds(parts[2])
+                if end_s <= start_s:
+                    continue
+
+                raw_text = parts[9]
+                clean = re.sub(r"\{[^}]*\}", "", raw_text)
+                clean = clean.replace("\\N", " ").replace("\\n", " ")
+                clean = re.sub(r"\s+", " ", clean).strip()
+                if not clean:
+                    continue
+
+                tokens = re.findall(r"[A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü]+|[^\s]", clean)
+                if not tokens:
+                    continue
+
+                span = end_s - start_s
+                step = span / len(tokens)
+                cursor = start_s
+
+                for token in tokens:
+                    w_start = cursor
+                    w_end = min(end_s, cursor + step)
+                    start_ms = int(round(w_start * 1000))
+                    end_ms = int(round(w_end * 1000))
+                    if end_ms <= start_ms:
+                        end_ms = start_ms + 40
+
+                    words.append(
+                        {
+                            "word": token,
+                            "startMs": start_ms,
+                            "endMs": end_ms,
+                        }
+                    )
+                    cursor = w_end
+        except Exception as exc:
+            logger.debug(f"ASS caption parsing skipped: {exc}")
+
+        return words
+
+    @staticmethod
+    def _ass_time_to_seconds(value: str) -> float:
+        """Convert ASS timestamp (H:MM:SS.CS) to seconds."""
+        try:
+            hms, centis = value.strip().split(".")
+            hh, mm, ss = hms.split(":")
+            return int(hh) * 3600 + int(mm) * 60 + int(ss) + (int(centis) / 100.0)
+        except Exception:
+            return 0.0
 
     def _scene_to_decision(
         self,
@@ -258,6 +526,39 @@ class EditorAgent:
             )
             for i in range(num_clips)
         ]
+
+    def _apply_reference_pacing(
+        self,
+        state: StoryState,
+        index: int,
+        decision: EditDecision,
+    ) -> EditDecision:
+        """Blend default duration with reference cadence when available."""
+        avg_cut = float(getattr(state, "reference_avg_cut_seconds", 0.0) or 0.0)
+        hook_sec = float(getattr(state, "reference_hook_seconds", 0.0) or 0.0)
+
+        if avg_cut > 0:
+            blended = (decision.duration * 0.65) + (avg_cut * 0.35)
+            decision.duration = round(max(0.8, min(5.0, blended)), 3)
+
+        if index == 0 and hook_sec > 0:
+            decision.duration = round(max(0.8, min(decision.duration, hook_sec)), 3)
+
+        return decision
+
+    @staticmethod
+    def _rescale_decisions(decisions: list[EditDecision], target_total: float) -> None:
+        """Rescale decisions in place to keep total duration consistent."""
+        if not decisions:
+            return
+
+        current = sum(max(0.1, d.duration) for d in decisions)
+        if current <= 0:
+            return
+
+        scale = target_total / current
+        for d in decisions:
+            d.duration = round(max(0.8, d.duration * scale), 3)
 
     @staticmethod
     def decision_to_zoompan(decision: EditDecision) -> str:

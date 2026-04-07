@@ -183,6 +183,10 @@ class StoryState(BaseModel):
     reference_title: str = ""
     reference_summary: str = ""
     reference_key_points: list[str] = Field(default_factory=list)
+    reference_delivery_promise: str = ""
+    reference_hook_seconds: float = 0.0
+    reference_avg_cut_seconds: float = 0.0
+    reference_video_available: bool = False
     precedence_rule: str = "RESEARCH > NICHO_DEFAULT"
 
     # --- Scores (from ReviewerAgent / QualityGate) ---
@@ -231,4 +235,7 @@ class StoryState(BaseModel):
             f"REFERENCE URL: {self.reference_url or 'N/A'}\n"
             f"REFERENCE TITLE: {self.reference_title or 'N/A'}\n"
             f"REFERENCE SUMMARY: {self.reference_summary[:240] if self.reference_summary else 'N/A'}\n"
+            f"REFERENCE PROMISE: {self.reference_delivery_promise or 'N/A'}\n"
+            f"REFERENCE HOOK SEC: {self.reference_hook_seconds or 0:.2f}\n"
+            f"REFERENCE AVG CUT SEC: {self.reference_avg_cut_seconds or 0:.2f}\n"
         )

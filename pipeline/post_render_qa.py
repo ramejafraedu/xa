@@ -12,6 +12,7 @@ MODULE CONTRACT:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -27,6 +28,8 @@ def post_render_qa(
     min_size_kb: int = 500,
     subs_path: Path | None = None,
     platform: str = "tiktok_reels",
+    reference_promise: str = "",
+    reference_avg_cut_seconds: float = 0.0,
 ) -> tuple[bool, list[str]]:
     """Run post-render quality assurance on a video file.
 
@@ -129,6 +132,16 @@ def post_render_qa(
     if subs_path and subs_path.exists():
         sub_issues = check_subtitle_safe_zone(subs_path, expected_height, platform)
         issues.extend(sub_issues)
+
+    # 11. V16+: Promise/rhythm compliance for reference-driven jobs
+    rhythm_issue = _check_motion_rhythm(
+        video_path=video_path,
+        total_duration=duration,
+        reference_promise=reference_promise,
+        reference_avg_cut_seconds=reference_avg_cut_seconds,
+    )
+    if rhythm_issue:
+        issues.append(rhythm_issue)
 
     passed = len(issues) == 0
 
@@ -266,6 +279,66 @@ def _check_av_sync(probe: dict, video_duration: float) -> str | None:
             )
     except Exception as e:
         logger.debug(f"AV sync check error: {e}")
+
+    return None
+
+
+def _check_motion_rhythm(
+    video_path: Path,
+    total_duration: float,
+    reference_promise: str = "",
+    reference_avg_cut_seconds: float = 0.0,
+) -> str | None:
+    """Check cut rhythm and motion intensity against reference promise."""
+    if total_duration <= 0:
+        return None
+
+    promise = (reference_promise or "").strip().lower()
+    target_avg = float(reference_avg_cut_seconds or 0.0)
+
+    # Skip when there is no reference-driven expectation.
+    if not promise and target_avg <= 0:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-i", str(video_path),
+                "-vf", "select='gt(scene,0.30)',showinfo",
+                "-f", "null", "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        stderr = result.stderr or ""
+        scene_hits = re.findall(r"pts_time:([\d.]+)", stderr)
+        cut_count = len(scene_hits)
+
+        # +1 because cuts partition scenes in intervals.
+        scene_count = max(1, cut_count + 1)
+        avg_cut = total_duration / scene_count
+
+        if promise == "motion_led" and avg_cut > 3.5:
+            return (
+                f"Reference promise mismatch: motion_led expects faster pacing, "
+                f"but detected avg cut {avg_cut:.2f}s"
+            )
+
+        if target_avg > 0:
+            delta = abs(avg_cut - target_avg)
+            tolerance = max(1.2, target_avg * 0.8)
+            if delta > tolerance:
+                return (
+                    f"Reference pacing drift: avg cut {avg_cut:.2f}s vs target "
+                    f"{target_avg:.2f}s (delta {delta:.2f}s)"
+                )
+
+        # Generic slideshow warning for reference-driven paths.
+        if avg_cut > 5.2 and total_duration >= 20:
+            return f"Possible slideshow pacing: avg cut {avg_cut:.2f}s over {total_duration:.1f}s"
+    except Exception as e:
+        logger.debug(f"Motion rhythm check error: {e}")
 
     return None
 
