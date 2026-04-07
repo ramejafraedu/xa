@@ -1,0 +1,20 @@
+# Nicho: Historia Oscura, Crímenes Reales y Conspiraciones
+
+slug: historia
+nombre: "historia oscura y crimenes reales y conspiraciones"
+tono: "misterioso y narrativo"
+plataforma: "tiktok_reels"
+genero_musica: "dark"
+num_clips: 8
+keywords_count: 8
+tipo_cortes: "rapidos en tension lentos en revelacion"
+estilo_narrativo: >
+  Tension incremental con preguntas abiertas y pausas dramaticas estilo misterio.
+  En 2026 usa casos de IA, vigilancia global y eventos no explicados.
+  Narrador impasible que revela horror con calma.
+voz_gemini: "Charon"
+voz_edge: "es-ES-AlvaroNeural"
+rate_tts: "+0%"
+pitch_tts: "-15Hz"
+horas: [8, 16, 0]
+direccion_visual: "dark documentary, archival footage, low light, desaturated"

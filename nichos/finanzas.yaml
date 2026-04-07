@@ -1,0 +1,21 @@
+# Nicho: Finanzas Personales y Emprendimiento
+# Editable sin tocar código Python. Cambios se aplican al reiniciar.
+
+slug: finanzas
+nombre: "finanzas personales y emprendimiento"
+tono: "motivacional y energico"
+plataforma: "tiktok_reels"
+genero_musica: "motivational"
+num_clips: 8
+keywords_count: 8
+tipo_cortes: "lentos y cinematograficos"
+estilo_narrativo: >
+  Afirmaciones secas e imponentes con ritmo lento y pausado estilo Old Money.
+  En 2026 usa datos de inflacion, cripto y libertad financiera.
+  Referencia visual: edificios de lujo, coches, oficinas minimalistas.
+voz_gemini: "Fenrir"
+voz_edge: "es-MX-JorgeNeural"
+rate_tts: "-10%"
+pitch_tts: "-5Hz"
+horas: [7, 15, 23]
+direccion_visual: "cinematic dark luxury, slow motion, urban wealth"

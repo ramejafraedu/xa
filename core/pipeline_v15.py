@@ -610,7 +610,7 @@ def run_pipeline_v15(
             manifest.timings["render"] = round(time.time() - t, 2)
             progress.advance(main_task)
 
-            # ── Stage 11: Post-render QA ─────────────────────────────
+            # ── Stage 11: Post-render QA (V16: A/V sync + safe-zone + frame sampling) ──
             progress.update(main_task, description="[cyan]🔬 Post-render QA...")
             try:
                 from pipeline.post_render_qa import post_render_qa
@@ -618,6 +618,8 @@ def run_pipeline_v15(
                     video_path,
                     expected_width=1080, expected_height=1920,
                     min_duration=10.0, max_duration=120.0,
+                    subs_path=ass_path if ass_path.exists() else None,
+                    platform=nicho.plataforma,
                 )
                 manifest.qa_passed = qa_passed
                 manifest.qa_issues = qa_issues

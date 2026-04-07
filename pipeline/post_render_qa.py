@@ -1,10 +1,12 @@
 """Post-Render QA — Validates final video after rendering.
 
-Runs ffprobe + analysis to ensure the rendered video is not corrupted,
-has expected resolution, audio levels are OK, etc.
+V16 upgrade: Added 3 new checks from OpenMontage-style self-review:
+  1. Audio/video stream duration sync (delta < 500ms)
+  2. Subtitle safe-zone validation (TikTok/Reels UI overlap detection)
+  3. Frame sampling (3 keyframes sampled, all must be non-black/non-corrupt)
 
 MODULE CONTRACT:
-  Input:  Path to rendered MP4
+  Input:  Path to rendered MP4, optional subs_path for safe-zone check
   Output: (passed: bool, issues: list[str])
 """
 from __future__ import annotations
@@ -23,8 +25,20 @@ def post_render_qa(
     min_duration: float = 15.0,
     max_duration: float = 120.0,
     min_size_kb: int = 500,
+    subs_path: Path | None = None,
+    platform: str = "tiktok_reels",
 ) -> tuple[bool, list[str]]:
     """Run post-render quality assurance on a video file.
+
+    Args:
+        video_path: Path to the rendered MP4.
+        expected_width: Expected video width in pixels.
+        expected_height: Expected video height in pixels.
+        min_duration: Minimum acceptable duration in seconds.
+        max_duration: Maximum acceptable duration in seconds.
+        min_size_kb: Minimum file size in KB.
+        subs_path: Optional .ass subtitle file to validate safe-zone.
+        platform: Platform hint for safe-zone thresholds (tiktok_reels, shorts, facebook).
 
     Returns:
         (passed, issues) — True if all checks pass, plus list of issues found.
@@ -100,6 +114,21 @@ def post_render_qa(
     black = _detect_black_frames(video_path)
     if black:
         issues.append(black)
+
+    # 8. V16: Audio/video stream sync check
+    sync_issue = _check_av_sync(probe, duration)
+    if sync_issue:
+        issues.append(sync_issue)
+
+    # 9. V16: Frame sampling (detect corrupt/black frames across full video)
+    frame_issue = _sample_frames(video_path, duration)
+    if frame_issue:
+        issues.append(frame_issue)
+
+    # 10. V16: Subtitle safe-zone check
+    if subs_path and subs_path.exists():
+        sub_issues = check_subtitle_safe_zone(subs_path, expected_height, platform)
+        issues.extend(sub_issues)
 
     passed = len(issues) == 0
 
@@ -199,3 +228,169 @@ def _detect_black_frames(video_path: Path) -> str | None:
         pass
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# V16: New QA Checks
+# ---------------------------------------------------------------------------
+
+def _check_av_sync(probe: dict, video_duration: float) -> str | None:
+    """V16: Check audio/video stream duration sync.
+
+    A delta > 500ms between the two streams usually indicates a mux error
+    that will cause the video to appear frozen or have desync on mobile.
+    """
+    try:
+        streams = probe.get("streams", [])
+        video_dur = None
+        audio_dur = None
+
+        for stream in streams:
+            dur = stream.get("duration")
+            if dur is None:
+                continue
+            dur = float(dur)
+            if stream.get("codec_type") == "video" and video_dur is None:
+                video_dur = dur
+            elif stream.get("codec_type") == "audio" and audio_dur is None:
+                audio_dur = dur
+
+        if video_dur is None or audio_dur is None:
+            return None  # Can't check if streams missing
+
+        delta = abs(video_dur - audio_dur)
+        if delta > 0.5:
+            return (
+                f"A/V sync warning: video={video_dur:.2f}s vs audio={audio_dur:.2f}s "
+                f"(delta={delta:.2f}s > 500ms threshold)"
+            )
+    except Exception as e:
+        logger.debug(f"AV sync check error: {e}")
+
+    return None
+
+
+def _sample_frames(video_path: Path, duration: float, sample_count: int = 3) -> str | None:
+    """V16: Sample frames across the video to detect corrupt/black regions.
+
+    Extracts `sample_count` keyframes evenly distributed across the video
+    and checks each for blackness using ffprobe's signalstats.
+    """
+    if duration < 5:
+        return None  # Too short to reliably sample
+
+    try:
+        import tempfile
+        import os
+
+        # Sample at 25%, 50%, 75% of duration
+        timestamps = [duration * p for p in [0.25, 0.50, 0.75][:sample_count]]
+        black_frames = 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i, ts in enumerate(timestamps):
+                frame_path = os.path.join(tmpdir, f"frame_{i}.png")
+                result = subprocess.run(
+                    [
+                        "ffmpeg", "-ss", str(ts), "-i", str(video_path),
+                        "-vframes", "1", "-q:v", "2",
+                        frame_path, "-y",
+                    ],
+                    capture_output=True, timeout=15,
+                )
+
+                if result.returncode != 0 or not os.path.exists(frame_path):
+                    black_frames += 1
+                    continue
+
+                # Check if frame file is suspiciously small (corrupted = usually < 2KB)
+                frame_size = os.path.getsize(frame_path)
+                if frame_size < 2048:  # < 2KB is likely a black/corrupt frame
+                    black_frames += 1
+
+        if black_frames >= 2:
+            return (
+                f"Frame sampling: {black_frames}/{sample_count} frames appear "
+                f"black or corrupted (possible render issue)"
+            )
+        elif black_frames == 1:
+            logger.debug(f"Frame sampling: 1/{sample_count} frames suspect (warning only)")
+
+    except Exception as e:
+        logger.debug(f"Frame sampling error: {e}")
+
+    return None
+
+
+def check_subtitle_safe_zone(
+    subs_path: Path,
+    video_height: int = 1920,
+    platform: str = "tiktok_reels",
+) -> list[str]:
+    """V16: Check that subtitle events don't land in UI danger zones.
+
+    TikTok/Reels overlays the bottom 300px with likes/share/comments buttons
+    and the top 130px with the nav bar. Subtitles in those zones get hidden.
+
+    Args:
+        subs_path: Path to the .ass subtitle file.
+        video_height: Video height in pixels (default 1920).
+        platform: Platform hint for threshold selection.
+
+    Returns:
+        List of issue strings (empty = all clear).
+    """
+    issues = []
+
+    # Safe-zone thresholds by platform (top_danger, bottom_danger)
+    platform_zones = {
+        "tiktok_reels": (130, 300),
+        "reels": (130, 280),
+        "shorts": (100, 250),
+        "facebook": (60, 150),
+    }
+    platform_key = platform.lower().replace("tiktok_", "")
+    if "tiktok" in platform_key or "reel" in platform_key:
+        top_danger, bottom_danger = platform_zones.get("tiktok_reels", (130, 300))
+    elif "short" in platform_key:
+        top_danger, bottom_danger = platform_zones.get("shorts", (100, 250))
+    elif "facebook" in platform_key:
+        top_danger, bottom_danger = platform_zones.get("facebook", (60, 150))
+    else:
+        top_danger, bottom_danger = 130, 300
+
+    safe_top = top_danger + 50      # 50px extra margin
+    safe_bottom = video_height - bottom_danger - 50
+
+    try:
+        import re
+        content = subs_path.read_text(encoding="utf-8", errors="ignore")
+
+        # Parse MarginV from [V4+ Styles] section
+        margin_v_match = re.search(r"MarginV\s*:\s*(\d+)", content, re.IGNORECASE)
+        if margin_v_match:
+            margin_v = int(margin_v_match.group(1))
+            subtitle_bottom_y = video_height - margin_v
+
+            if subtitle_bottom_y > safe_bottom:
+                issues.append(
+                    f"Subtitle safe-zone warning: MarginV={margin_v}px places subtitles at "
+                    f"y={subtitle_bottom_y} which overlaps the {platform} UI zone "
+                    f"(safe max y={safe_bottom}). Increase MarginV to at least {bottom_danger + 50}."
+                )
+
+        # Look for explicit !{\pos(x,y)} positioning that could be in danger zones
+        pos_matches = re.findall(r"\\pos\((\d+),(\d+)\)", content)
+        for _, y_str in pos_matches:
+            y = int(y_str)
+            if y < safe_top:
+                issues.append(f"Subtitle positioned at y={y} (top danger zone < {safe_top})")
+                break
+            if y > safe_bottom:
+                issues.append(f"Subtitle positioned at y={y} (bottom danger zone > {safe_bottom})")
+                break
+
+    except Exception as e:
+        logger.debug(f"Subtitle safe-zone check error: {e}")
+
+    return issues

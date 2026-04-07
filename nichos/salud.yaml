@@ -1,0 +1,20 @@
+# Nicho: Hábitos Saludables y Nutrición
+
+slug: salud
+nombre: "habitos saludables y nutricion"
+tono: "calido y directo"
+plataforma: "facebook"
+genero_musica: "ambient"
+num_clips: 6
+keywords_count: 6
+tipo_cortes: "suaves y fluidos"
+estilo_narrativo: >
+  Calido y directo con consejos practicos basados en ciencia.
+  En 2026 usa longevidad, biohacking y medicina preventiva.
+  Voz empática de hermana mayor que comparte lo que funciona de verdad.
+voz_gemini: "Aoede"
+voz_edge: "es-MX-DaliaNeural"
+rate_tts: "+0%"
+pitch_tts: "+0Hz"
+horas: [10, 18, 2]
+direccion_visual: "bright natural light, fresh food, nature, wellness"

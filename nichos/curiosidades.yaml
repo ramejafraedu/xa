@@ -1,0 +1,20 @@
+# Nicho: Curiosidades del Mundo y Datos Psicológicos
+
+slug: curiosidades
+nombre: "curiosidades del mundo y datos psicologicos"
+tono: "misterioso y curioso"
+plataforma: "tiktok_reels"
+genero_musica: "dark"
+num_clips: 8
+keywords_count: 8
+tipo_cortes: "ultra dinamicos y variados"
+estilo_narrativo: >
+  Curioso y sorprendente con datos impactantes y giros inesperados.
+  En 2026 incluye neuromarketing, psicologia del comportamiento y efectos cognitivos.
+  Cada dato debe desafiar lo que el usuario cree saber.
+voz_gemini: "Kore"
+voz_edge: "es-MX-JorgeNeural"
+rate_tts: "+5%"
+pitch_tts: "+0Hz"
+horas: [9, 17, 1]
+direccion_visual: "vibrant science visuals, brain imagery, abstract patterns"

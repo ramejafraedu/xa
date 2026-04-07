@@ -575,7 +575,20 @@ def _load_nichos_from_file(
         return base_nichos
 
 
-# Singleton
+# ---------------------------------------------------------------------------
+# Singletons
+# ---------------------------------------------------------------------------
 settings = Settings()
 app_config = AppConfig()
-NICHOS = _load_nichos_from_file(NICHOS, settings.niches_config_path, settings.base_dir)
+
+# Load nichos: YAML manifests (/nichos/*.yaml) + JSON file + hardcoded fallback
+# Priority: nichos/*.yaml > NICHES_CONFIG_PATH (JSON) > hardcoded dict
+try:
+    from nichos._loader import load_nichos_from_yaml_dir as _yaml_loader
+    NICHOS = _yaml_loader(NICHOS)
+except Exception as _e:
+    logger.debug(f"YAML niche loader not available ({_e}), trying JSON config path...")
+
+# JSON override on top (if NICHES_CONFIG_PATH is set)
+if settings.niches_config_path:
+    NICHOS = _load_nichos_from_file(NICHOS, settings.niches_config_path, settings.base_dir)

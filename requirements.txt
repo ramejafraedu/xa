@@ -1,4 +1,4 @@
-# Video Factory V14 — Dependencies
+# Video Factory V16 — Dependencies
 # Install: pip install -r requirements.txt
 
 # Core
@@ -8,6 +8,7 @@ python-dotenv>=1.0,<2
 loguru>=0.7,<1
 typer>=0.15,<1
 rich>=13.9,<14
+pyyaml>=6.0,<7          # V16: YAML niche manifests (nichos/*.yaml)
 
 # HTTP (single library, no mixing)
 httpx>=0.28,<1

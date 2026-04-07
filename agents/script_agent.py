@@ -1,17 +1,20 @@
-"""Video Factory V15 — Script Agent.
+"""Video Factory V15/V16 — Script Agent.
 
 Replaces the monolithic content_gen.py call with a structured approach:
 1. Receives ResearchBrief + StoryState
 2. Uses prompt chaining: outline first → then full script
 3. Outputs structured scene-ready script with narrative coherence
+4. V16: Loads Skills Markdown files to improve prompt quality
 
-Still uses the same GPT-4.1 backend as V14.
+Still uses the same Gemini backend as V15.
 """
 from __future__ import annotations
 
 import json
 import re
 import time
+from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from loguru import logger
@@ -20,6 +23,44 @@ from config import settings
 from core.state import StoryState
 from models.config_models import NichoConfig
 from services.http_client import request_with_retry
+
+# Skills directory (relative to project root)
+_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+
+
+@lru_cache(maxsize=16)
+def _load_skill(relative_path: str) -> str:
+    """Load a skill markdown file and cache it in memory.
+
+    Args:
+        relative_path: Path relative to skills/ dir, e.g. 'script/hooks.md'
+
+    Returns:
+        File content as string, or empty string if not found.
+    """
+    skill_path = _SKILLS_DIR / relative_path
+    if not skill_path.exists():
+        logger.debug(f"Skill not found: {skill_path}")
+        return ""
+    try:
+        content = skill_path.read_text(encoding="utf-8")
+        logger.debug(f"✅ Skill loaded: {relative_path} ({len(content)} chars)")
+        return content
+    except Exception as exc:
+        logger.warning(f"Failed reading skill {relative_path}: {exc}")
+        return ""
+
+
+def _build_skills_block(*skill_paths: str) -> str:
+    """Build a combined skills context block from multiple skill files."""
+    parts = []
+    for path in skill_paths:
+        content = _load_skill(path)
+        if content:
+            parts.append(f"\n# SKILL: {path}\n{content}")
+    if not parts:
+        return ""
+    return "\n\n## SKILLS DE ESCRITURA (SEGUIR ESTRICTAMENTE)\n" + "\n---\n".join(parts)
 
 
 class ScriptAgent:
@@ -89,6 +130,12 @@ class ScriptAgent:
         """Step 1: Generate a narrative outline (not the full script)."""
         precedence_block = self._build_precedence_block(state, nicho)
 
+        # V16: Load skills for hook and storytelling guidance
+        skills_block = _build_skills_block(
+            "script/hooks.md",
+            "script/storytelling.md",
+        )
+
         system = (
             "Eres un director creativo de contenido viral. "
             "Genera un OUTLINE (esquema) para un video corto. "
@@ -100,6 +147,7 @@ class ScriptAgent:
             "BEAT 3: [giro o dato impactante]\n"
             "PAYOFF: [cierre emocional]\n"
             "CTA: [llamada a acción]\n"
+            + skills_block
         )
 
         # Build context from research
@@ -121,7 +169,7 @@ class ScriptAgent:
             f"{precedence_block}\n"
             f"{research_ctx}\n"
             f"TRENDING: {state.research.trending_context_raw[:200]}\n\n"
-            f"Genera el OUTLINE del video."
+            f"Genera el OUTLINE del video aplicando los skills de storytelling."
         )
 
         return self._call_llm(system, user, temperature=0.9)
@@ -162,6 +210,13 @@ EJEMPLO 2 (Finanzas/Éxito):
 "guion": "Ahorrar el 10% no te hará rico. Te están mintiendo. La inflación está en 4%, el banco te da 1%. Pierdes dinero todos los días. Lo que necesitas no es ahorrar, es multiplicar. Aprender a vender o programar te dará un ROI del 1000%. Cambia tu mentalidad de consumidor a productor."
 """
 
+        # V16: Load all script skills
+        skills_block = _build_skills_block(
+            "script/hooks.md",
+            "script/storytelling.md",
+            "script/structure.md",
+        )
+
         system = f"""Eres head writer de videos faceless top 1%. Objetivo: CTR alto y retención brutal.
 
 CONTEXTO NARRATIVO:
@@ -170,6 +225,7 @@ CONTEXTO NARRATIVO:
 OUTLINE APROBADO:
 {outline}
 {few_shot_examples}
+{skills_block}
 
 REGLAS MAESTRAS:
 - Gancho en <=1.8 segundos con polarización real.
