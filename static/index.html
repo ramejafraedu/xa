@@ -485,6 +485,12 @@
         .video-meta {
             font-size: 11px;
             color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .video-actions {
+            display: flex;
+            gap: 8px;
         }
 
         /* ===== EMPTY STATE ===== */
@@ -853,6 +859,9 @@
                     card.innerHTML = `
                         <div class="video-name">🎬 ${v.name}</div>
                         <div class="video-meta">${v.size_mb} MB • ${v.created} • ${v.dir}</div>
+                        <div class="video-actions">
+                            <a class="btn btn-sm btn-secondary" href="${v.download_url || '#'}" ${v.download_url ? '' : 'aria-disabled="true"'}>⬇ Descargar</a>
+                        </div>
                     `;
                     grid.appendChild(card);
                 });

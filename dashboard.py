@@ -16,6 +16,7 @@ import shutil
 import sys
 import threading
 import time
+from urllib.parse import quote
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -23,7 +24,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks, Request, Body
+from fastapi import FastAPI, BackgroundTasks, Request, Body, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -124,6 +125,30 @@ def _collect_recent_manifests(limit: int = 50) -> list[dict]:
             data["_manifest_path"] = str(path)
             results.append(data)
     return results
+
+
+def _resolve_downloadable_video(video_name: str, dir_hint: str = "") -> Optional[Path]:
+    """Resolve a video file from output/review directories safely."""
+    safe_name = Path(video_name).name
+    if safe_name != video_name:
+        return None
+
+    ordered_dirs: list[Path] = []
+    normalized_hint = (dir_hint or "").strip().lower()
+    if normalized_hint in {"output"}:
+        ordered_dirs.append(settings.output_dir)
+    elif normalized_hint in {"review", "review_manual"}:
+        ordered_dirs.append(settings.review_dir)
+
+    for base in [settings.output_dir, settings.review_dir]:
+        if base not in ordered_dirs:
+            ordered_dirs.append(base)
+
+    for base in ordered_dirs:
+        candidate = base / safe_name
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
 
 
 def _clean_manifest_for_save(manifest: dict) -> dict:
@@ -601,8 +626,23 @@ async def list_videos():
                     "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
                     "created": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
                     "dir": d.name,
+                    "download_url": f"/api/videos/download/{quote(f.name)}?dir={d.name}",
                 })
     return videos
+
+
+@app.get("/api/videos/download/{video_name}")
+async def download_video(video_name: str, dir: str = ""):
+    """Download a generated MP4 from output/review directories."""
+    video_path = _resolve_downloadable_video(video_name, dir)
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    return FileResponse(
+        path=str(video_path),
+        filename=video_path.name,
+        media_type="video/mp4",
+    )
 
 
 @app.get("/api/checkpoints")
