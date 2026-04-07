@@ -16,13 +16,19 @@ from services.http_client import request_with_retry
 _telegram_cooldown_until = 0.0
 
 
+def _pipeline_label(result: PipelineResult) -> str:
+    """Return a stable human label for pipeline version in notifications."""
+    label = str(getattr(result, "pipeline_type", "") or "").strip().upper()
+    return label if label else "V14"
+
+
 def notify_success(result: PipelineResult, drive_link: str = "N/A") -> bool:
     """Send success notification to Telegram."""
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         return False
 
     text = (
-        f"✅ VIDEO FACTORY V14 — Video listo\n\n"
+        f"✅ VIDEO FACTORY {_pipeline_label(result)} — Video listo\n\n"
         f"📁 Nicho: {result.nicho_slug}\n"
         f"📝 Titulo: {result.titulo}\n"
         f"🎬 Archivo: {result.video_path.split('/')[-1] if '/' in result.video_path else result.video_path.split(chr(92))[-1]}\n\n"
@@ -43,7 +49,7 @@ def notify_error(result: PipelineResult) -> bool:
         return False
 
     text = (
-        f"🚨 VIDEO FACTORY V14 ERROR\n\n"
+        f"🚨 VIDEO FACTORY {_pipeline_label(result)} ERROR\n\n"
         f"📁 Nicho: {result.nicho_slug}\n"
         f"📝 Titulo: {result.titulo or 'N/A'}\n"
         f"⚠️ Etapa: {result.error_stage}\n"
@@ -65,7 +71,7 @@ def notify_review(result: PipelineResult) -> bool:
         return False
 
     text = (
-        f"⚠️ VIDEO FACTORY V14 — Requiere revisión\n\n"
+        f"⚠️ VIDEO FACTORY {_pipeline_label(result)} — Requiere revisión\n\n"
         f"📁 Nicho: {result.nicho_slug}\n"
         f"📝 Titulo: {result.titulo}\n"
         f"📊 Calidad: {result.quality_score} (threshold: 7.5)\n"

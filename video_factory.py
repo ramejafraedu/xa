@@ -241,6 +241,9 @@ def run_pipeline(
             model_version=settings.inference_model,
         )
 
+    # V14 entrypoint should explicitly tag manifests as v14 to avoid alert confusion.
+    manifest.pipeline_type = "v14"
+
     settings.ensure_dirs()
     cleanup_stale_temp()
 

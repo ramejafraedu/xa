@@ -730,14 +730,64 @@ def run_pipeline_v15(
             )
 
             if not tts_ok:
-                _stage_end("tts", "error", "TTS failed")
-                manifest.status = JobStatus.ERROR.value
-                manifest.error_stage = "tts"
-                manifest.error_message = "TTS failed"
-                manifest.error_code = ErrorCode.TTS_EMPTY_AUDIO.value
-                state_mgr.save(manifest)
-                notify_error(manifest)
-                return manifest
+                fix = attempt_healing(
+                    manifest,
+                    FailureType.AUDIO,
+                    "tts",
+                    "TTS generation failed for available providers",
+                    error_code=ErrorCode.TTS_EMPTY_AUDIO,
+                )
+
+                fix_data = {}
+                if fix:
+                    try:
+                        fix_data = json.loads(fix) if isinstance(fix, str) else dict(fix)
+                    except Exception:
+                        fix_data = {}
+
+                if fix_data.get("action") == "retry_edge_tts":
+                    tts_ok, tts_engine = generate_tts(
+                        guion_tts, audio_path,
+                        voz_gemini="",
+                        voz_edge=nicho.voz_edge,
+                        rate_tts=nicho.rate_tts,
+                        pitch_tts=nicho.pitch_tts,
+                        subs_vtt_path=vtt_path,
+                    )
+
+                # Last-resort reliability fallback:
+                # if strict-free blocks Gemini and edge path failed, try Gemini once.
+                if (
+                    not tts_ok
+                    and settings.v15_strict_free_media_tools
+                    and bool(settings.gemini_api_key)
+                ):
+                    logger.warning("V15 TTS strict-free path failed; trying Gemini rescue fallback")
+                    tts_ok, tts_engine = generate_tts(
+                        guion_tts, audio_path,
+                        voz_gemini=nicho.voz_gemini,
+                        voz_edge=nicho.voz_edge,
+                        rate_tts=nicho.rate_tts,
+                        pitch_tts=nicho.pitch_tts,
+                        subs_vtt_path=vtt_path,
+                        enforce_provider_policy=False,
+                    )
+                    if tts_ok:
+                        _add_decision(
+                            "tts",
+                            "Gemini rescue fallback applied",
+                            "strict_free_override=true",
+                        )
+
+                if not tts_ok:
+                    _stage_end("tts", "error", "TTS failed after healing")
+                    manifest.status = JobStatus.ERROR.value
+                    manifest.error_stage = "tts"
+                    manifest.error_message = "TTS failed after healing"
+                    manifest.error_code = ErrorCode.TTS_EMPTY_AUDIO.value
+                    state_mgr.save(manifest)
+                    notify_error(manifest)
+                    return manifest
 
             manifest.audio_path = str(audio_path)
             manifest.tts_engine_used = tts_engine
