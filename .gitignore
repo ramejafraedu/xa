@@ -39,6 +39,10 @@ desktop.ini
 .env.*
 !.env.example
 
+# Local SSH keys
+id_rsa
+id_rsa.pub
+
 # Logs and runtime files
 *.log
 *.pid
