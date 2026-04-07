@@ -204,6 +204,118 @@
             justify-content: flex-end;
         }
 
+        .run-controls {
+            margin-bottom: 14px;
+            padding: 14px;
+            border: 1px solid var(--line);
+            border-radius: var(--radius-lg);
+            background: rgba(14, 25, 39, 0.72);
+        }
+
+        .run-controls-grid {
+            display: grid;
+            grid-template-columns: 1.25fr 1.75fr auto;
+            gap: 10px;
+            align-items: end;
+        }
+
+        .control-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .control-label {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-2);
+        }
+
+        .control-input,
+        .control-textarea {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: rgba(7, 15, 25, 0.82);
+            color: var(--text-0);
+            font-family: "Sora", sans-serif;
+            font-size: 0.82rem;
+            padding: 9px 10px;
+            outline: none;
+        }
+
+        .control-input:focus,
+        .control-textarea:focus {
+            border-color: rgba(45, 214, 255, 0.48);
+            box-shadow: 0 0 0 2px rgba(45, 214, 255, 0.16);
+        }
+
+        .control-textarea {
+            min-height: 84px;
+            resize: vertical;
+            line-height: 1.4;
+        }
+
+        .control-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+            align-self: stretch;
+            justify-content: flex-end;
+        }
+
+        .control-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            color: var(--text-1);
+            font-size: 0.78rem;
+        }
+
+        .memory-toolbar {
+            display: grid;
+            grid-template-columns: 170px minmax(0, 1fr) auto;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .memory-list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .memory-item {
+            border: 1px solid rgba(146, 178, 213, 0.2);
+            border-radius: 11px;
+            padding: 10px;
+            background: rgba(8, 15, 26, 0.7);
+            display: grid;
+            gap: 8px;
+        }
+
+        .memory-item-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 0.72rem;
+            color: var(--text-2);
+            font-family: "IBM Plex Mono", monospace;
+        }
+
+        .memory-item-text {
+            font-size: 0.84rem;
+            line-height: 1.45;
+            color: var(--text-0);
+        }
+
+        .memory-item-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
         .btn {
             border: 1px solid transparent;
             border-radius: 11px;
@@ -1067,6 +1179,20 @@
             .resource-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
+
+            .run-controls-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .memory-toolbar {
+                grid-template-columns: 1fr;
+            }
+
+            .control-actions {
+                flex-direction: row;
+                align-items: center;
+                justify-content: space-between;
+            }
         }
 
         @media (max-width: 860px) {
@@ -1108,6 +1234,11 @@
         @media (max-width: 620px) {
             .status-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .control-actions {
+                flex-direction: column;
+                align-items: stretch;
             }
 
             .nicho-grid,
@@ -1234,6 +1365,26 @@
                 <div class="status-chip"><span class="dot" id="dot-keys"></span> API Keys: <span id="status-keys">...</span></div>
                 <div class="status-chip">💸 <span id="status-mode">mode...</span></div>
                 <div class="status-chip">🕐 <span id="status-time">...</span></div>
+            </section>
+
+            <section class="run-controls">
+                <div class="run-controls-grid">
+                    <div class="control-field">
+                        <label class="control-label" for="run-reference-url">Reference URL (opcional)</label>
+                        <input id="run-reference-url" class="control-input" type="text" placeholder="https://..." />
+                    </div>
+                    <div class="control-field">
+                        <label class="control-label" for="run-manual-ideas">Ideas manuales prioritarias</label>
+                        <textarea id="run-manual-ideas" class="control-textarea" placeholder="Ejemplo: gancho polémico sobre deuda invisible&#10;Ejemplo: clímax con giro en el segundo 35"></textarea>
+                    </div>
+                    <div class="control-actions">
+                        <label class="control-check">
+                            <input id="run-checkpoints" type="checkbox" />
+                            Activar checkpoints WEB
+                        </label>
+                        <button class="btn btn-ghost" onclick="clearRunContext()">Limpiar contexto</button>
+                    </div>
+                </div>
             </section>
 
             <section class="page active" id="page-dashboard">
@@ -1413,6 +1564,7 @@
         let activeCheckpointJob = null;
         let isEditMode = false;
         const TOAST_MAX_ITEMS = 4;
+        let memoryItemsBySlug = {};
 
         function initNavigation() {
             document.querySelectorAll("[data-page]").forEach((button) => {
@@ -1466,6 +1618,61 @@
             const div = document.createElement("div");
             div.textContent = value == null ? "" : String(value);
             return div.innerHTML;
+        }
+
+        function getRunContext() {
+            const referenceNode = document.getElementById("run-reference-url");
+            const ideasNode = document.getElementById("run-manual-ideas");
+            const checkpointsNode = document.getElementById("run-checkpoints");
+            return {
+                referenceUrl: referenceNode ? String(referenceNode.value || "").trim() : "",
+                manualIdeas: ideasNode ? String(ideasNode.value || "").trim() : "",
+                checkpoints: checkpointsNode ? Boolean(checkpointsNode.checked) : false,
+            };
+        }
+
+        function buildRunQuery(extra) {
+            const context = getRunContext();
+            const options = extra || {};
+            const params = new URLSearchParams();
+
+            if (options.dryRun) {
+                params.set("dry_run", "true");
+            }
+
+            const checkpoints = Object.prototype.hasOwnProperty.call(options, "checkpoints")
+                ? Boolean(options.checkpoints)
+                : context.checkpoints;
+            if (checkpoints) {
+                params.set("checkpoints", "true");
+            }
+
+            const referenceUrl = Object.prototype.hasOwnProperty.call(options, "referenceUrl")
+                ? String(options.referenceUrl || "").trim()
+                : context.referenceUrl;
+            if (referenceUrl) {
+                params.set("reference_url", referenceUrl);
+            }
+
+            const manualIdeas = Object.prototype.hasOwnProperty.call(options, "manualIdeas")
+                ? String(options.manualIdeas || "").trim()
+                : context.manualIdeas;
+            if (manualIdeas) {
+                params.set("manual_ideas", manualIdeas);
+            }
+
+            const query = params.toString();
+            return query ? "?" + query : "";
+        }
+
+        function clearRunContext() {
+            const referenceNode = document.getElementById("run-reference-url");
+            const ideasNode = document.getElementById("run-manual-ideas");
+            const checkpointsNode = document.getElementById("run-checkpoints");
+            if (referenceNode) referenceNode.value = "";
+            if (ideasNode) ideasNode.value = "";
+            if (checkpointsNode) checkpointsNode.checked = false;
+            toast("Contexto de ejecucion limpiado", "info");
         }
 
         function formatTime(timestamp) {
@@ -1604,8 +1811,205 @@
                         "</div>";
                     grid.appendChild(card);
                 });
+
+                setupMemoryNichoSelect(nichos);
+                refreshMemoryList();
             } catch (error) {
                 toast("No se pudo cargar nichos: " + error.message, "error");
+            }
+        }
+
+        function setupMemoryNichoSelect(nichos) {
+            const select = document.getElementById("memory-nicho-select");
+            if (!select) {
+                return;
+            }
+
+            const currentValue = String(select.value || "").trim();
+            const options = Array.isArray(nichos) ? nichos : [];
+            select.innerHTML = options
+                .map((n) => '<option value="' + escapeHtml(n.slug || "") + '">' + escapeHtml((n.slug || "").toUpperCase()) + '</option>')
+                .join("");
+
+            if (currentValue && options.some((n) => n.slug === currentValue)) {
+                select.value = currentValue;
+            }
+
+            if (!select.dataset.bound) {
+                select.addEventListener("change", refreshMemoryList);
+                select.dataset.bound = "true";
+            }
+        }
+
+        function getSelectedMemoryNicho() {
+            const select = document.getElementById("memory-nicho-select");
+            return select ? String(select.value || "").trim() : "";
+        }
+
+        async function refreshMemoryList() {
+            const slug = getSelectedMemoryNicho();
+            const listNode = document.getElementById("memory-list");
+            if (!slug || !listNode) {
+                return;
+            }
+
+            listNode.innerHTML = '<div class="empty-state" style="padding:14px 10px;"><div>Cargando memoria...</div></div>';
+            try {
+                const data = await fetchJson("/api/memory/" + encodeURIComponent(slug));
+                const items = Array.isArray(data && data.items) ? data.items : [];
+                memoryItemsBySlug[slug] = items;
+                renderMemoryList(slug, items);
+            } catch (error) {
+                listNode.innerHTML = '<div class="empty-state" style="padding:14px 10px;"><div>Error cargando memoria: ' + escapeHtml(error.message) + "</div></div>";
+            }
+        }
+
+        function renderMemoryList(slug, items) {
+            const listNode = document.getElementById("memory-list");
+            if (!listNode) {
+                return;
+            }
+
+            if (!items.length) {
+                listNode.innerHTML = '<div class="empty-state" style="padding:14px 10px;"><div>No hay memoria guardada para este nicho.</div></div>';
+                return;
+            }
+
+            listNode.innerHTML = "";
+            items.forEach((item) => {
+                const id = String(item.id || "");
+                const node = document.createElement("article");
+                node.className = "memory-item";
+                node.innerHTML =
+                    '<div class="memory-item-head">' +
+                        '<span>ID: ' + escapeHtml(id) + '</span>' +
+                        '<span>' + escapeHtml(item.updated_at || item.created_at || "") + '</span>' +
+                    '</div>' +
+                    '<div class="memory-item-text">' + escapeHtml(item.text || "") + '</div>' +
+                    '<div class="memory-item-actions">' +
+                        '<button class="btn btn-secondary" onclick="editMemoryNote(\'' + escapeHtml(slug) + '\', \'' + escapeHtml(id) + '\')">Editar</button>' +
+                        '<button class="btn btn-danger" onclick="deleteMemoryNote(\'' + escapeHtml(slug) + '\', \'' + escapeHtml(id) + '\')">Borrar</button>' +
+                        '<button class="btn btn-ghost" onclick="moveMemoryNote(\'' + escapeHtml(slug) + '\', \'' + escapeHtml(id) + '\')">Mover</button>' +
+                    '</div>';
+                listNode.appendChild(node);
+            });
+        }
+
+        async function addMemoryNote() {
+            const slug = getSelectedMemoryNicho();
+            const input = document.getElementById("memory-new-text");
+            const text = input ? String(input.value || "").trim() : "";
+            if (!slug) {
+                toast("Selecciona un nicho para guardar memoria", "warn");
+                return;
+            }
+            if (!text) {
+                toast("Escribe una nota antes de guardar", "warn");
+                return;
+            }
+
+            try {
+                await fetchJson("/api/memory/" + encodeURIComponent(slug), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: text, source: "manual_dashboard" }),
+                });
+                if (input) {
+                    input.value = "";
+                }
+                toast("Memoria guardada en " + slug, "success");
+                await refreshMemoryList();
+                await fetchNichos();
+            } catch (error) {
+                toast("No se pudo guardar memoria: " + error.message, "error");
+            }
+        }
+
+        async function editMemoryNote(slug, entryId) {
+            const items = memoryItemsBySlug[slug] || [];
+            const current = items.find((item) => String(item.id || "") === String(entryId || ""));
+            if (!current) {
+                toast("No se encontro la nota para editar", "warn");
+                return;
+            }
+
+            const nextText = prompt("Editar nota de memoria:", current.text || "");
+            if (nextText === null) {
+                return;
+            }
+
+            const trimmed = String(nextText || "").trim();
+            if (!trimmed) {
+                toast("La nota no puede quedar vacia", "warn");
+                return;
+            }
+
+            try {
+                await fetchJson("/api/memory/" + encodeURIComponent(slug) + "/" + encodeURIComponent(entryId), {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: trimmed }),
+                });
+                toast("Memoria actualizada", "success");
+                await refreshMemoryList();
+            } catch (error) {
+                toast("No se pudo editar memoria: " + error.message, "error");
+            }
+        }
+
+        async function deleteMemoryNote(slug, entryId) {
+            const ok = confirm("¿Borrar esta nota de memoria?");
+            if (!ok) {
+                return;
+            }
+            try {
+                await fetchJson("/api/memory/" + encodeURIComponent(slug) + "/" + encodeURIComponent(entryId), {
+                    method: "DELETE",
+                });
+                toast("Memoria borrada", "info");
+                await refreshMemoryList();
+                await fetchNichos();
+            } catch (error) {
+                toast("No se pudo borrar memoria: " + error.message, "error");
+            }
+        }
+
+        async function moveMemoryNote(slug, entryId) {
+            const select = document.getElementById("memory-nicho-select");
+            const targets = select
+                ? Array.from(select.options).map((opt) => String(opt.value || "")).filter((v) => v && v !== slug)
+                : [];
+
+            if (!targets.length) {
+                toast("No hay nichos destino disponibles", "warn");
+                return;
+            }
+
+            const target = prompt("Mover nota a nicho (" + targets.join(", ") + "):", targets[0]);
+            if (target === null) {
+                return;
+            }
+
+            const targetSlug = String(target || "").trim().toLowerCase();
+            if (!targetSlug) {
+                toast("Debes indicar un nicho destino", "warn");
+                return;
+            }
+
+            try {
+                await fetchJson(
+                    "/api/memory/" + encodeURIComponent(slug) + "/" + encodeURIComponent(entryId) + "/move",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ target_nicho: targetSlug }),
+                    }
+                );
+                toast("Memoria movida a " + targetSlug, "success");
+                await refreshMemoryList();
+                await fetchNichos();
+            } catch (error) {
+                toast("No se pudo mover memoria: " + error.message, "error");
             }
         }
 
@@ -2058,7 +2462,7 @@
 
         async function runNiche(slug, dryRun) {
             try {
-                const query = dryRun ? "?dry_run=true" : "";
+                const query = buildRunQuery({ dryRun: Boolean(dryRun) });
                 const data = await fetchJson("/api/run/" + encodeURIComponent(slug) + query, { method: "POST" });
                 if (data.error) {
                     throw new Error(data.error);
@@ -2073,7 +2477,8 @@
 
         async function runAll() {
             try {
-                const data = await fetchJson("/api/run-all", { method: "POST" });
+                const query = buildRunQuery({});
+                const data = await fetchJson("/api/run-all" + query, { method: "POST" });
                 if (data.error) {
                     throw new Error(data.error);
                 }
@@ -2087,7 +2492,8 @@
 
         async function resumeJob(jobId) {
             try {
-                const data = await fetchJson("/api/resume/" + encodeURIComponent(jobId), { method: "POST" });
+                const query = buildRunQuery({});
+                const data = await fetchJson("/api/resume/" + encodeURIComponent(jobId) + query, { method: "POST" });
                 if (data.error) {
                     throw new Error(data.error);
                 }
@@ -2357,6 +2763,12 @@
         setInterval(() => {
             const monitorPage = document.getElementById("page-monitor");
             if (monitorPage && monitorPage.classList.contains("active")) {
+                fetchResources();
+            }
+        }, 4000);
+    </script>
+</body>
+</html>            if (monitorPage && monitorPage.classList.contains("active")) {
                 fetchResources();
             }
         }, 4000);

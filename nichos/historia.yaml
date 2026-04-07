@@ -9,9 +9,11 @@ num_clips: 8
 keywords_count: 8
 tipo_cortes: "rapidos en tension lentos en revelacion"
 estilo_narrativo: >
-  Tension incremental con preguntas abiertas y pausas dramaticas estilo misterio.
-  En 2026 usa casos de IA, vigilancia global y eventos no explicados.
-  Narrador impasible que revela horror con calma.
+  Narrativa misterio-explicativa con progresion: gancho inquietante, contexto historico breve, explicacion de hechos y cierre con teoria accionable.
+  Para tiktok_reels apunta a 50-90 segundos con tension constante, revelaciones por bloques y cliffhangers cada 8-10 segundos.
+  Usa casos de IA, vigilancia global y eventos no explicados con datos concretos y fuentes conocidas.
+  Activa polemica controlada y climax de revelacion antes del cierre.
+  Narrador impasible que explica sin prisa y mantiene suspense.
 voz_gemini: "Charon"
 voz_edge: "es-ES-AlvaroNeural"
 rate_tts: "+0%"

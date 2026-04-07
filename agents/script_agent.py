@@ -22,7 +22,7 @@ from loguru import logger
 from config import settings
 from core.state import StoryState
 from models.config_models import NichoConfig
-from services.http_client import request_with_retry
+from services.llm_router import call_llm_primary_gemini
 
 # Skills directory (relative to project root)
 _SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
@@ -61,6 +61,26 @@ def _build_skills_block(*skill_paths: str) -> str:
     if not parts:
         return ""
     return "\n\n## SKILLS DE ESCRITURA (SEGUIR ESTRICTAMENTE)\n" + "\n---\n".join(parts)
+
+
+def _script_profile(platform: str) -> tuple[int, int, str]:
+    """Return target script length profile by platform."""
+    p = (platform or "").lower()
+    if p == "facebook":
+        return 170, 260, "70-120 segundos"
+    if p == "reels":
+        return 130, 200, "50-90 segundos"
+    if p == "shorts":
+        return 120, 185, "45-75 segundos"
+    if p == "tiktok":
+        return 130, 200, "50-90 segundos"
+    return 120, 180, "45-75 segundos"
+
+
+def _script_word_count(data: dict) -> int:
+    """Count words in script body."""
+    text = str(data.get("guion", "") or "").strip()
+    return len(text.split())
 
 
 class ScriptAgent:
@@ -166,6 +186,8 @@ class ScriptAgent:
             f"TONO: {nicho.tono}\n"
             f"PLATAFORMA: {state.platform}\n"
             f"ESTILO: {nicho.estilo_narrativo}\n"
+            f"IDEAS_MANUALES_PRIORITARIAS: {' | '.join(state.manual_ideas[:6]) if state.manual_ideas else 'N/A'}\n"
+            f"MEMORIA_LOCAL_NICHO: {' | '.join(state.niche_memory_entries[:6]) if state.niche_memory_entries else 'N/A'}\n"
             f"{precedence_block}\n"
             f"{research_ctx}\n"
             f"TRENDING: {state.research.trending_context_raw[:200]}\n\n"
@@ -189,6 +211,7 @@ class ScriptAgent:
         platform = _resolve_platform(nicho.plataforma)
         ab_variant = _choose_ab_variant(nicho.nombre, platform)
         hook_rule = _hook_rules(platform, ab_variant)
+        word_min, word_max, target_duration = _script_profile(platform)
         precedence_block = self._build_precedence_block(state, nicho)
 
         correction_block = ""
@@ -230,7 +253,11 @@ OUTLINE APROBADO:
 REGLAS MAESTRAS:
 - Gancho en <=1.8 segundos con polarización real.
 - En los primeros 3 segundos rompe una creencia popular o revela una trampa oculta.
+- Si existen IDEAS_MANUALES_PRIORITARIAS, deben guiar el angulo principal del guion.
+- Incluye un mini-climax antes del cierre: sube tension, revela giro y entrega payoff claro.
+- Usa polemica controlada: cuestiona creencias comunes sin inventar datos ni difamar.
 - Escribe 3 variantes de gancho: shock, pregunta, promesa.
+- Longitud objetivo para {platform}: {word_min}-{word_max} palabras (~{target_duration}) con claridad explicativa.
 - Frases cortas de 5 a 12 palabras.
 - Cliffhangers cada 8-10 segundos.
 - Evita tono enciclopédico; usa conflicto, fricción y consecuencia directa.
@@ -248,6 +275,8 @@ AB TEST: Variante {ab_variant} | Plataforma: {platform}
 Regla hook: {hook_rule}
 ESTILO: {nicho.estilo_narrativo}
 DIRECCIÓN VISUAL: {nicho.direccion_visual}
+IDEAS_MANUALES_PRIORITARIAS: {' | '.join(state.manual_ideas[:6]) if state.manual_ideas else 'N/A'}
+MEMORIA_LOCAL_NICHO: {' | '.join(state.niche_memory_entries[:6]) if state.niche_memory_entries else 'N/A'}
 {precedence_block}
 {correction_block}
 
@@ -270,7 +299,7 @@ Devuelve EXACTAMENTE este JSON:
     "desarrollo": 8,
     "cierre": 8
   }},
-  "guion": "guion de 90-150 palabras coherente con el OUTLINE",
+    "guion": "guion de {word_min}-{word_max} palabras, explicativo, viral y coherente con el OUTLINE",
   "cta": "cta breve natural de una oración",
   "caption": "caption max 160 caracteres con 3 hashtags",
   "key_points": ["punto clave 1", "punto clave 2", "punto clave 3"],
@@ -286,9 +315,29 @@ Devuelve EXACTAMENTE este JSON:
         parsed = self._parse_json(text)
 
         if parsed:
+            current_words = _script_word_count(parsed)
+            if current_words < word_min:
+                logger.warning(
+                    f"ScriptAgent short output for {platform}: {current_words} words < {word_min}. Expanding."
+                )
+                rewrite_system = (
+                    "Eres editor de guiones virales. "
+                    "Amplia el guion para que sea mas explicativo y claro sin perder impacto. "
+                    "Mantén tema, hook y CTA. Devuelve SOLO JSON valido con la misma estructura."
+                )
+                rewrite_user = (
+                    f"Reescribe este JSON para que el campo guion tenga entre {word_min} y {word_max} palabras "
+                    f"en formato {platform}.\n\n"
+                    f"JSON ACTUAL:\n{json.dumps(parsed, ensure_ascii=False)}"
+                )
+                rewritten = self._parse_json(self._call_llm(rewrite_system, rewrite_user, temperature=0.7))
+                if rewritten and _script_word_count(rewritten) >= word_min:
+                    parsed = rewritten
+
+        if parsed:
             parsed["_ab_variant"] = ab_variant
             parsed["_platform"] = platform
-            parsed["_model_used"] = settings.inference_model
+            parsed["_model_used"] = getattr(self, "_last_model_used", settings.inference_model)
             parsed["_source_precedence"] = state.precedence_rule
             parsed["_reference_applied"] = bool(state.has_reference())
             parsed["_reference_url"] = state.reference_url if state.has_reference() else ""
@@ -326,67 +375,22 @@ Devuelve EXACTAMENTE este JSON:
         return "\n".join(lines)
 
     def _call_llm(self, system: str, user: str, temperature: float = 0.9) -> str:
-        """Call Gemini usando google-genai SDK con rotación de las 4 API keys."""
-        try:
-            import google.genai as genai
-            from google.genai import types
-        except ImportError:
-            logger.error("google-genai no está instalado. Instala con: pip install google-genai")
-            return ""
+        """Call LLM with Gemini primary (4-key rotation) + Azure GPT fallback."""
+        text, model_used = call_llm_primary_gemini(
+            system_prompt=system,
+            user_prompt=user,
+            temperature=temperature,
+            timeout=60,
+            max_retries=2,
+            purpose="script_agent",
+        )
+        self._last_model_used = model_used or ""
 
-        all_keys = settings.get_gemini_keys()
-        if not all_keys:
-            logger.error("No Gemini API keys found for ScriptAgent")
-            return ""
+        if text:
+            logger.debug(f"ScriptAgent model used: {model_used}")
+            return text
 
-        # Modelos ordenados por cuota disponible (mayor RPM primero)
-        models_to_try = [
-            "gemini-3.1-flash-lite",   # 15 RPM — mayor cuota free
-            "gemini-2.5-flash-lite",   # 10 RPM
-            "gemini-2.5-flash",        # 5 RPM
-            "gemini-3-flash",          # 5 RPM
-            "gemini-3.1-pro",          # 0 RPM free / cuota pago
-            "gemini-3.1-flash",
-            "gemini-2.5-pro",
-            "gemini-2.0-flash",
-        ]
-        last_error = ""
-
-        # Rotación agresiva: por cada modelo, intenta con todas las keys
-        # 4 keys × 15 RPM = ~60 RPM efectivos en gemini-3.1-flash-lite
-        for model_name in models_to_try:
-            for key_idx, api_key in enumerate(all_keys):
-                try:
-                    client = genai.Client(api_key=api_key)
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=[user],
-                        config=types.GenerateContentConfig(
-                            system_instruction=system,
-                            temperature=temperature,
-                        )
-                    )
-                    if response.text:
-                        logger.debug(f"ScriptAgent: {model_name} con key #{key_idx+1}")
-                        return response.text
-                    last_error = f"Empty response from {model_name}"
-                except Exception as e:
-                    last_error = str(e)
-                    err_str = str(e).lower()
-                    # RESOURCE_EXHAUSTED → probar siguiente key de inmediato
-                    if "resource_exhausted" in err_str or "quota" in err_str or "429" in err_str:
-                        logger.debug(f"{model_name} key#{key_idx+1} agotada, rotando...")
-                        continue
-                    # Error de modelo (NOT_FOUND, INVALID_ARGUMENT) → siguiente modelo
-                    if "not_found" in err_str or "invalid" in err_str or "404" in err_str:
-                        logger.debug(f"{model_name} no disponible, saltando modelo")
-                        break
-                    logger.warning(f"{model_name} key#{key_idx+1} error: {e}")
-
-            # Pausa breve entre modelos para evitar flood
-            time.sleep(0.5)
-
-        logger.error(f"ScriptAgent: todos los modelos/keys fallaron. Último: {last_error}")
+        logger.error("ScriptAgent: Gemini+GPT fallback failed")
         return ""
 
     def _parse_json(self, raw: str) -> Optional[dict]:

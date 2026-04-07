@@ -9,9 +9,11 @@ num_clips: 6
 keywords_count: 6
 tipo_cortes: "suaves y fluidos"
 estilo_narrativo: >
-  Calido y directo con consejos practicos basados en ciencia.
-  En 2026 usa longevidad, biohacking y medicina preventiva.
-  Voz empática de hermana mayor que comparte lo que funciona de verdad.
+  Narrativa calida, explicativa y didactica: problema real, explicacion sencilla, 2-3 pasos practicos y cierre con llamado a guardar.
+  Para facebook prioriza formato de 70-120 segundos con desarrollo claro, ejemplos cotidianos y tono de confianza.
+  Usa longevidad, biohacking y medicina preventiva con evidencia simple y aplicable.
+  Incluye gancho llamativo, contraste de habitos comunes y climax accionable antes del cierre.
+  Voz empatica de hermana mayor que explica sin tecnicismos y da resultados accionables.
 voz_gemini: "Aoede"
 voz_edge: "es-MX-DaliaNeural"
 rate_tts: "+0%"

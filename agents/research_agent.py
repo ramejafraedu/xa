@@ -15,6 +15,7 @@ from loguru import logger
 from config import settings
 from core.state import ResearchBrief, StoryState
 from models.config_models import NichoConfig
+from services.llm_router import call_llm_primary_gemini
 
 
 class ResearchAgent:
@@ -39,7 +40,7 @@ class ResearchAgent:
         """
         t0 = time.time()
         brief = ResearchBrief()
-        brief.precedence_rule = (
+        brief.precedence_rule = state.precedence_rule or (
             "REFERENCE > RESEARCH > NICHO_DEFAULT"
             if state.reference_url
             else "RESEARCH > NICHO_DEFAULT"
@@ -95,9 +96,24 @@ class ResearchAgent:
         except Exception as e:
             logger.debug(f"Memory read failed: {e}")
 
+        if state.niche_memory_entries:
+            local_memory = " | ".join(state.niche_memory_entries[:6])
+            if memoria and memoria != "Sin memoria previa":
+                memoria = f"{memoria} | MEMORIA_LOCAL: {local_memory}"
+            else:
+                memoria = f"MEMORIA_LOCAL: {local_memory}"
+
+        if state.manual_ideas:
+            manual_seed = self._merge_unique(state.manual_ideas)
+            brief.recommended_angles = manual_seed[:3]
+
         # 3. LLM-powered angle recommendations
         try:
-            brief.recommended_angles = self._generate_angles(nicho, brief, memoria, state)
+            generated_angles = self._generate_angles(nicho, brief, memoria, state)
+            if state.manual_ideas:
+                brief.recommended_angles = self._merge_unique(state.manual_ideas + generated_angles)[:4]
+            else:
+                brief.recommended_angles = generated_angles
         except Exception as e:
             logger.debug(f"Angle generation failed: {e}")
             # Fallback angles based on nicho
@@ -151,8 +167,6 @@ class ResearchAgent:
         state: StoryState,
     ) -> list[str]:
         """Use LLM to suggest content angles based on trends + memory."""
-        from services.http_client import request_with_retry
-
         system = (
             "Eres un estratega de contenido viral. "
             "Sugiere 3 ángulos ÚNICOS para un video viral basado en el contexto. "
@@ -166,35 +180,25 @@ class ResearchAgent:
             f"PRECEDENCIA: {brief.precedence_rule}\n"
             f"TRENDING: {brief.trending_context_raw[:300]}\n"
             f"SEÑALES_REFERENCIA: {' | '.join(brief.reference_signals[:4]) if brief.reference_signals else 'N/A'}\n"
+            f"IDEAS_MANUALES: {' | '.join(state.manual_ideas[:6]) if state.manual_ideas else 'N/A'}\n"
             f"HISTORIAL: {str(memoria)[:300]}\n"
             f"ESTILO: {nicho.estilo_narrativo}\n\n"
             f"Sugiere 3 ángulos virales ORIGINALES respetando PRECEDENCIA."
         )
 
-        payload = {
-            "model": settings.inference_model,
-            "temperature": 0.9,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
-        headers = {
-            "Authorization": f"Bearer {settings.github_token}",
-            "Content-Type": "application/json",
-        }
-
-        response = request_with_retry(
-            "POST", settings.inference_api_url,
-            json_data=payload, headers=headers,
-            max_retries=2, timeout=30,
+        text, _model_used = call_llm_primary_gemini(
+            system_prompt=system,
+            user_prompt=user,
+            temperature=0.9,
+            timeout=30,
+            max_retries=2,
+            purpose="research_angles",
         )
 
-        if response.status_code >= 400:
+        if not text:
             return self._fallback_angles(nicho)
 
         import json, re
-        text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
         text = re.sub(r"```json\s*", "", text, flags=re.IGNORECASE)
         text = re.sub(r"```\s*", "", text).strip()
 
@@ -206,8 +210,6 @@ class ResearchAgent:
 
     def _generate_hooks(self, nicho: NichoConfig, brief: ResearchBrief, state: StoryState) -> list[str]:
         """Generate viral hook suggestions."""
-        from services.http_client import request_with_retry
-
         system = (
             "Eres experto en hooks virales de TikTok. "
             "Genera 5 hooks en español, cada uno de 8-14 palabras. "
@@ -220,35 +222,25 @@ class ResearchAgent:
             f"NICHO: {nicho.nombre}\n"
             f"ÁNGULO: {angle}\n"
             f"PRECEDENCIA: {brief.precedence_rule}\n"
+            f"IDEAS_MANUALES: {' | '.join(state.manual_ideas[:4]) if state.manual_ideas else 'N/A'}\n"
             f"REFERENCIA: {state.reference_summary[:180] if state.reference_summary else 'N/A'}\n"
             f"ESTILO: {nicho.estilo_narrativo[:100]}\n\n"
             f"5 hooks virales, formato: [\"hook1\", \"hook2\", ...]"
         )
 
-        payload = {
-            "model": settings.inference_model,
-            "temperature": 0.95,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
-        headers = {
-            "Authorization": f"Bearer {settings.github_token}",
-            "Content-Type": "application/json",
-        }
-
-        response = request_with_retry(
-            "POST", settings.inference_api_url,
-            json_data=payload, headers=headers,
-            max_retries=1, timeout=25,
+        text, _model_used = call_llm_primary_gemini(
+            system_prompt=system,
+            user_prompt=user,
+            temperature=0.95,
+            timeout=25,
+            max_retries=1,
+            purpose="research_hooks",
         )
 
-        if response.status_code >= 400:
+        if not text:
             return []
 
         import json, re
-        text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
         text = re.sub(r"```json\s*", "", text, flags=re.IGNORECASE)
         text = re.sub(r"```\s*", "", text).strip()
 

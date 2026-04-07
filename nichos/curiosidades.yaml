@@ -9,9 +9,11 @@ num_clips: 8
 keywords_count: 8
 tipo_cortes: "ultra dinamicos y variados"
 estilo_narrativo: >
-  Curioso y sorprendente con datos impactantes y giros inesperados.
-  En 2026 incluye neuromarketing, psicologia del comportamiento y efectos cognitivos.
-  Cada dato debe desafiar lo que el usuario cree saber.
+  Narrativa curiosa y explicativa: gancho de alto impacto, explicacion de por que ocurre, ejemplo cotidiano y cierre con insight memorable.
+  Para tiktok_reels apunta a 50-90 segundos con ritmo dinamico, transiciones claras y mini-recompensas cada 8-10 segundos.
+  Incluye neuromarketing, psicologia del comportamiento y efectos cognitivos con lenguaje facil de entender.
+  Mantiene polemica controlada y climax de descubrimiento antes del CTA.
+  Cada dato debe desafiar lo que el usuario cree saber y dejar una conclusion util.
 voz_gemini: "Kore"
 voz_edge: "es-MX-JorgeNeural"
 rate_tts: "+5%"

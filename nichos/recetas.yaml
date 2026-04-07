@@ -9,9 +9,11 @@ num_clips: 6
 keywords_count: 6
 tipo_cortes: "rapidos y energicos"
 estilo_narrativo: >
-  Cercano y entusiasta como compartir con un amigo.
-  En 2026 usa tendencias de alimentacion plant-based y recetas virales.
-  Ritmo rapido, pasos claros, resultado impresionante con poco esfuerzo.
+  Narrativa cercana y explicativa: gancho apetitoso, contexto rapido, pasos claros con tiempos, tip de error comun y cierre con resultado final.
+  Para facebook prioriza piezas de 70-120 segundos con instrucciones completas y visualmente faciles de seguir.
+  Usa tendencias plant-based y recetas virales con alternativas economicas y practicas.
+  Agrega contraste polemico controlado de tecnica/ingrediente y climax de resultado final irresistible.
+  Ritmo dinamico, pasos bien explicados y resultado que invite a guardar y compartir.
 voz_gemini: "Aoede"
 voz_edge: "es-MX-DaliaNeural"
 rate_tts: "+5%"

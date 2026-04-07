@@ -1,22 +1,25 @@
 # ✂️ Editing Skill: Pacing & Rhythm
+
 # Cargado automáticamente por EditorAgent.
+
 # Define cómo distribuir los cortes para máxima retención.
 
-## Principios de Pacing para Short-Form (2026)
+## Principios de Pacing para Short-Form
 
 ### La Regla del 3-Segundo Visual
+
 Si un clip dura más de 7 segundos sin un cambio de ángulo o corte, el viewer hace scroll.
 El pacing correcto mantiene el cerebro en estado de "¿qué sigue?".
 
 ### Mapeo de Velocidad por Emoción
 
-| Emoción | Duración Clip | Efecto |
-|---------|--------------|--------|
-| Tensión / Miedo | 1.5 - 3s | Ritmo cardíaco acelerado |
-| Revelación | 4 - 6s | Dejar que el cerebro procese |
-| Reflexión / Peso | 5 - 8s | Impacto emocional |
-| Transición / Neutro | 2 - 4s | Respiro entre beats |
-| Clímax Final | 3 - 5s | Punch, luego silencio |
+| Emoción             | Duración Clip | Efecto                       |
+| ------------------- | ------------- | ---------------------------- |
+| Tensión / Miedo     | 1.5 - 3s      | Ritmo cardíaco acelerado     |
+| Revelación          | 4 - 6s        | Dejar que el cerebro procese |
+| Reflexión / Peso    | 5 - 8s        | Impacto emocional            |
+| Transición / Neutro | 2 - 4s        | Respiro entre beats          |
+| Clímax Final        | 3 - 5s        | Punch, luego silencio        |
 
 ### Estructura de Duración Típica (60s video, 8 clips)
 
@@ -35,24 +38,29 @@ Total:                   33.0s  ← ajustar proporcionalmente al audio
 ## Cortes por Nicho
 
 ### Finanzas (Old Money Style)
+
 - Clips largos y lentos (4-7s cada uno)
 - Muy pocos cortes — el peso visual comunica autoridad
 - Nunca usar ultra_rapido
 
 ### Historia / Misterio
+
 - Alterna: clip corto tenso (2-3s) → clip largo revelador (5-6s)
 - El contraste de ritmo amplifica la emoción
 
 ### Curiosidades
+
 - Ultra dinámico: nunca más de 4s por clip
 - Cada corte = un dato nuevo
 - Ritmo constante, sin pausa
 
 ### Salud
+
 - Fluido y orgánico: 3-6s por clip
 - Sin cortes abruptos — genera confianza y calma
 
 ### Recetas
+
 - Rápido pero con purpose: cada clip muestra UN paso
 - 2-4s por paso de cocina
 - Clip de resultado final: 5-7s (dejar que se vea apetitoso)

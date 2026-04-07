@@ -26,6 +26,20 @@ from models.content import (
 )
 
 
+def _script_word_range_for_platform(platform: str) -> tuple[int, int]:
+    """Platform-aware target range for script length."""
+    p = (platform or "").lower()
+    if "facebook" in p:
+        return 170, 260
+    if "reel" in p or "instagram" in p:
+        return 130, 200
+    if "short" in p or "youtube" in p:
+        return 120, 185
+    if "tiktok" in p:
+        return 130, 200
+    return 120, 180
+
+
 def validate_and_score(
     raw_data: dict,
     nicho: NichoConfig,
@@ -78,12 +92,27 @@ def validate_and_score(
 
     # Approval check
     threshold = app_config.quality_threshold
+    word_count = len(str(content.guion or "").split())
+    min_words, max_words = _script_word_range_for_platform(nicho.plataforma)
+
     is_approved = (
         final_scores.hook >= 7
         and final_scores.desarrollo >= 7
         and final_scores.cierre >= 7
         and quality_score >= threshold
     )
+
+    if word_count < min_words:
+        is_approved = False
+        errors.append(
+            f"Guion demasiado corto para {nicho.plataforma}: {word_count} palabras; minimo recomendado {min_words}"
+        )
+
+    if word_count > max_words:
+        # Not a hard failure, but keep traceability for prompt tuning.
+        errors.append(
+            f"Guion por encima del rango recomendado para {nicho.plataforma}: {word_count} palabras; recomendado <= {max_words}"
+        )
 
     # Collect specific error codes for self-healer precision
     error_codes: list[ErrorCode] = []
@@ -95,6 +124,8 @@ def validate_and_score(
         error_codes.append(ErrorCode.CIERRE_WEAK)
     if quality_score < threshold:
         error_codes.append(ErrorCode.QUALITY_BELOW_THRESHOLD)
+    if word_count < min_words:
+        error_codes.append(ErrorCode.DESARROLLO_WEAK)
 
     quality = QualityScores(
         block_scores=final_scores,

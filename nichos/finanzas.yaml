@@ -10,9 +10,11 @@ num_clips: 8
 keywords_count: 8
 tipo_cortes: "lentos y cinematograficos"
 estilo_narrativo: >
-  Afirmaciones secas e imponentes con ritmo lento y pausado estilo Old Money.
-  En 2026 usa datos de inflacion, cripto y libertad financiera.
-  Referencia visual: edificios de lujo, coches, oficinas minimalistas.
+  Narrativa explicativa y viral en capas: gancho fuerte, contexto breve, explicacion clara con ejemplo real y cierre accionable.
+  Para tiktok_reels prioriza retencion de 50-90 segundos con lenguaje simple, ritmo alto y micro-cliffhangers cada 8-10 segundos.
+  Usa inflacion, cripto, libertad financiera y errores comunes con enfoque polemico controlado y accion de 1 paso aplicable hoy.
+  Refuerza climax narrativo antes del CTA: tension, giro y payoff claro.
+  Referencia visual: edificios de lujo, coches, oficinas minimalistas y contraste antes vs despues.
 voz_gemini: "Fenrir"
 voz_edge: "es-MX-JorgeNeural"
 rate_tts: "-10%"

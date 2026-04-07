@@ -1,7 +1,7 @@
-"""Content Generator — GPT-4.1 via Azure Inference API.
+"""Content Generator — Gemini primary + Azure GPT fallback.
 
 Migrates the logic from n8n nodes: 📝 Preparar Prompt + 🤖 Copilot Generar + 🛡️ Fallback.
-Uses the SAME model for both generation and self-healing (GPT-4.1).
+Uses the unified LLM router so Gemini runs first (4-key rotation) and GPT is backup.
 """
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ from loguru import logger
 from config import settings
 from models.config_models import NichoConfig
 from models.content import ABVariant
-from services.http_client import request_with_retry
+from services.llm_router import call_llm_primary_gemini
+from services.niche_memory import normalize_manual_ideas
 
 
 def _hash_string(s: str) -> int:
@@ -64,11 +65,72 @@ def _hook_rules(platform: str, variant: str) -> str:
     return by_platform.get(variant, by_platform["A"])
 
 
+def _script_profile(platform: str) -> tuple[int, int, str]:
+    """Return target script length profile by platform."""
+    p = (platform or "").lower()
+    if p == "facebook":
+        return 170, 260, "70-120 segundos"
+    if p == "reels":
+        return 130, 200, "50-90 segundos"
+    if p == "shorts":
+        return 120, 185, "45-75 segundos"
+    if p == "tiktok":
+        return 130, 200, "50-90 segundos"
+    return 120, 180, "45-75 segundos"
+
+
+def _script_word_count(data: dict) -> int:
+    """Count words in generated script body."""
+    text = str(data.get("guion", "") or "").strip()
+    return len(text.split())
+
+
+def _rewrite_short_script(
+    data: dict,
+    word_min: int,
+    word_max: int,
+    platform: str,
+) -> tuple[dict | None, str]:
+    """Ask the model to expand a short script while preserving intent."""
+    system = (
+        "Eres editor senior de videos virales. "
+        "Debes mantener el mismo tema, gancho y CTA, pero ampliar el guion para que quede mas explicativo y claro. "
+        "Devuelve SOLO JSON valido con la misma estructura de entrada."
+    )
+    user = (
+        f"El campo guion quedo corto para {platform}. "
+        f"Reescribe para que tenga entre {word_min} y {word_max} palabras, "
+        "con explicacion practica, ejemplo concreto y ritmo viral.\n\n"
+        f"JSON ACTUAL:\n{json.dumps(data, ensure_ascii=False)}"
+    )
+
+    text, model_used = call_llm_primary_gemini(
+        system_prompt=system,
+        user_prompt=user,
+        temperature=0.7,
+        timeout=60,
+        max_retries=2,
+        purpose="content_gen_expand",
+    )
+
+    if not text:
+        return None, ""
+
+    try:
+        parsed = _parse_json_response(text)
+        return parsed, model_used
+    except Exception:
+        return None, model_used
+
+
 SYSTEM_PROMPT = """Eres head writer de videos faceless top 1%. Objetivo: CTR alto y retencion brutal.
 
 REGLAS MAESTRAS:
 - Gancho en <=1.8 segundos con polarizacion real.
 - En los primeros 3 segundos rompe una creencia popular o revela una trampa oculta.
+- Si recibes IDEAS MANUALES, tienen prioridad editorial sobre el resto del contexto.
+- Construye un mini-climax narrativo: tension creciente, giro claro y payoff antes del CTA.
+- Usa polemica controlada para generar debate sin inventar datos ni hacer afirmaciones difamatorias.
 - Escribe 3 variantes de gancho: shock, pregunta, promesa.
 - Frases cortas de 5 a 12 palabras.
 - Cliffhangers cada 8-10 segundos.
@@ -95,12 +157,16 @@ REGLA FRICCION: Abre rompiendo una creencia popular o revelando una trampa ocult
 MULETILLAS: Incluye 2 a 4 muletillas naturales repartidas en el guion: mira, o sea, te digo algo...
 TRENDING: {trending_context}
 HISTORIAL: {memoria}
+IDEAS MANUALES PRIORITARIAS: {manual_ideas_block}
+LONGITUD OBJETIVO: {word_min}-{word_max} palabras ({target_duration}). Debe ser explicativo, claro y accionable.
 
 Devuelve solo JSON valido, sin texto extra."""
 
 USER_PROMPT = """Genera contenido viral para {nicho} tono {tono} en {plataforma}. Usa variante {ab_variant}.
+IDEAS MANUALES PRIORITARIAS: {manual_ideas_block}
 
 Tu apertura debe desafiar una creencia popular o exponer una manipulacion habitual.
+Duracion objetivo del contenido: {target_duration}.
 
 Devuelve EXACTAMENTE este JSON:
 {{
@@ -115,7 +181,7 @@ Devuelve EXACTAMENTE este JSON:
     "desarrollo": 8,
     "cierre": 8
   }},
-  "guion": "guion de 90-150 palabras con micro cliffhangers cada 8-10 segundos y 2-4 muletillas humanas naturales",
+    "guion": "guion de {word_min}-{word_max} palabras, explicativo y viral, con micro cliffhangers cada 8-10 segundos y 2-4 muletillas humanas naturales",
   "cta": "cta breve natural de una oracion",
   "caption": "caption max 160 caracteres con 3 hashtags",
   "palabras_clave": ["kw1_ingles","kw2_ingles","kw3_ingles","kw4_ingles","kw5_ingles","kw6_ingles","kw7_ingles","kw8_ingles"],
@@ -131,14 +197,16 @@ def generate_content(
     nicho: NichoConfig,
     trending_context: str = "",
     memoria: str = "Sin memoria previa",
+    manual_ideas: str | list[str] | None = None,
     correction_prompt: Optional[str] = None,
 ) -> dict:
-    """Call GPT-4.1 to generate viral video content.
+    """Generate viral video content via Gemini-first routing.
 
     Args:
         nicho: Niche configuration.
         trending_context: Trending topics string.
         memoria: Previous video memory string.
+        manual_ideas: Optional manual topic/angle lines with priority.
         correction_prompt: If provided, this is a self-healing re-generation
                           with specific correction instructions.
 
@@ -151,6 +219,9 @@ def generate_content(
     platform = _resolve_platform(nicho.plataforma)
     ab_variant = _choose_ab_variant(nicho.nombre, platform)
     hook_rule = _hook_rules(platform, ab_variant)
+    word_min, word_max, target_duration = _script_profile(platform)
+    manual_idea_lines = normalize_manual_ideas(manual_ideas)
+    manual_ideas_block = " | ".join(manual_idea_lines) if manual_idea_lines else "N/A"
 
     system = SYSTEM_PROMPT.format(
         ab_variant=ab_variant,
@@ -160,6 +231,10 @@ def generate_content(
         direccion_visual=nicho.direccion_visual,
         trending_context=trending_context,
         memoria=memoria,
+        manual_ideas_block=manual_ideas_block,
+        word_min=word_min,
+        word_max=word_max,
+        target_duration=target_duration,
     )
 
     if correction_prompt:
@@ -170,65 +245,53 @@ def generate_content(
             tono=nicho.tono,
             plataforma=platform,
             ab_variant=ab_variant,
+            manual_ideas_block=manual_ideas_block,
             direccion_visual=nicho.direccion_visual,
+            word_min=word_min,
+            word_max=word_max,
+            target_duration=target_duration,
         )
 
-    payload = {
-        "model": settings.inference_model,
-        "temperature": 0.93,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    }
+    content_text, model_used = call_llm_primary_gemini(
+        system_prompt=system,
+        user_prompt=user,
+        temperature=0.93,
+        timeout=60,
+        max_retries=2,
+        purpose="content_gen",
+    )
 
-    headers = {
-        "Authorization": f"Bearer {settings.github_token}",
-        "Content-Type": "application/json",
-    }
+    if not content_text:
+        raise ContentGenerationError("All models failed. Gemini primary and GPT fallback unavailable")
 
-    # Try primary model, then fallback
-    models = [settings.inference_model, settings.inference_fallback_model]
-    last_error = ""
+    parsed = _parse_json_response(content_text)
 
-    for model in models:
-        payload["model"] = model
-        try:
-            response = request_with_retry(
-                "POST",
-                settings.inference_api_url,
-                json_data=payload,
-                headers=headers,
-                max_retries=2,
-                timeout=60,
+    current_words = _script_word_count(parsed)
+    if current_words < word_min:
+        logger.warning(
+            f"Script too short for {platform}: {current_words} words < {word_min}. Expanding automatically."
+        )
+        for _ in range(2):
+            rewritten, rewrite_model = _rewrite_short_script(
+                parsed,
+                word_min=word_min,
+                word_max=word_max,
+                platform=platform,
             )
-
-            if response.status_code >= 400:
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                logger.warning(f"Model {model} failed: {last_error}")
+            if not rewritten:
                 continue
+            rewritten_words = _script_word_count(rewritten)
+            if rewritten_words >= word_min:
+                parsed = rewritten
+                model_used = rewrite_model or model_used
+                break
 
-            data = response.json()
-            content_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    parsed["_ab_variant"] = ab_variant
+    parsed["_platform"] = platform
+    parsed["_model_used"] = model_used or settings.inference_model
 
-            if not content_text:
-                last_error = "Empty response from AI"
-                continue
-
-            # Parse JSON from response
-            parsed = _parse_json_response(content_text)
-            parsed["_ab_variant"] = ab_variant
-            parsed["_platform"] = platform
-            parsed["_model_used"] = model
-
-            logger.info(f"Content generated with {model}: {parsed.get('titulo', '?')[:50]}")
-            return parsed
-
-        except Exception as e:
-            last_error = str(e)
-            logger.warning(f"Model {model} error: {e}")
-
-    raise ContentGenerationError(f"All models failed. Last error: {last_error}")
+    logger.info(f"Content generated with {parsed['_model_used']}: {parsed.get('titulo', '?')[:50]}")
+    return parsed
 
 
 def _parse_json_response(raw: str) -> dict:

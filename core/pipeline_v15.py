@@ -60,6 +60,7 @@ from models.content import (
     JobStatus,
     VideoContent,
 )
+from services.niche_memory import get_niche_memory_lines, normalize_manual_ideas
 from state_manager import StateManager
 
 console = Console()
@@ -71,6 +72,7 @@ def run_pipeline_v15(
     dry_run: bool = False,
     resume_job_id: str = "",
     reference_url: str = "",
+    manual_ideas: str | list[str] | None = None,
 ) -> JobManifest:
     """Execute the V15 multi-agent pipeline.
 
@@ -82,6 +84,7 @@ def run_pipeline_v15(
         mode: INTERACTIVE (human checkpoints) or AUTO (autonomous).
         dry_run: If True, stop after script + scene plan.
         resume_job_id: Resume a crashed job.
+        manual_ideas: Optional manual direction lines with highest narrative priority.
 
     Returns:
         JobManifest with full audit trail.
@@ -124,9 +127,28 @@ def run_pipeline_v15(
     manifest.human_approved = mode != DirectorMode.INTERACTIVE
     manifest.budget_daily_usd = float(settings.daily_budget_usd)
     manifest.budget_monthly_usd = float(settings.monthly_budget_usd)
+    manual_idea_lines = normalize_manual_ideas(manual_ideas)
+    niche_memory_lines = get_niche_memory_lines(nicho_slug, limit=10)
+    manifest.manual_ideas = manual_idea_lines
+    manifest.niche_memory_snapshot = niche_memory_lines
     manifest.reference_url = (reference_url or "").strip()
     if manifest.reference_url:
         manifest.reference_notes = "reference_received"
+
+    if manual_idea_lines:
+        manifest.reference_notes = (
+            f"{manifest.reference_notes}|manual_ideas_received"
+            if manifest.reference_notes
+            else "manual_ideas_received"
+        )
+
+    precedence_rule = "RESEARCH > NICHO_DEFAULT"
+    if manual_idea_lines and manifest.reference_url:
+        precedence_rule = "MANUAL_IDEAS > REFERENCE > RESEARCH > NICHO_DEFAULT"
+    elif manual_idea_lines:
+        precedence_rule = "MANUAL_IDEAS > RESEARCH > NICHO_DEFAULT"
+    elif manifest.reference_url:
+        precedence_rule = "REFERENCE > RESEARCH > NICHO_DEFAULT"
 
     cost_governance = CostGovernance(manifest)
     manifest.month_to_date_spend_usd = cost_governance.get_current_month_spend_usd()
@@ -138,14 +160,12 @@ def run_pipeline_v15(
         audience=_audience_for_nicho(nicho_slug),
         platform=_resolve_platform(nicho.plataforma),
         nicho_slug=nicho_slug,
+        manual_ideas=manual_idea_lines,
+        niche_memory_entries=niche_memory_lines,
         visual_direction=nicho.direccion_visual,
         style_profile=get_style_for_platform(nicho.plataforma),
         reference_url=manifest.reference_url,
-        precedence_rule=(
-            "REFERENCE > RESEARCH > NICHO_DEFAULT"
-            if manifest.reference_url
-            else "RESEARCH > NICHO_DEFAULT"
-        ),
+        precedence_rule=precedence_rule,
     )
 
     settings.ensure_dirs()
@@ -309,6 +329,22 @@ def run_pipeline_v15(
             "policy",
             "Strict-free media/tools policy enabled",
             "Only free providers are eligible for media/render tool stages",
+        )
+
+    if story.manual_ideas:
+        _add_decision(
+            "inputs",
+            "Manual ideas injected",
+            " | ".join(story.manual_ideas[:3]),
+            metadata={"ideas_count": len(story.manual_ideas)},
+        )
+
+    if story.niche_memory_entries:
+        _add_decision(
+            "inputs",
+            "Local niche memory loaded",
+            " | ".join(story.niche_memory_entries[:2]),
+            metadata={"memory_count": len(story.niche_memory_entries)},
         )
 
     # Agents

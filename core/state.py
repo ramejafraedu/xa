@@ -158,6 +158,8 @@ class StoryState(BaseModel):
     audience: str = ""                         # "hombres 18-35, interesados en dinero"
     platform: str = "tiktok"
     nicho_slug: str = ""
+    manual_ideas: list[str] = Field(default_factory=list)
+    niche_memory_entries: list[str] = Field(default_factory=list)
 
     # --- Research ---
     research: ResearchBrief = Field(default_factory=ResearchBrief)
@@ -221,11 +223,16 @@ class StoryState(BaseModel):
             f"{c.role}: {c.appearance}" for c in self.characters
         ) if self.characters else "No specific characters"
 
+        manual = " | ".join(self.manual_ideas[:6]) if self.manual_ideas else "N/A"
+        niche_memory = " | ".join(self.niche_memory_entries[:6]) if self.niche_memory_entries else "N/A"
+
         return (
             f"TOPIC: {self.topic}\n"
             f"TONE: {self.tone}\n"
             f"PLATFORM: {self.platform}\n"
             f"AUDIENCE: {self.audience}\n"
+            f"MANUAL IDEAS PRIORITY: {manual}\n"
+            f"NICHE MEMORY NOTES: {niche_memory}\n"
             f"NARRATIVE ARC: {self.narrative_arc}\n"
             f"KEY POINTS: {', '.join(self.key_points)}\n"
             f"CHARACTERS: {chars}\n"

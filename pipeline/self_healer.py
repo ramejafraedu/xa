@@ -1,6 +1,6 @@
 """Unified Self-Healer — handles ALL pipeline failures.
 
-4 healing strategies, all using the SAME model (GPT-4.1):
+4 healing strategies using Gemini first and GPT fallback:
   - fix_prompt: Re-generate content with correction instructions
   - fix_json: Fix malformed JSON from AI
   - fix_audio: Retry TTS with different params
@@ -24,7 +24,10 @@ from loguru import logger
 from config import settings, app_config
 from models.config_models import NichoConfig
 from models.content import ErrorCode, FailureType, HealingRecord, PipelineResult
-from services.http_client import request_with_retry
+from services.llm_router import call_llm_primary_gemini
+
+
+_last_healing_model_used = ""
 
 
 def attempt_healing(
@@ -76,7 +79,7 @@ def attempt_healing(
         if corrected:
             record.success = True
             record.corrected_output = corrected[:500]
-            record.model_used = settings.inference_model
+            record.model_used = _last_healing_model_used or settings.inference_model
             result.healing_attempts.append(record)
             logger.info(f"✅ Healing succeeded for {failure_type.value}")
             return corrected
@@ -110,34 +113,23 @@ def _dispatch_healing(
 
 
 def _call_ai(system_prompt: str, user_prompt: str) -> str:
-    """Call the SAME model used for content generation (GPT-4.1)."""
-    payload = {
-        "model": settings.inference_model,
-        "temperature": 0.5,  # Lower temp for corrections
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {settings.github_token}",
-        "Content-Type": "application/json",
-    }
+    """Call healing LLM with Gemini primary and GPT fallback."""
+    global _last_healing_model_used
 
-    response = request_with_retry(
-        "POST",
-        settings.inference_api_url,
-        json_data=payload,
-        headers=headers,
-        max_retries=2,
+    text, model_used = call_llm_primary_gemini(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.5,
         timeout=45,
+        max_retries=2,
+        purpose="self_healer",
     )
 
-    if response.status_code >= 400:
-        raise RuntimeError(f"AI healing call failed: HTTP {response.status_code}")
+    if not text:
+        raise RuntimeError("AI healing call failed in Gemini+GPT path")
 
-    data = response.json()
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    _last_healing_model_used = model_used or ""
+    return text
 
 
 # ---------------------------------------------------------------------------

@@ -18,10 +18,9 @@ from typing import Optional
 
 from loguru import logger
 
-from config import settings
 from core.state import StoryState
 from models.config_models import NichoConfig
-from services.http_client import request_with_retry
+from services.llm_router import call_llm_primary_gemini
 
 
 # ---------------------------------------------------------------------------
@@ -173,30 +172,20 @@ def should_iterate(
 
 def _call_llm(system: str, user: str, temperature: float = 0.3) -> str:
     """Call LLM for review."""
-    payload = {
-        "model": settings.inference_model,
-        "temperature": temperature,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {settings.github_token}",
-        "Content-Type": "application/json",
-    }
-
-    response = request_with_retry(
-        "POST", settings.inference_api_url,
-        json_data=payload, headers=headers,
-        max_retries=1, timeout=30,
+    text, model_used = call_llm_primary_gemini(
+        system_prompt=system,
+        user_prompt=user,
+        temperature=temperature,
+        timeout=30,
+        max_retries=1,
+        purpose="feedback_review",
     )
 
-    if response.status_code >= 400:
-        raise RuntimeError(f"Review LLM HTTP {response.status_code}")
+    if not text:
+        raise RuntimeError("Review LLM unavailable in Gemini+GPT path")
 
-    data = response.json()
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    logger.debug(f"Feedback reviewer model used: {model_used}")
+    return text
 
 
 def _parse_review_json(raw: str) -> Optional[dict]:

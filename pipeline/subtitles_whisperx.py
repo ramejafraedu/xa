@@ -124,28 +124,27 @@ def _whisperx_to_ass(result: dict, ass_path: Path) -> int:
 
     events = []
     segments = result.get("segments", [])
+    cursor = 0.0
 
     for seg in segments:
-        words = seg.get("words", [])
-        if not words:
+        timed_words, cursor = _build_timed_words(seg, cursor)
+        if not timed_words:
             continue
 
-        # Group words into chunks of 4
-        for i in range(0, len(words), 4):
-            chunk = words[i:i + 4]
+        # Group timed words into chunks of 4
+        for i in range(0, len(timed_words), 4):
+            chunk = timed_words[i:i + 4]
+            if not chunk:
+                continue
 
-            # Get timing from first and last word in chunk
-            start_time = chunk[0].get("start", 0)
-            end_time = chunk[-1].get("end", start_time + 1)
+            start_time = chunk[0][1]
+            end_time = chunk[-1][2]
 
             # Build ASS line with karaoke timing
             base = r"{\an2\bord4\blur3\1c&H00FFFFFF&\3c&H000000&\fs90\fad(120,120)}"
             line = base
-            for w in chunk:
-                word_text = w.get("word", "").upper().strip()
-                if not word_text:
-                    continue
-                word_dur = w.get("end", 0) - w.get("start", 0)
+            for word_text, w_start, w_end in chunk:
+                word_dur = max(0.08, w_end - w_start)
                 wdur_cs = max(6, int(round(word_dur * 100)))
                 line += r"{\k" + str(wdur_cs) + "}" + word_text + " "
 
@@ -186,3 +185,71 @@ def _to_ass_time(sec: float) -> str:
     s = sec % 60
     cs = int(round((s - int(s)) * 100))
     return f"{h}:{m:02d}:{int(s):02d}.{cs:02d}"
+
+
+def _build_timed_words(seg: dict, fallback_start: float) -> tuple[list[tuple[str, float, float]], float]:
+    """Build contiguous word timings, falling back to segment distribution when needed."""
+    raw_words = seg.get("words", []) or []
+    words = []
+    for w in raw_words:
+        text = str(w.get("word", "")).strip().upper()
+        if text:
+            words.append((text, _as_float(w.get("start")), _as_float(w.get("end"))))
+
+    if not words:
+        return [], fallback_start
+
+    seg_start = _as_float(seg.get("start"))
+    if seg_start is None:
+        seg_start = fallback_start
+    seg_start = max(0.0, seg_start)
+
+    seg_end = _as_float(seg.get("end"))
+    if seg_end is None or seg_end <= seg_start:
+        seg_end = seg_start + max(0.8, 0.28 * len(words))
+
+    # Prefer WhisperX word timing only when complete and monotonic.
+    if _has_valid_word_timings(words):
+        normalized: list[tuple[str, float, float]] = []
+        cursor = seg_start
+        for text, w_start, w_end in words:
+            assert w_start is not None and w_end is not None
+            start = max(cursor, seg_start, w_start)
+            end = min(seg_end, max(start + 0.08, w_end))
+            if end <= start:
+                end = start + 0.08
+            normalized.append((text, start, end))
+            cursor = end
+        return normalized, max(seg_end, normalized[-1][2])
+
+    # Fallback: distribute words uniformly within segment to avoid subtitle gaps.
+    seg_dur = max(0.8, seg_end - seg_start)
+    step = seg_dur / len(words)
+    normalized = []
+    for idx, (text, _, __) in enumerate(words):
+        start = seg_start + idx * step
+        end = seg_start + (idx + 1) * step
+        normalized.append((text, start, end))
+    return normalized, seg_end
+
+
+def _has_valid_word_timings(words: list[tuple[str, Optional[float], Optional[float]]]) -> bool:
+    prev_end = -1.0
+    for _, start, end in words:
+        if start is None or end is None:
+            return False
+        if end <= start:
+            return False
+        if start < prev_end - 0.12:
+            return False
+        prev_end = end
+    return True
+
+
+def _as_float(value: object) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None

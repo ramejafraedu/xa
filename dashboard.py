@@ -38,6 +38,13 @@ from sse_starlette.sse import EventSourceResponse
 from config import settings, NICHOS
 from core.director import WEB_CHECKPOINTS, WEB_RESOLUTIONS, DirectorMode
 from models.content import JobManifest, JobStatus
+from services.niche_memory import (
+    add_niche_memory_entry,
+    delete_niche_memory_entry,
+    list_niche_memory,
+    move_niche_memory_entry,
+    update_niche_memory_entry,
+)
 from state_manager import StateManager
 
 # ---------------------------------------------------------------------------
@@ -767,6 +774,7 @@ async def stream_resources(request: Request):
 async def list_nichos():
     """List all configured nichos with their settings."""
     result = []
+    memory_index = list_niche_memory()
     for slug, nicho in NICHOS.items():
         result.append({
             "slug": slug,
@@ -776,9 +784,115 @@ async def list_nichos():
             "voz": nicho.voz_gemini,
             "horas": nicho.horas,
             "num_clips": nicho.num_clips,
+            "memory_count": len(memory_index.get(slug, [])),
             "is_running": slug in _active_runs,
         })
     return result
+
+
+@app.get("/api/memory")
+async def memory_list(nicho_slug: str = ""):
+    """List niche memory notes for one niche or all niches."""
+    try:
+        memory_data = list_niche_memory(nicho_slug or None)
+        total_items = sum(len(v) for v in memory_data.values())
+        return {
+            "nicho_slug": (nicho_slug or "all").strip().lower() or "all",
+            "total_items": total_items,
+            "memory": memory_data,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/memory/{nicho_slug}")
+async def memory_detail(nicho_slug: str):
+    """List all memory notes for one niche."""
+    try:
+        memory_data = list_niche_memory(nicho_slug)
+        slug = nicho_slug.strip().lower()
+        return {
+            "nicho_slug": slug,
+            "count": len(memory_data.get(slug, [])),
+            "items": memory_data.get(slug, []),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/memory/{nicho_slug}")
+async def memory_add(nicho_slug: str, payload: dict = Body(...)):
+    """Add a new memory note for a niche."""
+    try:
+        entry = add_niche_memory_entry(
+            nicho_slug,
+            str(payload.get("text", "") or ""),
+            source=str(payload.get("source", "manual") or "manual"),
+        )
+        return {
+            "status": "created",
+            "nicho_slug": nicho_slug.strip().lower(),
+            "entry": entry,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.put("/api/memory/{nicho_slug}/{entry_id}")
+async def memory_update(nicho_slug: str, entry_id: str, payload: dict = Body(...)):
+    """Update a memory note text."""
+    try:
+        updated = update_niche_memory_entry(
+            nicho_slug,
+            entry_id,
+            str(payload.get("text", "") or ""),
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Memory entry not found")
+        return {
+            "status": "updated",
+            "nicho_slug": nicho_slug.strip().lower(),
+            "entry": updated,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/memory/{nicho_slug}/{entry_id}")
+async def memory_delete(nicho_slug: str, entry_id: str):
+    """Delete one memory note by id."""
+    try:
+        deleted = delete_niche_memory_entry(nicho_slug, entry_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Memory entry not found")
+        return {
+            "status": "deleted",
+            "nicho_slug": nicho_slug.strip().lower(),
+            "entry_id": entry_id,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/memory/{nicho_slug}/{entry_id}/move")
+async def memory_move(nicho_slug: str, entry_id: str, payload: dict = Body(...)):
+    """Move one memory note from source niche to target niche."""
+    target_nicho = str(payload.get("target_nicho", "") or "").strip().lower()
+    if not target_nicho:
+        raise HTTPException(status_code=400, detail="target_nicho is required")
+
+    try:
+        moved = move_niche_memory_entry(nicho_slug, target_nicho, entry_id)
+        if not moved:
+            raise HTTPException(status_code=404, detail="Memory entry not found")
+        return {
+            "status": "moved",
+            "from": nicho_slug.strip().lower(),
+            "to": target_nicho,
+            "entry": moved,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/jobs")
@@ -797,6 +911,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
         if manifest:
             j["execution_mode"] = manifest.get("execution_mode", settings.execution_mode_label())
             j["reference_url"] = manifest.get("reference_url", "")
+            j["manual_ideas"] = manifest.get("manual_ideas", [])
             j["reference_delivery_promise"] = manifest.get("reference_delivery_promise", "")
             j["reference_hook_seconds"] = manifest.get("reference_hook_seconds", 0.0)
             j["reference_avg_cut_seconds"] = manifest.get("reference_avg_cut_seconds", 0.0)
@@ -824,6 +939,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "error_message": data.get("error_message", ""),
                     "execution_mode": data.get("execution_mode", settings.execution_mode_label()),
                     "reference_url": data.get("reference_url", ""),
+                    "manual_ideas": data.get("manual_ideas", []),
                     "reference_delivery_promise": data.get("reference_delivery_promise", ""),
                     "reference_hook_seconds": data.get("reference_hook_seconds", 0.0),
                     "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
@@ -849,6 +965,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "timestamp": data.get("timestamp", 0),
                     "execution_mode": data.get("execution_mode", settings.execution_mode_label()),
                     "reference_url": data.get("reference_url", ""),
+                    "manual_ideas": data.get("manual_ideas", []),
                     "reference_delivery_promise": data.get("reference_delivery_promise", ""),
                     "reference_hook_seconds": data.get("reference_hook_seconds", 0.0),
                     "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
@@ -868,7 +985,9 @@ async def run_niche(
     nicho_slug: str,
     background_tasks: BackgroundTasks,
     dry_run: bool = False,
+    checkpoints: bool = False,
     reference_url: str = "",
+    manual_ideas: str = "",
 ):
     """Trigger a pipeline run for a niche."""
     if nicho_slug not in NICHOS:
@@ -880,35 +999,69 @@ async def run_niche(
         "started": time.time(),
         "job_id": "starting...",
         "reference_url": reference_url,
+        "manual_ideas": manual_ideas,
+        "checkpoint_mode": "web" if checkpoints else "auto",
     }
-    background_tasks.add_task(_run_pipeline_bg, nicho_slug, dry_run, "", reference_url)
+    background_tasks.add_task(
+        _run_pipeline_bg,
+        nicho_slug,
+        dry_run,
+        "",
+        reference_url,
+        manual_ideas,
+        checkpoints,
+    )
     return {
         "status": "started",
         "nicho": nicho_slug,
         "dry_run": dry_run,
+        "checkpoints": checkpoints,
         "reference_url": reference_url,
+        "manual_ideas": manual_ideas,
     }
 
 
 @app.post("/api/run-all")
-async def run_all(background_tasks: BackgroundTasks):
+async def run_all(
+    background_tasks: BackgroundTasks,
+    checkpoints: bool = False,
+    reference_url: str = "",
+    manual_ideas: str = "",
+):
     """Trigger all 5 nichos sequentially."""
-    background_tasks.add_task(_run_all_bg)
-    return {"status": "started", "nichos": list(NICHOS.keys())}
+    background_tasks.add_task(_run_all_bg, checkpoints, reference_url, manual_ideas)
+    return {
+        "status": "started",
+        "nichos": list(NICHOS.keys()),
+        "checkpoints": checkpoints,
+        "reference_url": reference_url,
+        "manual_ideas": manual_ideas,
+    }
 
 
 @app.post("/api/resume/{job_id}")
-async def resume_job(job_id: str, background_tasks: BackgroundTasks):
+async def resume_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    checkpoints: bool = False,
+    manual_ideas: str = "",
+):
     """Resume a crashed job."""
     state = StateManager(settings.temp_dir)
     manifest = state.load(job_id)
     if not manifest:
         return {"error": f"Job {job_id} not found"}
 
+    resume_manual_ideas = manual_ideas
+    if not resume_manual_ideas and getattr(manifest, "manual_ideas", None):
+        resume_manual_ideas = " | ".join(getattr(manifest, "manual_ideas", []))
+
     _active_runs[manifest.nicho_slug] = {
         "started": time.time(),
         "job_id": job_id,
         "reference_url": getattr(manifest, "reference_url", ""),
+        "manual_ideas": resume_manual_ideas,
+        "checkpoint_mode": "web" if checkpoints else "auto",
     }
     background_tasks.add_task(
         _run_pipeline_bg,
@@ -916,8 +1069,15 @@ async def resume_job(job_id: str, background_tasks: BackgroundTasks):
         False,
         job_id,
         getattr(manifest, "reference_url", ""),
+        resume_manual_ideas,
+        checkpoints,
     )
-    return {"status": "resuming", "job_id": job_id}
+    return {
+        "status": "resuming",
+        "job_id": job_id,
+        "checkpoints": checkpoints,
+        "manual_ideas": resume_manual_ideas,
+    }
 
 
 @app.get("/api/active")
@@ -1377,23 +1537,29 @@ def _run_pipeline_bg(
     dry_run: bool = False,
     resume_id: str = "",
     reference_url: str = "",
+    manual_ideas: str = "",
+    checkpoints: bool = False,
 ):
-    """Run pipeline in background thread using V15 mode WEB."""
+    """Run pipeline in background thread (AUTO by default; WEB only when requested)."""
     try:
         from core.pipeline_v15 import run_pipeline_v15
-        logger.info(f"🚀 Starting V15 WEB Pipeline for {nicho_slug}")
+        mode = DirectorMode.WEB if checkpoints else DirectorMode.AUTO
+        logger.info(f"🚀 Starting V15 {mode.value.upper()} Pipeline for {nicho_slug}")
         result = run_pipeline_v15(
             nicho_slug,
             dry_run=dry_run,
             resume_job_id=resume_id,
-            mode=DirectorMode.WEB,
+            mode=mode,
             reference_url=reference_url,
+            manual_ideas=manual_ideas,
         )
         if result:
             _active_runs[nicho_slug] = {
                 "job_id": result.job_id,
                 "status": result.status,
                 "finished": time.time(),
+                "checkpoint_mode": mode.value,
+                "manual_ideas": list(getattr(result, "manual_ideas", []) or []),
             }
     except Exception as e:
         logger.error(f"Background run failed for {nicho_slug}: {e}")
@@ -1401,10 +1567,19 @@ def _run_pipeline_bg(
         _active_runs.pop(nicho_slug, None)
 
 
-def _run_all_bg():
+def _run_all_bg(
+    checkpoints: bool = False,
+    reference_url: str = "",
+    manual_ideas: str = "",
+):
     """Run all nichos sequentially."""
     for slug in NICHOS:
-        _run_pipeline_bg(slug)
+        _run_pipeline_bg(
+            slug,
+            checkpoints=checkpoints,
+            reference_url=reference_url,
+            manual_ideas=manual_ideas,
+        )
 
 
 # ---------------------------------------------------------------------------

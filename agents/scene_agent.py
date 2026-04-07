@@ -18,10 +18,9 @@ from typing import Optional
 
 from loguru import logger
 
-from config import settings
 from core.state import SceneBlueprint, StoryState
 from models.config_models import NichoConfig
-from services.http_client import request_with_retry
+from services.llm_router import call_llm_primary_gemini
 
 
 class SceneAgent:
@@ -280,31 +279,17 @@ Divide en escenas cinematográficas. Incluye el hook como escena 1 y el CTA como
         return scenes
 
     def _call_llm(self, system: str, user: str) -> str:
-        """Call LLM (same backend as V14)."""
-        payload = {
-            "model": settings.inference_model,
-            "temperature": 0.7,  # Lower temp for structural output
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
-        headers = {
-            "Authorization": f"Bearer {settings.github_token}",
-            "Content-Type": "application/json",
-        }
-
+        """Call LLM with Gemini primary and GPT fallback."""
         try:
-            response = request_with_retry(
-                "POST", settings.inference_api_url,
-                json_data=payload, headers=headers,
-                max_retries=2, timeout=45,
+            text, _model_used = call_llm_primary_gemini(
+                system_prompt=system,
+                user_prompt=user,
+                temperature=0.7,
+                timeout=45,
+                max_retries=2,
+                purpose="scene_agent",
             )
-            if response.status_code >= 400:
-                return ""
-
-            data = response.json()
-            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            return text
         except Exception as e:
             logger.error(f"SceneAgent LLM error: {e}")
             return ""

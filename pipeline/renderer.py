@@ -142,6 +142,25 @@ def render_video(
         remove_filters=remove_filters,
     )
 
+    using_image_fallback = False
+    if processed == 0:
+        fallback_lines = _build_image_fallback_timeline(
+            images=images,
+            timestamp=timestamp,
+            temp_dir=temp_dir,
+            target_duration=duracion_audio,
+        )
+        if fallback_lines:
+            logger.warning(
+                "No clips processed successfully; switching to image-only motion timeline "
+                "to avoid intro-only output"
+            )
+            intro_path = None
+            lista_lines = fallback_lines
+            using_image_fallback = True
+        elif intro_path:
+            return None, None, "No clips processed successfully (intro-only output blocked)"
+
     if not processed and not intro_path:
         return None, None, "No clips processed successfully"
 
@@ -150,9 +169,13 @@ def render_video(
         lista_lines.insert(0, f"file '{intro_path.as_posix()}'")
 
     # --- Step 3: Insert mid-video images ---
-    lista_lines = _insert_mid_images(
-        lista_lines, images[1:], timestamp, temp_dir, num_clips
-    )
+    if not using_image_fallback:
+        lista_lines = _insert_mid_images(
+            lista_lines, images[1:], timestamp, temp_dir, num_clips
+        )
+
+    if not lista_lines:
+        return None, None, "No visual segments generated for concat"
 
     # --- Step 4: Concat all segments ---
     lista_file = temp_dir / f"lista_{timestamp}.txt"
@@ -369,6 +392,81 @@ def _insert_mid_images(
         cursor += 1
 
     return out
+
+
+def _build_image_fallback_timeline(
+    images: list[Path],
+    timestamp: int,
+    temp_dir: Path,
+    target_duration: float,
+) -> list[str]:
+    """Build full-duration visual timeline from images when video clips fail."""
+    valid_images = [img for img in images if img.exists() and img.stat().st_size > 1000]
+    if not valid_images:
+        return []
+
+    segment_duration = 2.8
+    target_total = max(4.0, float(target_duration or 0.0))
+    remaining = target_total
+    segments: list[str] = []
+    generated = 0.0
+    idx = 0
+
+    while remaining > 0.05 and idx < 120:
+        dur = min(segment_duration, remaining)
+        img = valid_images[idx % len(valid_images)]
+        seg = temp_dir / f"imgfill_{idx+1}_{timestamp}.mp4"
+
+        if idx % 2 == 0:
+            zoompan = (
+                "zoompan=z='if(lte(on,36),1.07,zoom-0.0008)':"
+                "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30"
+            )
+        else:
+            zoompan = (
+                "zoompan=z='if(lte(on,36),1.04,zoom+0.0006)':"
+                "x='(iw-iw/zoom)/3':y='(ih-ih/zoom)/3':d=1:s=1080x1920:fps=30"
+            )
+
+        fade_dur = 0.18 if dur > 0.6 else 0.10
+        fade_out_st = max(0.0, dur - fade_dur)
+        vf = (
+            "scale=1080:1920:force_original_aspect_ratio=decrease,"
+            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
+            "setsar=1,"
+            f"{zoompan},"
+            f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st}:d={fade_dur}"
+        )
+
+        cmd = [
+            "ffmpeg", "-y", "-loop", "1",
+            "-i", img.as_posix(),
+            "-t", f"{dur:.3f}",
+            "-vf", vf,
+            "-an", "-c:v", "libx264", "-preset", "veryfast",
+            "-crf", "23", "-pix_fmt", "yuv420p",
+            seg.as_posix(),
+        ]
+
+        error = _run_ffmpeg(cmd, f"imgfill{idx+1}")
+        if not error and seg.exists() and seg.stat().st_size > 1000:
+            segments.append(f"file '{seg.as_posix()}'")
+            remaining -= dur
+            generated += dur
+        else:
+            logger.warning(f"Image fallback segment failed: {img.name}")
+
+        idx += 1
+
+    # If coverage is too low, force retry path instead of delivering a short visual timeline.
+    min_required = max(3.0, target_total * 0.60)
+    if generated < min_required:
+        logger.warning(
+            f"Image fallback coverage too low ({generated:.1f}s/{target_total:.1f}s)"
+        )
+        return []
+
+    return segments
 
 
 def _mix_audio(

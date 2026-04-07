@@ -187,6 +187,7 @@ def run_pipeline(
     nicho_slug: str,
     dry_run: bool = False,
     resume_job_id: str = "",
+    manual_ideas: str | list[str] | None = None,
 ) -> JobManifest:
     """Execute the full video generation pipeline for a niche.
 
@@ -194,6 +195,7 @@ def run_pipeline(
         nicho_slug: Niche identifier.
         dry_run: If True, only run content_gen + quality_gate, skip render.
         resume_job_id: If set, resume this specific job instead of creating new.
+        manual_ideas: Optional manual direction lines to bias topic and hook.
 
     Returns:
         JobManifest with full audit trail.
@@ -214,6 +216,11 @@ def run_pipeline(
     from publishers.telegram import notify_success, notify_error, notify_review
     from publishers.drive_sheets import upload_to_drive, log_to_sheets
     from services.supabase_client import read_memory, save_result, save_performance
+    from services.niche_memory import (
+        build_niche_memory_context,
+        get_niche_memory_lines,
+        normalize_manual_ideas,
+    )
     from services.trends import get_trending_context
 
     nicho = NICHOS.get(nicho_slug)
@@ -243,6 +250,19 @@ def run_pipeline(
 
     # V14 entrypoint should explicitly tag manifests as v14 to avoid alert confusion.
     manifest.pipeline_type = "v14"
+    manual_idea_lines = normalize_manual_ideas(manual_ideas)
+    niche_memory_lines = get_niche_memory_lines(nicho_slug, limit=10)
+
+    if resume_job_id and not manual_idea_lines and getattr(manifest, "manual_ideas", None):
+        manual_idea_lines = normalize_manual_ideas(getattr(manifest, "manual_ideas", []))
+
+    if resume_job_id and not niche_memory_lines and getattr(manifest, "niche_memory_snapshot", None):
+        niche_memory_lines = [
+            str(x).strip() for x in getattr(manifest, "niche_memory_snapshot", []) if str(x).strip()
+        ]
+
+    manifest.manual_ideas = manual_idea_lines
+    manifest.niche_memory_snapshot = niche_memory_lines
 
     settings.ensure_dirs()
     cleanup_stale_temp()
@@ -267,6 +287,19 @@ def run_pipeline(
                 memoria = read_memory(
                     settings.supabase_url, settings.supabase_anon_key, nicho_slug
                 )
+                local_memory_ctx = build_niche_memory_context(nicho_slug, limit=8)
+                if local_memory_ctx != "Sin memoria local por nicho":
+                    if memoria and memoria != "Sin memoria previa":
+                        memoria = f"{memoria} | MEMORIA_LOCAL: {local_memory_ctx}"
+                    else:
+                        memoria = f"MEMORIA_LOCAL: {local_memory_ctx}"
+                if manual_idea_lines:
+                    manual_ctx = " | ".join(manual_idea_lines)
+                    memoria = (
+                        f"{memoria} | IDEAS_MANUALES: {manual_ctx}"
+                        if memoria
+                        else f"IDEAS_MANUALES: {manual_ctx}"
+                    )
                 trending = get_trending_context(nicho.nombre, settings.rapidapi_key)
             else:
                 memoria = "Sin memoria previa"
@@ -280,7 +313,12 @@ def run_pipeline(
             raw_content = {}  # Inicializar antes del bloque (fix: NameError en --resume)
             if not state.is_stage_done(manifest, "content_gen"):
                 try:
-                    raw_content = generate_content(nicho, trending, memoria)
+                    raw_content = generate_content(
+                        nicho,
+                        trending,
+                        memoria,
+                        manual_ideas=manual_idea_lines,
+                    )
                 except ContentGenerationError as e:
                     manifest.status = JobStatus.ERROR.value
                     manifest.error_stage = "content_gen"
@@ -790,6 +828,7 @@ def run(
     render_only: str = typer.Option("", "--render-only", help="Re-render from existing assets by JOB_ID"),
     publish_only: str = typer.Option("", "--publish-only", help="Re-publish already-rendered video by JOB_ID"),
     reference_url: str = typer.Option("", "--reference-url", help="Reference URL to guide script/scene generation (V15)"),
+    manual_ideas: str = typer.Option("", "--manual-ideas", help="Ideas manuales prioritarias (usa | o saltos de linea)"),
     # ── V15 PRO flags ──
     director: bool = typer.Option(False, "--director", help="🎬 V15 Interactive mode (approve each stage)"),
     v15: bool = typer.Option(False, "--v15", help="🚀 V15 Autonomous mode (multi-agent + coherence)"),
@@ -831,7 +870,11 @@ def run(
                     table.add_row(j["job_id"], j["nicho"], j["status"], j["titulo"])
                 console.print(table)
             raise typer.Exit(1)
-        run_pipeline(manifest.nicho_slug, resume_job_id=resume)
+        run_pipeline(
+            manifest.nicho_slug,
+            resume_job_id=resume,
+            manual_ideas=manual_ideas or getattr(manifest, "manual_ideas", []),
+        )
 
     elif render_only:
         console.print(f"\n[cyan]🎥 Render-only for job: {render_only}[/cyan]\n")
@@ -854,10 +897,15 @@ def run(
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
             mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
-            run_pipeline_v15("finanzas", mode=mode, reference_url=reference_url)
+            run_pipeline_v15(
+                "finanzas",
+                mode=mode,
+                reference_url=reference_url,
+                manual_ideas=manual_ideas,
+            )
         else:
             console.print("\n[yellow]🧪 TEST MODE — V14 Classic (finanzas)[/yellow]\n")
-            run_pipeline("finanzas")
+            run_pipeline("finanzas", manual_ideas=manual_ideas)
 
     elif dry_run and niche:
         if use_v15:
@@ -865,10 +913,16 @@ def run(
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
             mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
-            run_pipeline_v15(niche, mode=mode, dry_run=True, reference_url=reference_url)
+            run_pipeline_v15(
+                niche,
+                mode=mode,
+                dry_run=True,
+                reference_url=reference_url,
+                manual_ideas=manual_ideas,
+            )
         else:
             console.print(f"\n[yellow]🏜️ DRY RUN V14 — {niche}[/yellow]\n")
-            run_pipeline(niche, dry_run=True)
+            run_pipeline(niche, dry_run=True, manual_ideas=manual_ideas)
 
     elif all_now:
         console.print(f"\n[cyan]🚀 Running all 5 nichos ({version_label})...[/cyan]\n")
@@ -879,9 +933,14 @@ def run(
             if use_v15:
                 from core.pipeline_v15 import run_pipeline_v15
                 from core.director import DirectorMode
-                run_pipeline_v15(slug, mode=DirectorMode.AUTO, reference_url=reference_url)
+                run_pipeline_v15(
+                    slug,
+                    mode=DirectorMode.AUTO,
+                    reference_url=reference_url,
+                    manual_ideas=manual_ideas,
+                )
             else:
-                run_pipeline(slug)
+                run_pipeline(slug, manual_ideas=manual_ideas)
 
     elif schedule:
         from scheduler import start_scheduler
@@ -897,7 +956,12 @@ def run(
         console.print("[dim]You'll approve/edit at each stage[/dim]\n")
         from core.pipeline_v15 import run_pipeline_v15
         from core.director import DirectorMode
-        run_pipeline_v15(niche, mode=DirectorMode.INTERACTIVE, reference_url=reference_url)
+        run_pipeline_v15(
+            niche,
+            mode=DirectorMode.INTERACTIVE,
+            reference_url=reference_url,
+            manual_ideas=manual_ideas,
+        )
 
     elif v15 and niche:
         # V15 Autonomous mode
@@ -908,7 +972,12 @@ def run(
         console.print(f"\n[cyan]🚀 V15 AUTONOMOUS — {niche}[/cyan]\n")
         from core.pipeline_v15 import run_pipeline_v15
         from core.director import DirectorMode
-        run_pipeline_v15(niche, mode=DirectorMode.AUTO, reference_url=reference_url)
+        run_pipeline_v15(
+            niche,
+            mode=DirectorMode.AUTO,
+            reference_url=reference_url,
+            manual_ideas=manual_ideas,
+        )
 
     elif niche:
         # Default: V14 classic (backward compatible)
@@ -919,9 +988,14 @@ def run(
         if use_v15:
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
-            run_pipeline_v15(niche, mode=DirectorMode.AUTO, reference_url=reference_url)
+            run_pipeline_v15(
+                niche,
+                mode=DirectorMode.AUTO,
+                reference_url=reference_url,
+                manual_ideas=manual_ideas,
+            )
         else:
-            run_pipeline(niche)
+            run_pipeline(niche, manual_ideas=manual_ideas)
 
     else:
         console.print("\n[cyan]📋 Starting scheduler (24/7 mode)...[/cyan]")

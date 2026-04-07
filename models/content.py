@@ -274,6 +274,8 @@ class JobManifest(BaseModel):
     caption: str = ""
     reference_url: str = ""
     reference_notes: str = ""
+    manual_ideas: list[str] = Field(default_factory=list)
+    niche_memory_snapshot: list[str] = Field(default_factory=list)
     reference_delivery_promise: str = ""
     reference_hook_seconds: float = 0.0
     reference_avg_cut_seconds: float = 0.0
