@@ -1,7 +1,10 @@
-"""Video Factory V14 — Web Dashboard Server.
+"""Video Factory V16 — Web Dashboard Server (Enhanced).
 
 Serves a premium dark-mode dashboard at http://localhost:8000
-with real-time log streaming, niche controls, and job history.
+with real-time log streaming, system resource monitoring, job details,
+post-render analysis, pipeline timeline, and decision audit trail.
+
+ALL features run with FREE tools only: psutil, ffprobe, Python stdlib.
 
 Usage:
     python dashboard.py              # Start dashboard on port 8000
@@ -11,8 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -63,7 +68,7 @@ def _log_sink(message):
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Video Factory V14", docs_url="/api/docs")
+app = FastAPI(title="Video Factory V16", docs_url="/api/docs")
 
 # Static files
 _static_dir = Path(__file__).resolve().parent / "static"
@@ -157,6 +162,419 @@ def _clean_manifest_for_save(manifest: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# ffprobe helper (FREE — local FFmpeg)
+# ---------------------------------------------------------------------------
+
+def _run_ffprobe(video_path: str) -> Optional[dict]:
+    """Run ffprobe to extract video metadata. Returns None on failure."""
+    if not video_path or not Path(video_path).exists():
+        return None
+    try:
+        cmd = [
+            "ffprobe", "-v", "quiet",
+            "-print_format", "json",
+            "-show_format", "-show_streams",
+            str(video_path),
+        ]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return None
+        data = json.loads(result.stdout)
+
+        # Extract useful fields
+        fmt = data.get("format", {})
+        streams = data.get("streams", [])
+        video_stream = next((s for s in streams if s.get("codec_type") == "video"), {})
+        audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), {})
+
+        width = int(video_stream.get("width", 0))
+        height = int(video_stream.get("height", 0))
+        duration = float(fmt.get("duration", 0))
+        bitrate = int(fmt.get("bit_rate", 0))
+        size_bytes = int(fmt.get("size", 0))
+
+        # Compute quality score heuristic (free, no AI)
+        quality_score = _compute_quality_score(
+            width, height, duration, bitrate, size_bytes
+        )
+
+        return {
+            "duration": round(duration, 2),
+            "width": width,
+            "height": height,
+            "resolution": f"{width}x{height}",
+            "video_codec": video_stream.get("codec_name", "unknown"),
+            "audio_codec": audio_stream.get("codec_name", "unknown"),
+            "fps": _parse_fps(video_stream.get("r_frame_rate", "0/1")),
+            "bitrate_kbps": round(bitrate / 1000, 1) if bitrate else 0,
+            "size_mb": round(size_bytes / (1024 * 1024), 2),
+            "format": fmt.get("format_name", "unknown"),
+            "audio_channels": int(audio_stream.get("channels", 0)),
+            "audio_sample_rate": int(audio_stream.get("sample_rate", 0)),
+            "quality_score": quality_score,
+        }
+    except Exception as e:
+        logger.debug(f"ffprobe failed for {video_path}: {e}")
+        return None
+
+
+def _parse_fps(rate_str: str) -> float:
+    """Parse ffprobe r_frame_rate like '30000/1001'."""
+    try:
+        parts = rate_str.split("/")
+        if len(parts) == 2 and int(parts[1]) != 0:
+            return round(int(parts[0]) / int(parts[1]), 2)
+        return float(parts[0])
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def _compute_quality_score(
+    width: int, height: int, duration: float,
+    bitrate: int, size_bytes: int,
+) -> dict:
+    """Compute a free quality score based on ffprobe metadata."""
+    scores = {}
+    total = 0
+
+    # Resolution score (0-10)
+    pixels = width * height
+    if pixels >= 1920 * 1080:
+        scores["resolution"] = 10
+    elif pixels >= 1080 * 1920:
+        scores["resolution"] = 9
+    elif pixels >= 720 * 1280:
+        scores["resolution"] = 7
+    elif pixels >= 480 * 854:
+        scores["resolution"] = 5
+    else:
+        scores["resolution"] = 3
+    total += scores["resolution"]
+
+    # Duration score for short-form (30-90s ideal)
+    if 25 <= duration <= 90:
+        scores["duration"] = 10
+    elif 15 <= duration <= 120:
+        scores["duration"] = 8
+    elif 10 <= duration <= 180:
+        scores["duration"] = 6
+    else:
+        scores["duration"] = 4
+    total += scores["duration"]
+
+    # Bitrate score (higher is better for quality, but too high wastes space)
+    kbps = bitrate / 1000 if bitrate else 0
+    if 2000 <= kbps <= 8000:
+        scores["bitrate"] = 10
+    elif 1000 <= kbps <= 12000:
+        scores["bitrate"] = 8
+    elif 500 <= kbps:
+        scores["bitrate"] = 6
+    else:
+        scores["bitrate"] = 3
+    total += scores["bitrate"]
+
+    # Aspect ratio score (9:16 vertical is ideal for shorts)
+    if width > 0 and height > 0:
+        ratio = width / height
+        if 0.5 <= ratio <= 0.6:  # 9:16 vertical
+            scores["aspect_ratio"] = 10
+        elif 1.7 <= ratio <= 1.8:  # 16:9 horizontal
+            scores["aspect_ratio"] = 7
+        elif 0.9 <= ratio <= 1.1:  # Square
+            scores["aspect_ratio"] = 6
+        else:
+            scores["aspect_ratio"] = 4
+    else:
+        scores["aspect_ratio"] = 0
+    total += scores["aspect_ratio"]
+
+    scores["overall"] = round(total / 4, 1)
+    return scores
+
+
+def _generate_thumbnail(video_path: str) -> Optional[str]:
+    """Generate a thumbnail from a video using ffmpeg. Returns base64 data URI."""
+    if not video_path or not Path(video_path).exists():
+        return None
+    try:
+        import base64
+        import tempfile
+        thumb_path = Path(tempfile.mktemp(suffix=".jpg"))
+        cmd = [
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-ss", "2", "-vframes", "1",
+            "-vf", "scale=320:-1",
+            "-q:v", "4",
+            str(thumb_path),
+        ]
+        subprocess.run(cmd, capture_output=True, timeout=10)
+        if thumb_path.exists() and thumb_path.stat().st_size > 0:
+            data = base64.b64encode(thumb_path.read_bytes()).decode()
+            thumb_path.unlink(missing_ok=True)
+            return f"data:image/jpeg;base64,{data}"
+        thumb_path.unlink(missing_ok=True)
+    except Exception as e:
+        logger.debug(f"Thumbnail generation failed: {e}")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Resource Monitor (FREE — psutil)
+# ---------------------------------------------------------------------------
+
+def _get_system_resources() -> dict:
+    """Get system resource usage using psutil (free, local)."""
+    try:
+        import psutil
+
+        cpu_pct = psutil.cpu_percent(interval=0.5)
+        cpu_freq = psutil.cpu_freq()
+        mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        disk = shutil.disk_usage(str(settings.workspace))
+
+        # Top processes by CPU
+        top_procs = []
+        try:
+            for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+                info = proc.info
+                if info["cpu_percent"] and info["cpu_percent"] > 0.5:
+                    top_procs.append({
+                        "pid": info["pid"],
+                        "name": info["name"],
+                        "cpu": round(info["cpu_percent"], 1),
+                        "mem": round(info["memory_percent"] or 0, 1),
+                    })
+            top_procs = sorted(top_procs, key=lambda p: p["cpu"], reverse=True)[:5]
+        except Exception:
+            pass
+
+        return {
+            "cpu": {
+                "percent": cpu_pct,
+                "cores": psutil.cpu_count(logical=False) or 1,
+                "threads": psutil.cpu_count(logical=True) or 1,
+                "freq_mhz": round(cpu_freq.current, 0) if cpu_freq else 0,
+            },
+            "ram": {
+                "total_gb": round(mem.total / (1024 ** 3), 2),
+                "used_gb": round(mem.used / (1024 ** 3), 2),
+                "available_gb": round(mem.available / (1024 ** 3), 2),
+                "percent": mem.percent,
+            },
+            "swap": {
+                "total_gb": round(swap.total / (1024 ** 3), 2),
+                "used_gb": round(swap.used / (1024 ** 3), 2),
+                "percent": swap.percent,
+            },
+            "disk": {
+                "total_gb": round(disk.total / (1024 ** 3), 1),
+                "used_gb": round(disk.used / (1024 ** 3), 1),
+                "free_gb": round(disk.free / (1024 ** 3), 1),
+                "percent": round((disk.used / disk.total) * 100, 1),
+            },
+            "top_processes": top_procs,
+            "timestamp": time.time(),
+        }
+    except ImportError:
+        return {
+            "error": "psutil not installed. Run: pip install psutil",
+            "cpu": {"percent": 0, "cores": 0, "threads": 0, "freq_mhz": 0},
+            "ram": {"total_gb": 0, "used_gb": 0, "available_gb": 0, "percent": 0},
+            "swap": {"total_gb": 0, "used_gb": 0, "percent": 0},
+            "disk": {"total_gb": 0, "used_gb": 0, "free_gb": 0, "percent": 0},
+            "top_processes": [],
+            "timestamp": time.time(),
+        }
+    except Exception as e:
+        return {"error": str(e), "timestamp": time.time()}
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Timeline Stages
+# ---------------------------------------------------------------------------
+
+PIPELINE_STAGES = [
+    {"key": "content_gen", "label": "Content Gen", "icon": "📝", "color": "#8b5cf6"},
+    {"key": "quality_gate", "label": "Quality Gate", "icon": "🔍", "color": "#3b82f6"},
+    {"key": "tts", "label": "TTS Audio", "icon": "🔊", "color": "#06b6d4"},
+    {"key": "subtitles", "label": "Subtitles", "icon": "💬", "color": "#14b8a6"},
+    {"key": "media", "label": "Media/Stock", "icon": "🎨", "color": "#10b981"},
+    {"key": "combine", "label": "Combine", "icon": "🔗", "color": "#eab308"},
+    {"key": "validated", "label": "Validate", "icon": "✅", "color": "#f59e0b"},
+    {"key": "render", "label": "Render", "icon": "🎬", "color": "#f97316"},
+    {"key": "qa_post", "label": "Post-QA", "icon": "🏥", "color": "#ec4899"},
+    {"key": "publish", "label": "Publish", "icon": "🚀", "color": "#ef4444"},
+]
+
+
+def _get_pipeline_timeline(manifest: dict) -> list[dict]:
+    """Build timeline from manifest status and timings."""
+    status = manifest.get("status", "pending")
+    timings = manifest.get("timings", {})
+
+    # Determine which stages are complete based on status
+    status_order = [
+        "pending", "running",
+        "completed_content_gen", "completed_quality_gate",
+        "completed_tts", "completed_subtitles",
+        "completed_media", "completed_combine",
+        "completed_validated", "completed_render",
+        "completed_publish", "success",
+    ]
+
+    try:
+        current_idx = status_order.index(status)
+    except ValueError:
+        if status in ("success",):
+            current_idx = len(status_order) - 1
+        elif status in ("error", "manual_review"):
+            # Find the error stage
+            error_stage = manifest.get("error_stage", "")
+            try:
+                current_idx = status_order.index(f"completed_{error_stage}")
+            except ValueError:
+                current_idx = 0
+        else:
+            current_idx = 0
+
+    timeline = []
+    for i, stage in enumerate(PIPELINE_STAGES):
+        completed_key = f"completed_{stage['key']}"
+        try:
+            stage_idx = status_order.index(completed_key)
+        except ValueError:
+            stage_idx = i + 2  # rough mapping
+
+        if current_idx >= stage_idx:
+            state = "completed"
+        elif current_idx == stage_idx - 1:
+            state = "active" if status not in ("error", "manual_review", "success") else "error"
+        else:
+            state = "pending"
+
+        # Check if this is the error stage
+        if status == "error" and manifest.get("error_stage") == stage["key"]:
+            state = "error"
+
+        timeline.append({
+            **stage,
+            "state": state,
+            "elapsed": timings.get(stage["key"], 0),
+        })
+
+    return timeline
+
+
+# ---------------------------------------------------------------------------
+# Decision Audit Trail
+# ---------------------------------------------------------------------------
+
+def _get_decision_trail(manifest: dict) -> list[dict]:
+    """Build a decision audit trail from manifest data."""
+    decisions = []
+
+    # Content generation decision
+    if manifest.get("titulo"):
+        decisions.append({
+            "stage": "content_gen",
+            "icon": "📝",
+            "label": "Content Generated",
+            "detail": f"Title: {manifest.get('titulo', '')[:60]}",
+            "timestamp": manifest.get("timestamp", 0),
+            "model": manifest.get("model_version", ""),
+        })
+
+    # Quality gate
+    if manifest.get("quality_score", 0) > 0:
+        score = manifest.get("quality_score", 0)
+        decisions.append({
+            "stage": "quality_gate",
+            "icon": "🔍",
+            "label": f"Quality Gate: {'PASS' if score >= 7 else 'FAIL'}",
+            "detail": f"Score: {score}/10, Hook: {manifest.get('hook_score', 0)}/10",
+            "timestamp": manifest.get("timestamp", 0),
+        })
+
+    # TTS engine decision
+    if manifest.get("tts_engine_used"):
+        decisions.append({
+            "stage": "tts",
+            "icon": "🔊",
+            "label": f"TTS: {manifest.get('tts_engine_used')}",
+            "detail": f"Audio: {Path(manifest.get('audio_path', '')).name or 'N/A'}",
+            "timestamp": manifest.get("timestamp", 0),
+        })
+
+    # Media decisions
+    clip_count = len(manifest.get("clip_paths", []))
+    img_count = len(manifest.get("image_paths", []))
+    if clip_count or img_count:
+        decisions.append({
+            "stage": "media",
+            "icon": "🎨",
+            "label": f"Media: {clip_count} clips, {img_count} images",
+            "detail": "Stock video + generated assets",
+            "timestamp": manifest.get("timestamp", 0),
+        })
+
+    # Render
+    if manifest.get("video_path"):
+        decisions.append({
+            "stage": "render",
+            "icon": "🎬",
+            "label": "Video Rendered",
+            "detail": Path(manifest.get("video_path", "")).name or "N/A",
+            "timestamp": manifest.get("timestamp", 0),
+        })
+
+    # Healing attempts
+    for heal in manifest.get("healing_attempts", []):
+        decisions.append({
+            "stage": heal.get("stage", "unknown"),
+            "icon": "🔄",
+            "label": f"Self-Heal #{heal.get('attempt', '?')}: {'✅' if heal.get('success') else '❌'}",
+            "detail": heal.get("error_message", "")[:80],
+            "timestamp": manifest.get("timestamp", 0),
+        })
+
+    # QA issues
+    for issue in manifest.get("qa_issues", []):
+        decisions.append({
+            "stage": "qa_post",
+            "icon": "⚠️",
+            "label": "QA Issue",
+            "detail": str(issue)[:80],
+            "timestamp": manifest.get("timestamp", 0),
+        })
+
+    # Error
+    if manifest.get("error_message"):
+        decisions.append({
+            "stage": manifest.get("error_stage", "unknown"),
+            "icon": "❌",
+            "label": f"Error at {manifest.get('error_stage', 'unknown')}",
+            "detail": manifest.get("error_message", "")[:120],
+            "timestamp": manifest.get("timestamp", 0),
+        })
+
+    # Cost
+    if manifest.get("cost_actual_usd", 0) > 0:
+        decisions.append({
+            "stage": "governance",
+            "icon": "💰",
+            "label": f"Cost: ${manifest.get('cost_actual_usd', 0):.4f}",
+            "detail": json.dumps(manifest.get("cost_breakdown", {})),
+            "timestamp": manifest.get("timestamp", 0),
+        })
+
+    return decisions
+
+
+# ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
 
@@ -172,7 +590,6 @@ async def index():
 @app.get("/api/status")
 async def system_status():
     """System health check."""
-    import shutil
     ffmpeg_ok = settings.check_ffmpeg()
     disk_ok = settings.check_disk_space()
     usage = shutil.disk_usage(settings.workspace)
@@ -186,6 +603,12 @@ async def system_status():
         "workspace": str(settings.workspace),
         "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+@app.get("/api/resources")
+async def system_resources():
+    """Real-time system resource monitor (CPU, RAM, Swap, Disk)."""
+    return _get_system_resources()
 
 
 @app.get("/api/nichos")
@@ -363,7 +786,53 @@ async def job_detail(job_id: str):
         "video_available": manifest.get("reference_video_available", False),
         "analysis": manifest.get("reference_analysis", {}),
     }
+
+    # Add pipeline timeline
+    manifest["pipeline_timeline"] = _get_pipeline_timeline(manifest)
+
+    # Add decision audit trail
+    manifest["decision_trail"] = _get_decision_trail(manifest)
+
     return manifest
+
+
+@app.get("/api/jobs/{job_id}/analysis")
+async def job_analysis(job_id: str):
+    """Post-render analysis for a job: ffprobe + quality score + thumbnail."""
+    manifest = _load_manifest_by_job_id(job_id)
+    if not manifest:
+        return {"error": f"Job {job_id} not found"}
+
+    video_path = manifest.get("video_path", "")
+    probe_data = _run_ffprobe(video_path)
+    thumbnail = _generate_thumbnail(video_path)
+
+    return {
+        "job_id": job_id,
+        "video_path": video_path,
+        "video_exists": bool(video_path and Path(video_path).exists()),
+        "ffprobe": probe_data,
+        "thumbnail": thumbnail,
+        "pipeline_timeline": _get_pipeline_timeline(manifest),
+        "decision_trail": _get_decision_trail(manifest),
+        "timings": manifest.get("timings", {}),
+        "total_elapsed": sum(manifest.get("timings", {}).values()),
+    }
+
+
+@app.get("/api/jobs/{job_id}/manifest")
+async def job_manifest_raw(job_id: str):
+    """Return the raw manifest JSON for inspection."""
+    manifest = _load_manifest_by_job_id(job_id)
+    if not manifest:
+        return {"error": f"Job {job_id} not found"}
+    return _clean_manifest_for_save(manifest)
+
+
+@app.get("/api/pipeline-stages")
+async def pipeline_stages():
+    """Return the pipeline stage definitions for the timeline UI."""
+    return PIPELINE_STAGES
 
 
 @app.get("/api/review")
@@ -656,7 +1125,7 @@ async def resolve_checkpoint(job_id: str, payload: dict = Body(...)):
     """Resolve a pending checkpoint with a decision."""
     if job_id not in WEB_CHECKPOINTS:
         return {"error": "Checkpoint not found", "job_id": job_id}
-    
+
     WEB_RESOLUTIONS[job_id] = {
         "decision": payload.get("decision", "approve"),
         "notes": payload.get("notes", "")

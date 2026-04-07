@@ -23,6 +23,7 @@ apscheduler>=3.10,<4
 fastapi>=0.115,<1
 uvicorn>=0.34,<1
 sse-starlette>=2.2,<3
+psutil>=6.1,<7
 
 # Video/Audio (optional, for async file ops)
 aiofiles>=23.2,<24

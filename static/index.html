@@ -3,603 +3,195 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Factory V14 — Dashboard</title>
+    <title>Video Factory V16 — Dashboard</title>
     <meta name="description" content="Autonomous Viral Video Generator Dashboard">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        /* ===== DESIGN SYSTEM ===== */
         :root {
-            --bg-primary: #0a0b10;
-            --bg-secondary: #12131a;
-            --bg-card: #181920;
-            --bg-elevated: #1e1f28;
-            --bg-glass: rgba(24, 25, 32, 0.75);
-            --border: rgba(255,255,255,0.06);
-            --border-active: rgba(255,255,255,0.12);
-            --text-primary: #e8eaed;
-            --text-secondary: #8b8fa3;
-            --text-muted: #5a5e72;
-            --accent-purple: #8b5cf6;
-            --accent-cyan: #06b6d4;
-            --accent-magenta: #ec4899;
-            --accent-green: #10b981;
-            --accent-orange: #f59e0b;
-            --accent-red: #ef4444;
+            --bg-primary: #0a0b10; --bg-secondary: #12131a; --bg-card: #181920;
+            --bg-elevated: #1e1f28; --bg-glass: rgba(24,25,32,0.75);
+            --border: rgba(255,255,255,0.06); --border-active: rgba(255,255,255,0.12);
+            --text-primary: #e8eaed; --text-secondary: #8b8fa3; --text-muted: #5a5e72;
+            --accent-purple: #8b5cf6; --accent-cyan: #06b6d4; --accent-magenta: #ec4899;
+            --accent-green: #10b981; --accent-orange: #f59e0b; --accent-red: #ef4444;
             --accent-blue: #3b82f6;
             --gradient-hero: linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #06b6d4 100%);
-            --gradient-card: linear-gradient(145deg, rgba(139,92,246,0.08) 0%, rgba(236,72,153,0.04) 100%);
-            --shadow-lg: 0 20px 60px rgba(0,0,0,0.4);
-            --shadow-glow: 0 0 30px rgba(139,92,246,0.15);
-            --radius: 14px;
-            --radius-sm: 8px;
+            --shadow-lg: 0 20px 60px rgba(0,0,0,0.4); --shadow-glow: 0 0 30px rgba(139,92,246,0.15);
+            --radius: 14px; --radius-sm: 8px;
             --transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
         }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
-
-        /* ===== LAYOUT ===== */
-        .app {
-            display: grid;
-            grid-template-columns: 68px 1fr;
-            min-height: 100vh;
-        }
-
-        /* ===== SIDEBAR ===== */
-        .sidebar {
-            background: var(--bg-secondary);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 20px 0;
-            gap: 8px;
-            position: fixed;
-            width: 68px;
-            height: 100vh;
-            z-index: 100;
-        }
-
-        .sidebar-logo {
-            width: 40px;
-            height: 40px;
-            background: var(--gradient-hero);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            margin-bottom: 24px;
-            box-shadow: var(--shadow-glow);
-            cursor: pointer;
-            transition: var(--transition);
-        }
-        .sidebar-logo:hover { transform: scale(1.08); }
-
-        .nav-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: transparent;
-            color: var(--text-muted);
-            border-radius: 12px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            transition: var(--transition);
-            position: relative;
-        }
-        .nav-btn:hover { background: var(--bg-elevated); color: var(--text-primary); }
-        .nav-btn.active { background: rgba(139,92,246,0.15); color: var(--accent-purple); }
-        .nav-btn.active::before {
-            content: '';
-            position: absolute;
-            left: -12px;
-            width: 3px;
-            height: 20px;
-            background: var(--accent-purple);
-            border-radius: 0 3px 3px 0;
-        }
-
-        .sidebar-spacer { flex: 1; }
-
-        /* ===== MAIN CONTENT ===== */
-        .main {
-            margin-left: 68px;
-            padding: 24px 32px;
-            max-width: 1400px;
-        }
-
-        /* ===== HEADER ===== */
-        .header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 28px;
-        }
-
-        .header-title {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-        }
-
-        .header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            background: var(--gradient-hero);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .header-subtitle {
-            font-size: 13px;
-            color: var(--text-muted);
-            font-weight: 400;
-        }
-
-        .header-actions {
-            display: flex;
-            gap: 10px;
-        }
-
-        /* ===== BUTTONS ===== */
-        .btn {
-            padding: 10px 20px;
-            border: none;
-            border-radius: var(--radius-sm);
-            font-family: 'Inter', sans-serif;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: var(--transition);
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .btn-primary {
-            background: var(--accent-purple);
-            color: white;
-            box-shadow: 0 4px 16px rgba(139,92,246,0.3);
-        }
-        .btn-primary:hover { background: #7c3aed; transform: translateY(-1px); box-shadow: 0 6px 24px rgba(139,92,246,0.4); }
-
-        .btn-secondary {
-            background: var(--bg-elevated);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-        }
-        .btn-secondary:hover { border-color: var(--border-active); background: var(--bg-card); }
-
-        .btn-danger { background: rgba(239,68,68,0.15); color: var(--accent-red); }
-        .btn-danger:hover { background: rgba(239,68,68,0.25); }
-
-        .btn-sm { padding: 6px 14px; font-size: 12px; }
-
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
-
-        /* ===== STATUS BAR ===== */
-        .status-bar {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 28px;
-        }
-
-        .status-chip {
-            padding: 8px 16px;
-            border-radius: 100px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-            font-weight: 500;
-            color: var(--text-secondary);
-            transition: var(--transition);
-        }
-
-        .status-chip .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }
-
-        .dot-green { background: var(--accent-green); box-shadow: 0 0 8px rgba(16,185,129,0.5); }
-        .dot-red { background: var(--accent-red); box-shadow: 0 0 8px rgba(239,68,68,0.5); }
-        .dot-yellow { background: var(--accent-orange); box-shadow: 0 0 8px rgba(245,158,11,0.5); }
-
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-
-        /* ===== SECTION HEADERS ===== */
-        .section-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 16px;
-        }
-
-        .section-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--text-primary);
-        }
-
-        /* ===== NICHE CARDS ===== */
-        .nicho-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-            gap: 16px;
-            margin-bottom: 32px;
-        }
-
-        .nicho-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 20px;
-            position: relative;
-            overflow: hidden;
-            transition: var(--transition);
-            cursor: default;
-        }
-        .nicho-card:hover {
-            border-color: var(--border-active);
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-lg);
-        }
-
-        .nicho-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            border-radius: var(--radius) var(--radius) 0 0;
-        }
-
-        .nicho-card[data-nicho="finanzas"]::before { background: var(--accent-purple); }
-        .nicho-card[data-nicho="historia"]::before { background: var(--accent-red); }
-        .nicho-card[data-nicho="curiosidades"]::before { background: var(--accent-cyan); }
-        .nicho-card[data-nicho="salud"]::before { background: var(--accent-green); }
-        .nicho-card[data-nicho="recetas"]::before { background: var(--accent-orange); }
-
-        .nicho-name {
-            font-size: 15px;
-            font-weight: 600;
-            text-transform: capitalize;
-            margin-bottom: 4px;
-        }
-
-        .nicho-desc {
-            font-size: 11px;
-            color: var(--text-muted);
-            margin-bottom: 14px;
-            line-height: 1.4;
-        }
-
-        .nicho-stats {
-            display: flex;
-            gap: 16px;
-            margin-bottom: 14px;
-        }
-
-        .nicho-stat {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .nicho-stat-label {
-            font-size: 10px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .nicho-stat-value {
-            font-size: 18px;
-            font-weight: 700;
-            background: var(--gradient-hero);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .nicho-schedule {
-            font-size: 11px;
-            color: var(--text-muted);
-            margin-bottom: 14px;
-        }
-
-        .nicho-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .nicho-badge {
-            position: absolute;
-            top: 14px;
-            right: 14px;
-            padding: 3px 10px;
-            border-radius: 100px;
-            font-size: 10px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .badge-running {
-            background: rgba(139,92,246,0.2);
-            color: var(--accent-purple);
-            animation: pulse 1.5s infinite;
-        }
-
-        .badge-idle {
-            background: rgba(139,92,246,0.08);
-            color: var(--text-muted);
-        }
-
-        /* ===== JOBS TABLE ===== */
-        .jobs-section {
-            margin-bottom: 28px;
-        }
-
-        .jobs-table-wrap {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            overflow: hidden;
-        }
-
-        .jobs-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .jobs-table th {
-            text-align: left;
-            padding: 12px 16px;
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 1px solid var(--border);
-            background: var(--bg-elevated);
-        }
-
-        .jobs-table td {
-            padding: 12px 16px;
-            font-size: 13px;
-            border-bottom: 1px solid var(--border);
-            color: var(--text-secondary);
-        }
-
-        .jobs-table tr:last-child td { border-bottom: none; }
-        .jobs-table tr:hover td { background: rgba(139,92,246,0.03); }
-
-        .status-badge {
-            padding: 3px 10px;
-            border-radius: 100px;
-            font-size: 11px;
-            font-weight: 600;
-            display: inline-block;
-        }
-
-        .status-success { background: rgba(16,185,129,0.15); color: var(--accent-green); }
-        .status-error { background: rgba(239,68,68,0.15); color: var(--accent-red); }
-        .status-review { background: rgba(245,158,11,0.15); color: var(--accent-orange); }
-        .status-running { background: rgba(139,92,246,0.15); color: var(--accent-purple); }
-        .status-draft { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
-
-        .score-bar {
-            width: 60px;
-            height: 6px;
-            background: var(--bg-elevated);
-            border-radius: 3px;
-            overflow: hidden;
-            display: inline-block;
-            vertical-align: middle;
-            margin-left: 6px;
-        }
-
-        .score-bar-fill {
-            height: 100%;
-            border-radius: 3px;
-            transition: width 0.5s ease;
-        }
-
-        /* ===== LOG CONSOLE ===== */
-        .log-section {
-            margin-bottom: 28px;
-        }
-
-        .log-console {
-            background: #0d0e12;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            height: 280px;
-            overflow-y: auto;
-            padding: 14px;
-            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12px;
-            line-height: 1.7;
-        }
-
-        .log-line {
-            display: flex;
-            gap: 10px;
-            opacity: 0;
-            animation: fadeIn 0.2s ease forwards;
-        }
-
-        @keyframes fadeIn { to { opacity: 1; } }
-
-        .log-time { color: var(--text-muted); min-width: 65px; }
-        .log-level { min-width: 55px; font-weight: 600; }
-        .log-level-INFO { color: var(--accent-cyan); }
-        .log-level-WARNING { color: var(--accent-orange); }
-        .log-level-ERROR { color: var(--accent-red); }
-        .log-level-DEBUG { color: var(--text-muted); }
-        .log-level-SUCCESS { color: var(--accent-green); }
-        .log-msg { color: var(--text-secondary); word-break: break-word; }
-
-        /* ===== VIDEOS GRID ===== */
-        .videos-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 12px;
-        }
-
-        .video-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-sm);
-            padding: 14px;
-            transition: var(--transition);
-        }
-        .video-card:hover { border-color: var(--border-active); }
-
-        .video-name {
-            font-size: 12px;
-            font-weight: 500;
-            word-break: break-word;
-            margin-bottom: 6px;
-        }
-
-        .video-meta {
-            font-size: 11px;
-            color: var(--text-muted);
-            margin-bottom: 10px;
-        }
-
-        .video-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        /* ===== EMPTY STATE ===== */
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-muted);
-        }
-
-        .empty-state-icon { font-size: 40px; margin-bottom: 12px; }
-        .empty-state-text { font-size: 14px; }
-
-        /* ===== TOAST ===== */
-        .toast-container {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .toast {
-            padding: 12px 20px;
-            border-radius: var(--radius-sm);
-            font-size: 13px;
-            font-weight: 500;
-            animation: slideIn 0.3s ease, fadeOut 0.3s ease 3.5s forwards;
-            backdrop-filter: blur(20px);
-            border: 1px solid var(--border);
-        }
-
-        .toast-success { background: rgba(16,185,129,0.15); color: var(--accent-green); }
-        .toast-error { background: rgba(239,68,68,0.15); color: var(--accent-red); }
-        .toast-info { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
-
-        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: none; opacity: 1; } }
-        @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
-
-        /* ===== SCROLLBAR ===== */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-
-        /* ===== SECTIONS ===== */
-        .page { display: none; }
-        .page.active { display: block; }
-
-        /* ===== MODAL ===== */
-        .modal-overlay {
-            position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px);
-            z-index: 2000; display: none; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s;
-        }
-        .modal-overlay.active { display: flex; opacity: 1; }
-        .modal {
-            background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
-            width: 90%; max-width: 600px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); transform: translateY(20px); transition: transform 0.3s;
-        }
-        .modal-overlay.active .modal { transform: translateY(0); }
-        .modal-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--bg-elevated); }
-        .modal-title { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; color: var(--accent-purple); }
-        .modal-body { padding: 24px; overflow-y: auto; font-size: 13px; line-height: 1.6; }
-        .modal-content-box { background: #0d0e12; padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); font-family: monospace; white-space: pre-wrap; margin-bottom: 16px; max-height: 300px; overflow-y: auto;}
-        .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 12px; background: var(--bg-elevated); }
-        .edit-area { width: 100%; min-height: 80px; padding: 12px; background: #0d0e12; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-family: 'Inter', sans-serif; resize: vertical; display: none; margin-bottom: 16px;}
-        .edit-area:focus { outline: none; border-color: var(--accent-purple); }
-
-        /* ===== RESPONSIVE ===== */
-        @media (max-width: 768px) {
-            .app { grid-template-columns: 1fr; }
-            .sidebar { display: none; }
-            .main { margin-left: 0; padding: 16px; }
-            .nicho-grid { grid-template-columns: 1fr; }
-        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Inter',-apple-system,sans-serif; background:var(--bg-primary); color:var(--text-primary); min-height:100vh; overflow-x:hidden; }
+        .app { display:grid; grid-template-columns:68px 1fr; min-height:100vh; }
+        .sidebar { background:var(--bg-secondary); border-right:1px solid var(--border); display:flex; flex-direction:column; align-items:center; padding:20px 0; gap:8px; position:fixed; width:68px; height:100vh; z-index:100; }
+        .sidebar-logo { width:40px; height:40px; background:var(--gradient-hero); border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:20px; margin-bottom:24px; box-shadow:var(--shadow-glow); cursor:pointer; transition:var(--transition); }
+        .sidebar-logo:hover { transform:scale(1.08); }
+        .nav-btn { width:44px; height:44px; border:none; background:transparent; color:var(--text-muted); border-radius:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:20px; transition:var(--transition); position:relative; }
+        .nav-btn:hover { background:var(--bg-elevated); color:var(--text-primary); }
+        .nav-btn.active { background:rgba(139,92,246,0.15); color:var(--accent-purple); }
+        .nav-btn.active::before { content:''; position:absolute; left:-12px; width:3px; height:20px; background:var(--accent-purple); border-radius:0 3px 3px 0; }
+        .sidebar-spacer { flex:1; }
+        .main { margin-left:68px; padding:24px 32px; max-width:1400px; }
+        .header { display:flex; align-items:center; justify-content:space-between; margin-bottom:28px; }
+        .header-title { display:flex; align-items:center; gap:14px; }
+        .header h1 { font-size:24px; font-weight:700; background:var(--gradient-hero); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+        .header-subtitle { font-size:13px; color:var(--text-muted); font-weight:400; }
+        .header-actions { display:flex; gap:10px; }
+        .btn { padding:10px 20px; border:none; border-radius:var(--radius-sm); font-family:'Inter',sans-serif; font-size:13px; font-weight:600; cursor:pointer; transition:var(--transition); display:inline-flex; align-items:center; gap:6px; }
+        .btn-primary { background:var(--accent-purple); color:white; box-shadow:0 4px 16px rgba(139,92,246,0.3); }
+        .btn-primary:hover { background:#7c3aed; transform:translateY(-1px); }
+        .btn-secondary { background:var(--bg-elevated); color:var(--text-primary); border:1px solid var(--border); }
+        .btn-secondary:hover { border-color:var(--border-active); background:var(--bg-card); }
+        .btn-danger { background:rgba(239,68,68,0.15); color:var(--accent-red); }
+        .btn-sm { padding:6px 14px; font-size:12px; }
+        .btn:disabled { opacity:0.5; cursor:not-allowed; }
+        .status-bar { display:flex; gap:12px; margin-bottom:28px; flex-wrap:wrap; }
+        .status-chip { padding:8px 16px; border-radius:100px; background:var(--bg-card); border:1px solid var(--border); display:flex; align-items:center; gap:8px; font-size:12px; font-weight:500; color:var(--text-secondary); }
+        .status-chip .dot { width:8px; height:8px; border-radius:50%; animation:pulse 2s infinite; }
+        .dot-green { background:var(--accent-green); box-shadow:0 0 8px rgba(16,185,129,0.5); }
+        .dot-red { background:var(--accent-red); box-shadow:0 0 8px rgba(239,68,68,0.5); }
+        .dot-yellow { background:var(--accent-orange); box-shadow:0 0 8px rgba(245,158,11,0.5); }
+        @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
+        .section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+        .section-title { font-size:16px; font-weight:600; color:var(--text-primary); }
+        .nicho-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:16px; margin-bottom:32px; }
+        .nicho-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; position:relative; overflow:hidden; transition:var(--transition); }
+        .nicho-card:hover { border-color:var(--border-active); transform:translateY(-2px); box-shadow:var(--shadow-lg); }
+        .nicho-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
+        .nicho-card[data-nicho="finanzas"]::before { background:var(--accent-purple); }
+        .nicho-card[data-nicho="historia"]::before { background:var(--accent-red); }
+        .nicho-card[data-nicho="curiosidades"]::before { background:var(--accent-cyan); }
+        .nicho-card[data-nicho="salud"]::before { background:var(--accent-green); }
+        .nicho-card[data-nicho="recetas"]::before { background:var(--accent-orange); }
+        .nicho-name { font-size:15px; font-weight:600; text-transform:capitalize; margin-bottom:4px; }
+        .nicho-desc { font-size:11px; color:var(--text-muted); margin-bottom:14px; }
+        .nicho-stats { display:flex; gap:16px; margin-bottom:14px; }
+        .nicho-stat { display:flex; flex-direction:column; gap:2px; }
+        .nicho-stat-label { font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; }
+        .nicho-stat-value { font-size:18px; font-weight:700; background:var(--gradient-hero); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+        .nicho-schedule { font-size:11px; color:var(--text-muted); margin-bottom:14px; }
+        .nicho-actions { display:flex; gap:8px; }
+        .nicho-badge { position:absolute; top:14px; right:14px; padding:3px 10px; border-radius:100px; font-size:10px; font-weight:600; text-transform:uppercase; }
+        .badge-running { background:rgba(139,92,246,0.2); color:var(--accent-purple); animation:pulse 1.5s infinite; }
+        .badge-idle { background:rgba(139,92,246,0.08); color:var(--text-muted); }
+        .jobs-section { margin-bottom:28px; }
+        .jobs-table-wrap { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+        .jobs-table { width:100%; border-collapse:collapse; }
+        .jobs-table th { text-align:left; padding:12px 16px; font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid var(--border); background:var(--bg-elevated); }
+        .jobs-table td { padding:12px 16px; font-size:13px; border-bottom:1px solid var(--border); color:var(--text-secondary); }
+        .jobs-table tr:last-child td { border-bottom:none; }
+        .jobs-table tr:hover td { background:rgba(139,92,246,0.03); }
+        .jobs-table tr { cursor:pointer; }
+        .status-badge { padding:3px 10px; border-radius:100px; font-size:11px; font-weight:600; display:inline-block; }
+        .status-success { background:rgba(16,185,129,0.15); color:var(--accent-green); }
+        .status-error { background:rgba(239,68,68,0.15); color:var(--accent-red); }
+        .status-review { background:rgba(245,158,11,0.15); color:var(--accent-orange); }
+        .status-running { background:rgba(139,92,246,0.15); color:var(--accent-purple); }
+        .status-draft { background:rgba(59,130,246,0.15); color:var(--accent-blue); }
+        .score-bar { width:60px; height:6px; background:var(--bg-elevated); border-radius:3px; overflow:hidden; display:inline-block; vertical-align:middle; margin-left:6px; }
+        .score-bar-fill { height:100%; border-radius:3px; transition:width 0.5s ease; }
+        .log-section { margin-bottom:28px; }
+        .log-console { background:#0d0e12; border:1px solid var(--border); border-radius:var(--radius); height:280px; overflow-y:auto; padding:14px; font-family:'JetBrains Mono','Fira Code','Consolas',monospace; font-size:12px; line-height:1.7; }
+        .log-line { display:flex; gap:10px; opacity:0; animation:fadeIn 0.2s ease forwards; }
+        @keyframes fadeIn { to { opacity:1; } }
+        .log-time { color:var(--text-muted); min-width:65px; }
+        .log-level { min-width:55px; font-weight:600; }
+        .log-level-INFO { color:var(--accent-cyan); }
+        .log-level-WARNING { color:var(--accent-orange); }
+        .log-level-ERROR { color:var(--accent-red); }
+        .log-level-DEBUG { color:var(--text-muted); }
+        .log-level-SUCCESS { color:var(--accent-green); }
+        .log-msg { color:var(--text-secondary); word-break:break-word; }
+        .videos-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
+        .video-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-sm); padding:14px; transition:var(--transition); }
+        .video-card:hover { border-color:var(--border-active); }
+        .video-name { font-size:12px; font-weight:500; word-break:break-word; margin-bottom:6px; }
+        .video-meta { font-size:11px; color:var(--text-muted); margin-bottom:10px; }
+        .empty-state { text-align:center; padding:40px; color:var(--text-muted); }
+        .empty-state-icon { font-size:40px; margin-bottom:12px; }
+        .empty-state-text { font-size:14px; }
+        .toast-container { position:fixed; top:20px; right:20px; z-index:1000; display:flex; flex-direction:column; gap:8px; }
+        .toast { padding:12px 20px; border-radius:var(--radius-sm); font-size:13px; font-weight:500; animation:slideIn 0.3s ease,fadeOut 0.3s ease 3.5s forwards; backdrop-filter:blur(20px); border:1px solid var(--border); }
+        .toast-success { background:rgba(16,185,129,0.15); color:var(--accent-green); }
+        .toast-error { background:rgba(239,68,68,0.15); color:var(--accent-red); }
+        .toast-info { background:rgba(59,130,246,0.15); color:var(--accent-blue); }
+        @keyframes slideIn { from{transform:translateX(100px);opacity:0;} to{transform:none;opacity:1;} }
+        @keyframes fadeOut { to{opacity:0;transform:translateY(-10px);} }
+        ::-webkit-scrollbar { width:6px; } ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:var(--bg-elevated); border-radius:3px; }
+        .page { display:none; } .page.active { display:block; }
+        /* Resource Monitor */
+        .resource-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:28px; }
+        .resource-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:18px; text-align:center; }
+        .resource-label { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; }
+        .resource-value { font-size:28px; font-weight:800; margin-bottom:4px; }
+        .resource-sub { font-size:11px; color:var(--text-muted); }
+        .resource-bar { height:6px; background:var(--bg-elevated); border-radius:3px; overflow:hidden; margin-top:8px; }
+        .resource-bar-fill { height:100%; border-radius:3px; transition:width 1s ease; }
+        /* Pipeline Timeline */
+        .timeline-wrap { display:flex; align-items:center; gap:0; margin:20px 0; overflow-x:auto; padding:10px 0; }
+        .tl-stage { display:flex; flex-direction:column; align-items:center; min-width:90px; position:relative; }
+        .tl-dot { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; border:3px solid var(--border); transition:var(--transition); position:relative; z-index:2; }
+        .tl-dot.completed { border-color:var(--accent-green); background:rgba(16,185,129,0.15); }
+        .tl-dot.active { border-color:var(--accent-purple); background:rgba(139,92,246,0.2); animation:pulse 1.5s infinite; }
+        .tl-dot.error { border-color:var(--accent-red); background:rgba(239,68,68,0.15); }
+        .tl-dot.pending { border-color:var(--border); background:var(--bg-elevated); opacity:0.5; }
+        .tl-label { font-size:10px; color:var(--text-muted); margin-top:6px; text-align:center; }
+        .tl-time { font-size:9px; color:var(--text-muted); }
+        .tl-connector { height:2px; flex:1; min-width:12px; margin-top:-18px; }
+        .tl-connector.completed { background:var(--accent-green); }
+        .tl-connector.pending { background:var(--border); }
+        /* Decision Trail */
+        .trail-list { list-style:none; padding:0; }
+        .trail-item { display:flex; gap:12px; padding:10px 0; border-bottom:1px solid var(--border); font-size:13px; align-items:flex-start; }
+        .trail-icon { font-size:18px; min-width:28px; text-align:center; }
+        .trail-label { font-weight:600; color:var(--text-primary); }
+        .trail-detail { color:var(--text-muted); font-size:12px; margin-top:2px; word-break:break-all; }
+        /* Detail Panel */
+        .detail-panel { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:24px; margin-bottom:20px; }
+        .detail-panel h3 { font-size:15px; font-weight:700; margin-bottom:16px; display:flex; align-items:center; gap:8px; }
+        .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        .detail-row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); font-size:12px; }
+        .detail-key { color:var(--text-muted); } .detail-val { color:var(--text-primary); font-weight:500; }
+        .thumb-img { max-width:320px; border-radius:var(--radius-sm); border:1px solid var(--border); }
+        .manifest-box { background:#0d0e12; padding:16px; border-radius:var(--radius-sm); border:1px solid var(--border); font-family:monospace; font-size:11px; white-space:pre-wrap; max-height:400px; overflow-y:auto; color:var(--text-secondary); }
+        /* Modal */
+        .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(5px); z-index:2000; display:none; align-items:center; justify-content:center; opacity:0; transition:opacity 0.3s; }
+        .modal-overlay.active { display:flex; opacity:1; }
+        .modal { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); width:90%; max-width:600px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 25px 50px -12px rgba(0,0,0,0.5); }
+        .modal-header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg-elevated); }
+        .modal-title { font-weight:700; font-size:16px; display:flex; align-items:center; gap:8px; color:var(--accent-purple); }
+        .modal-body { padding:24px; overflow-y:auto; font-size:13px; line-height:1.6; }
+        .modal-content-box { background:#0d0e12; padding:16px; border-radius:var(--radius-sm); border:1px solid var(--border); font-family:monospace; white-space:pre-wrap; margin-bottom:16px; max-height:300px; overflow-y:auto; }
+        .modal-footer { padding:16px 24px; border-top:1px solid var(--border); display:flex; gap:12px; background:var(--bg-elevated); }
+        .edit-area { width:100%; min-height:80px; padding:12px; background:#0d0e12; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text-primary); font-family:'Inter',sans-serif; resize:vertical; display:none; margin-bottom:16px; }
+        .edit-area:focus { outline:none; border-color:var(--accent-purple); }
+        .back-btn { cursor:pointer; background:none; border:none; color:var(--accent-purple); font-size:14px; font-weight:600; padding:4px 12px; border-radius:var(--radius-sm); transition:var(--transition); margin-bottom:16px; }
+        .back-btn:hover { background:rgba(139,92,246,0.1); }
+        @media (max-width:768px) { .app{grid-template-columns:1fr;} .sidebar{display:none;} .main{margin-left:0;padding:16px;} .nicho-grid,.resource-grid{grid-template-columns:1fr;} .detail-grid{grid-template-columns:1fr;} }
     </style>
 </head>
 <body>
     <div class="app">
-        <!-- SIDEBAR -->
         <nav class="sidebar">
-            <div class="sidebar-logo" title="Video Factory V14">🎬</div>
+            <div class="sidebar-logo" title="Video Factory V16">🎬</div>
             <button class="nav-btn active" data-page="dashboard" title="Dashboard">📊</button>
             <button class="nav-btn" data-page="jobs" title="Job History">📋</button>
+            <button class="nav-btn" data-page="monitor" title="Resources">🖥️</button>
             <button class="nav-btn" data-page="videos" title="Videos">🎥</button>
             <button class="nav-btn" data-page="logs" title="Logs">📝</button>
             <div class="sidebar-spacer"></div>
             <button class="nav-btn" id="btn-refresh" title="Refresh">🔄</button>
         </nav>
-
-        <!-- MAIN CONTENT -->
         <div class="main">
-            <!-- HEADER -->
             <header class="header">
-                <div class="header-title">
-                    <div>
-                        <h1>Video Factory V14</h1>
-                        <span class="header-subtitle">Autonomous Viral Video Generator</span>
-                    </div>
-                </div>
+                <div class="header-title"><div><h1>Video Factory V16</h1><span class="header-subtitle">Autonomous Viral Video Generator — Free Tools Only</span></div></div>
                 <div class="header-actions">
                     <button class="btn btn-secondary btn-sm" onclick="runAll()">🚀 Run All</button>
                     <button class="btn btn-primary btn-sm" onclick="refreshAll()">↻ Refresh</button>
                 </div>
             </header>
-
-            <!-- STATUS BAR -->
             <div class="status-bar" id="status-bar">
                 <div class="status-chip"><span class="dot" id="dot-ffmpeg"></span> FFmpeg: <span id="status-ffmpeg">checking...</span></div>
                 <div class="status-chip"><span class="dot" id="dot-disk"></span> Disk: <span id="status-disk">...</span></div>
@@ -609,70 +201,41 @@
 
             <!-- PAGE: DASHBOARD -->
             <div class="page active" id="page-dashboard">
-                <div class="section-header">
-                    <span class="section-title">⚡ Nichos</span>
-                </div>
+                <div class="section-header"><span class="section-title">⚡ Nichos</span></div>
                 <div class="nicho-grid" id="nicho-grid"></div>
-
-                <div class="section-header">
-                    <span class="section-title">📋 Recent Jobs</span>
-                    <button class="btn btn-secondary btn-sm" data-page="jobs">View All →</button>
-                </div>
-                <div class="jobs-table-wrap">
-                    <table class="jobs-table" id="jobs-table-mini">
-                        <thead>
-                            <tr>
-                                <th>Nicho</th>
-                                <th>Titulo</th>
-                                <th>Status</th>
-                                <th>Quality</th>
-                                <th>Time</th>
-                            </tr>
-                        </thead>
-                        <tbody id="jobs-body-mini"></tbody>
-                    </table>
-                </div>
+                <div class="section-header"><span class="section-title">📋 Recent Jobs</span><button class="btn btn-secondary btn-sm" data-page="jobs">View All →</button></div>
+                <div class="jobs-table-wrap"><table class="jobs-table" id="jobs-table-mini"><thead><tr><th>Nicho</th><th>Titulo</th><th>Status</th><th>Quality</th><th>Time</th></tr></thead><tbody id="jobs-body-mini"></tbody></table></div>
             </div>
 
             <!-- PAGE: JOBS -->
             <div class="page" id="page-jobs">
-                <div class="section-header">
-                    <span class="section-title">📋 All Jobs</span>
+                <div id="jobs-list-view">
+                    <div class="section-header"><span class="section-title">📋 All Jobs</span></div>
+                    <div class="jobs-table-wrap"><table class="jobs-table"><thead><tr><th>Job ID</th><th>Nicho</th><th>Titulo</th><th>Status</th><th>Quality</th><th>Duration</th><th>Cost</th><th>Actions</th></tr></thead><tbody id="jobs-body-full"></tbody></table></div>
                 </div>
-                <div class="jobs-table-wrap">
-                    <table class="jobs-table">
-                        <thead>
-                            <tr>
-                                <th>Job ID</th>
-                                <th>Nicho</th>
-                                <th>Titulo</th>
-                                <th>Status</th>
-                                <th>Quality</th>
-                                <th>Viral</th>
-                                <th>Duration</th>
-                                <th>Healing</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="jobs-body-full"></tbody>
-                    </table>
+                <div id="job-detail-view" style="display:none">
+                    <button class="back-btn" onclick="showJobsList()">← Back to Jobs</button>
+                    <div id="job-detail-content"></div>
                 </div>
+            </div>
+
+            <!-- PAGE: MONITOR -->
+            <div class="page" id="page-monitor">
+                <div class="section-header"><span class="section-title">🖥️ System Resources (Real-time)</span></div>
+                <div class="resource-grid" id="resource-grid"></div>
+                <div class="section-header"><span class="section-title">⚙️ Top Processes</span></div>
+                <div class="jobs-table-wrap"><table class="jobs-table"><thead><tr><th>PID</th><th>Name</th><th>CPU %</th><th>RAM %</th></tr></thead><tbody id="procs-body"></tbody></table></div>
             </div>
 
             <!-- PAGE: VIDEOS -->
             <div class="page" id="page-videos">
-                <div class="section-header">
-                    <span class="section-title">🎥 Generated Videos</span>
-                </div>
+                <div class="section-header"><span class="section-title">🎥 Generated Videos</span></div>
                 <div class="videos-grid" id="videos-grid"></div>
             </div>
 
             <!-- PAGE: LOGS -->
             <div class="page" id="page-logs">
-                <div class="section-header">
-                    <span class="section-title">📝 Real-time Logs</span>
-                    <button class="btn btn-secondary btn-sm" onclick="clearLogs()">Clear</button>
-                </div>
+                <div class="section-header"><span class="section-title">📝 Real-time Logs</span><button class="btn btn-secondary btn-sm" onclick="clearLogs()">Clear</button></div>
                 <div class="log-console" id="log-console"></div>
             </div>
         </div>
@@ -681,399 +244,195 @@
     <!-- COPILOT MODAL -->
     <div id="copilot-modal" class="modal-overlay">
         <div class="modal">
-            <div class="modal-header">
-                <div class="modal-title">⏸️ Pipeline Checkpoint: <span id="cp-stage">Stage</span></div>
-            </div>
+            <div class="modal-header"><div class="modal-title">⏸️ Checkpoint: <span id="cp-stage">Stage</span></div></div>
             <div class="modal-body">
-                <div style="margin-bottom: 12px; display: flex; justify-content: space-between;">
-                    <div style="color: var(--text-muted);">ID: <span id="cp-job-id" style="color:var(--text-primary);font-weight:600;"></span></div>
-                    <div style="color: var(--text-muted); font-size: 11px;" id="cp-metadata"></div>
-                </div>
+                <div style="margin-bottom:12px;display:flex;justify-content:space-between;"><div style="color:var(--text-muted)">ID: <span id="cp-job-id" style="color:var(--text-primary);font-weight:600"></span></div><div style="color:var(--text-muted);font-size:11px" id="cp-metadata"></div></div>
                 <div class="modal-content-box" id="cp-content"></div>
-                <textarea id="cp-edit-notes" class="edit-area" placeholder="Escribe instrucciones de cambios para que la IA regenere esto..."></textarea>
+                <textarea id="cp-edit-notes" class="edit-area" placeholder="Instrucciones de cambios..."></textarea>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" onclick="submitCheckpoint('approve')" style="flex:1; justify-content:center;">✅ Aprobar</button>
-                <button class="btn btn-secondary" onclick="toggleEditMode()" style="flex:1; justify-content:center; color: var(--accent-orange);">✏️ Editar</button>
-                <button class="btn btn-secondary" onclick="submitCheckpoint('reject')" style="background: rgba(239,68,68,0.1); border-color: transparent; color: var(--accent-red); justify-content:center;">❌ Rechazar</button>
-                <button class="btn btn-primary" id="btn-submit-edit" onclick="submitCheckpoint('edit')" style="display:none; flex:2; justify-content:center;">Enviar Instrucciones 🚀</button>
+                <button class="btn btn-primary" onclick="submitCheckpoint('approve')" style="flex:1;justify-content:center">✅ Aprobar</button>
+                <button class="btn btn-secondary" onclick="toggleEditMode()" style="flex:1;justify-content:center;color:var(--accent-orange)">✏️ Editar</button>
+                <button class="btn btn-secondary" onclick="submitCheckpoint('reject')" style="background:rgba(239,68,68,0.1);border-color:transparent;color:var(--accent-red);justify-content:center">❌ Rechazar</button>
+                <button class="btn btn-primary" id="btn-submit-edit" onclick="submitCheckpoint('edit')" style="display:none;flex:2;justify-content:center">Enviar 🚀</button>
             </div>
         </div>
     </div>
-
     <div class="toast-container" id="toast-container"></div>
 
-    <script>
-        // ===== STATE =====
-        const API = '';
-        let logSource = null;
+<script>
+const API='';
+let logSource=null;
 
-        // ===== NAVIGATION =====
-        document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                document.getElementById('page-' + btn.dataset.page).classList.add('active');
-            });
+// NAV
+document.querySelectorAll('.nav-btn[data-page]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+        document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+        document.getElementById('page-'+btn.dataset.page).classList.add('active');
+        if(btn.dataset.page==='monitor') fetchResources();
+    });
+});
+document.getElementById('btn-refresh').addEventListener('click',refreshAll);
+
+// STATUS
+async function fetchStatus(){
+    try{
+        const r=await fetch(API+'/api/status'), d=await r.json();
+        document.getElementById('dot-ffmpeg').className='dot '+(d.ffmpeg?'dot-green':'dot-red');
+        document.getElementById('status-ffmpeg').textContent=d.ffmpeg?'✅ OK':'❌ Missing';
+        document.getElementById('dot-disk').className='dot '+(d.disk_ok?'dot-green':'dot-red');
+        document.getElementById('status-disk').textContent=d.disk_free_gb+' GB free';
+        document.getElementById('dot-keys').className='dot '+(d.missing_keys.length===0?'dot-green':'dot-yellow');
+        document.getElementById('status-keys').textContent=d.missing_keys.length===0?'✅ All set':d.missing_keys.length+' missing';
+        document.getElementById('status-time').textContent=d.server_time;
+    }catch(e){console.error(e);}
+}
+
+// NICHOS
+async function fetchNichos(){
+    try{
+        const r=await fetch(API+'/api/nichos'),nichos=await r.json(),grid=document.getElementById('nicho-grid');
+        grid.innerHTML='';
+        const icons={finanzas:'💰',historia:'📜',curiosidades:'🧠',salud:'🏥',recetas:'🍳'};
+        nichos.forEach(n=>{
+            const c=document.createElement('div');c.className='nicho-card';c.dataset.nicho=n.slug;
+            c.innerHTML=`<span class="nicho-badge ${n.is_running?'badge-running':'badge-idle'}">${n.is_running?'▶ Running':'● Idle'}</span>
+                <div class="nicho-name">${icons[n.slug]||'📁'} ${n.slug}</div><div class="nicho-desc">${n.nombre}</div>
+                <div class="nicho-stats"><div class="nicho-stat"><span class="nicho-stat-label">Clips</span><span class="nicho-stat-value">${n.num_clips}</span></div><div class="nicho-stat"><span class="nicho-stat-label">Voice</span><span class="nicho-stat-value" style="font-size:13px">${n.voz}</span></div></div>
+                <div class="nicho-schedule">⏰ ${n.horas.map(h=>h.toString().padStart(2,'0')+':00').join(', ')}</div>
+                <div class="nicho-actions"><button class="btn btn-primary btn-sm" onclick="runNiche('${n.slug}')" ${n.is_running?'disabled':''}>▶ Run</button><button class="btn btn-secondary btn-sm" onclick="runNiche('${n.slug}',true)">🏜️ Dry</button></div>`;
+            grid.appendChild(c);
         });
+    }catch(e){console.error(e);}
+}
 
-        document.getElementById('btn-refresh').addEventListener('click', refreshAll);
+// JOBS
+async function fetchJobs(){
+    try{
+        const r=await fetch(API+'/api/jobs'),jobs=await r.json();
+        const mini=document.getElementById('jobs-body-mini');mini.innerHTML='';
+        jobs.slice(0,5).forEach(j=>{mini.innerHTML+=`<tr onclick="showJobDetail('${j.job_id}')"><td style="text-transform:capitalize;font-weight:500">${j.nicho}</td><td>${j.titulo||'—'}</td><td>${statusBadge(j.status)}</td><td>${scoreCell(j.quality_score)}</td><td style="font-size:11px">${formatTime(j.timestamp)}</td></tr>`;});
+        if(!jobs.length) mini.innerHTML='<tr><td colspan="5" class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-text">No jobs yet.</div></td></tr>';
+        const full=document.getElementById('jobs-body-full');full.innerHTML='';
+        jobs.forEach(j=>{full.innerHTML+=`<tr onclick="showJobDetail('${j.job_id}')"><td style="font-size:11px;font-family:monospace">${(j.job_id||'').substring(0,25)}</td><td style="text-transform:capitalize">${j.nicho}</td><td>${j.titulo||'—'}</td><td>${statusBadge(j.status)}</td><td>${scoreCell(j.quality_score)}</td><td>${j.duration?j.duration.toFixed(1)+'s':'—'}</td><td>${j.cost_actual_usd?'$'+j.cost_actual_usd.toFixed(4):'$0'}</td><td>${j.status&&!['success','error'].includes(j.status)?`<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();resumeJob('${j.job_id}')">Resume</button>`:''}</td></tr>`;});
+    }catch(e){console.error(e);}
+}
 
-        // ===== API CALLS =====
-        async function fetchStatus() {
-            try {
-                const res = await fetch(API + '/api/status');
-                const data = await res.json();
-
-                const ffmpeg = document.getElementById('dot-ffmpeg');
-                const disk = document.getElementById('dot-disk');
-                const keys = document.getElementById('dot-keys');
-
-                ffmpeg.className = 'dot ' + (data.ffmpeg ? 'dot-green' : 'dot-red');
-                document.getElementById('status-ffmpeg').textContent = data.ffmpeg ? '✅ OK' : '❌ Missing';
-
-                disk.className = 'dot ' + (data.disk_ok ? 'dot-green' : 'dot-red');
-                document.getElementById('status-disk').textContent = data.disk_free_gb + ' GB free';
-
-                keys.className = 'dot ' + (data.missing_keys.length === 0 ? 'dot-green' : 'dot-yellow');
-                document.getElementById('status-keys').textContent = data.missing_keys.length === 0 ? '✅ All set' : data.missing_keys.length + ' missing';
-
-                document.getElementById('status-time').textContent = data.server_time;
-            } catch (e) {
-                console.error('Status fetch failed:', e);
-            }
+// JOB DETAIL
+function showJobsList(){document.getElementById('jobs-list-view').style.display='block';document.getElementById('job-detail-view').style.display='none';}
+async function showJobDetail(jobId){
+    // Navigate to jobs page
+    document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelector('[data-page="jobs"]').classList.add('active');
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+    document.getElementById('page-jobs').classList.add('active');
+    document.getElementById('jobs-list-view').style.display='none';
+    document.getElementById('job-detail-view').style.display='block';
+    const cont=document.getElementById('job-detail-content');
+    cont.innerHTML='<div class="empty-state">Loading...</div>';
+    try{
+        const [detR,anaR,manR]=await Promise.all([fetch(API+'/api/jobs/'+jobId),fetch(API+'/api/jobs/'+jobId+'/analysis'),fetch(API+'/api/jobs/'+jobId+'/manifest')]);
+        const det=await detR.json(),ana=await anaR.json(),man=await manR.json();
+        let html='';
+        // Timeline
+        const tl=det.pipeline_timeline||[];
+        html+=`<div class="detail-panel"><h3>🔄 Pipeline Timeline</h3><div class="timeline-wrap">`;
+        tl.forEach((s,i)=>{
+            if(i>0) html+=`<div class="tl-connector ${s.state==='completed'||tl[i-1].state==='completed'?'completed':'pending'}"></div>`;
+            html+=`<div class="tl-stage"><div class="tl-dot ${s.state}" title="${s.label}: ${s.state}">${s.icon}</div><div class="tl-label">${s.label}</div>${s.elapsed?`<div class="tl-time">${s.elapsed.toFixed(1)}s</div>`:''}</div>`;
+        });
+        html+=`</div></div>`;
+        // Job Info
+        html+=`<div class="detail-grid"><div class="detail-panel"><h3>📋 Job Details</h3>`;
+        const info={ID:det.job_id,Nicho:det.nicho_slug,Status:det.status,Title:det.titulo,Execution:det.execution_mode,'Quality Score':det.quality_score,'Viral Score':det.viral_score,Duration:det.duration_seconds?det.duration_seconds.toFixed(1)+'s':'—',Cost:'$'+(det.cost_actual_usd||0).toFixed(4),TTS:det.tts_engine_used||'—','Error Stage':det.error_stage||'—','Error Msg':(det.error_message||'—').substring(0,80)};
+        for(const[k,v]of Object.entries(info)) html+=`<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`;
+        html+=`</div>`;
+        // Post-Render Analysis
+        html+=`<div class="detail-panel"><h3>🔬 Post-Render Analysis</h3>`;
+        if(ana.ffprobe){
+            const p=ana.ffprobe, qs=p.quality_score||{};
+            html+=`<div class="detail-row"><span class="detail-key">Resolution</span><span class="detail-val">${p.resolution}</span></div>`;
+            html+=`<div class="detail-row"><span class="detail-key">Codec</span><span class="detail-val">${p.video_codec} / ${p.audio_codec}</span></div>`;
+            html+=`<div class="detail-row"><span class="detail-key">FPS</span><span class="detail-val">${p.fps}</span></div>`;
+            html+=`<div class="detail-row"><span class="detail-key">Bitrate</span><span class="detail-val">${p.bitrate_kbps} kbps</span></div>`;
+            html+=`<div class="detail-row"><span class="detail-key">Size</span><span class="detail-val">${p.size_mb} MB</span></div>`;
+            html+=`<div class="detail-row"><span class="detail-key">Duration</span><span class="detail-val">${p.duration}s</span></div>`;
+            html+=`<div class="detail-row"><span class="detail-key">Quality Overall</span><span class="detail-val" style="color:${qs.overall>=8?'var(--accent-green)':qs.overall>=6?'var(--accent-orange)':'var(--accent-red)'}">${qs.overall||'—'}/10</span></div>`;
+        } else {
+            html+=`<div style="color:var(--text-muted);font-size:12px">No video file found for analysis</div>`;
         }
-
-        async function fetchNichos() {
-            try {
-                const res = await fetch(API + '/api/nichos');
-                const nichos = await res.json();
-                const grid = document.getElementById('nicho-grid');
-                grid.innerHTML = '';
-
-                const colors = {
-                    finanzas: '#8b5cf6', historia: '#ef4444',
-                    curiosidades: '#06b6d4', salud: '#10b981', recetas: '#f59e0b'
-                };
-                const icons = {
-                    finanzas: '💰', historia: '📜',
-                    curiosidades: '🧠', salud: '🏥', recetas: '🍳'
-                };
-
-                nichos.forEach(n => {
-                    const card = document.createElement('div');
-                    card.className = 'nicho-card';
-                    card.dataset.nicho = n.slug;
-                    card.innerHTML = `
-                        <span class="nicho-badge ${n.is_running ? 'badge-running' : 'badge-idle'}">
-                            ${n.is_running ? '▶ Running' : '● Idle'}
-                        </span>
-                        <div class="nicho-name">${icons[n.slug] || '📁'} ${n.slug}</div>
-                        <div class="nicho-desc">${n.nombre}</div>
-                        <div class="nicho-stats">
-                            <div class="nicho-stat">
-                                <span class="nicho-stat-label">Clips</span>
-                                <span class="nicho-stat-value">${n.num_clips}</span>
-                            </div>
-                            <div class="nicho-stat">
-                                <span class="nicho-stat-label">Voice</span>
-                                <span class="nicho-stat-value" style="font-size:13px">${n.voz}</span>
-                            </div>
-                        </div>
-                        <div class="nicho-schedule">⏰ Schedule: ${n.horas.map(h => h.toString().padStart(2,'0') + ':00').join(', ')}</div>
-                        <div class="nicho-actions">
-                            <button class="btn btn-primary btn-sm" onclick="runNiche('${n.slug}')" ${n.is_running ? 'disabled' : ''}>
-                                ▶ Run
-                            </button>
-                            <button class="btn btn-secondary btn-sm" onclick="runNiche('${n.slug}', true)">
-                                🏜️ Dry Run
-                            </button>
-                        </div>
-                    `;
-                    grid.appendChild(card);
-                });
-            } catch (e) {
-                console.error('Nichos fetch failed:', e);
-            }
+        if(ana.thumbnail) html+=`<div style="margin-top:12px"><img src="${ana.thumbnail}" class="thumb-img" alt="Thumbnail"></div>`;
+        html+=`<div class="detail-row" style="margin-top:8px"><span class="detail-key">Total Pipeline Time</span><span class="detail-val">${(ana.total_elapsed||0).toFixed(1)}s</span></div></div></div>`;
+        // Decision Audit Trail
+        const trail=det.decision_trail||[];
+        if(trail.length){
+            html+=`<div class="detail-panel"><h3>📜 Decision Audit Trail</h3><ul class="trail-list">`;
+            trail.forEach(d=>{html+=`<li class="trail-item"><span class="trail-icon">${d.icon}</span><div><div class="trail-label">${d.label}</div><div class="trail-detail">${d.detail||''}</div></div></li>`;});
+            html+=`</ul></div>`;
         }
+        // Raw Manifest
+        html+=`<div class="detail-panel"><h3>🗂️ Raw Manifest</h3><div class="manifest-box">${escapeHtml(JSON.stringify(man,null,2))}</div></div>`;
+        cont.innerHTML=html;
+    }catch(e){cont.innerHTML=`<div class="empty-state">Error loading: ${e.message}</div>`;}
+}
 
-        async function fetchJobs() {
-            try {
-                const res = await fetch(API + '/api/jobs');
-                const jobs = await res.json();
+// RESOURCES
+async function fetchResources(){
+    try{
+        const r=await fetch(API+'/api/resources'),d=await r.json(),g=document.getElementById('resource-grid');
+        const barColor=(p)=>p>85?'var(--accent-red)':p>60?'var(--accent-orange)':'var(--accent-green)';
+        g.innerHTML=`
+            <div class="resource-card"><div class="resource-label">CPU</div><div class="resource-value" style="color:${barColor(d.cpu?.percent||0)}">${d.cpu?.percent||0}%</div><div class="resource-sub">${d.cpu?.cores||0} cores / ${d.cpu?.threads||0} threads</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.cpu?.percent||0}%;background:${barColor(d.cpu?.percent||0)}"></div></div></div>
+            <div class="resource-card"><div class="resource-label">RAM</div><div class="resource-value" style="color:${barColor(d.ram?.percent||0)}">${d.ram?.percent||0}%</div><div class="resource-sub">${d.ram?.used_gb||0}/${d.ram?.total_gb||0} GB</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.ram?.percent||0}%;background:${barColor(d.ram?.percent||0)}"></div></div></div>
+            <div class="resource-card"><div class="resource-label">SWAP</div><div class="resource-value" style="color:${barColor(d.swap?.percent||0)}">${d.swap?.percent||0}%</div><div class="resource-sub">${d.swap?.used_gb||0}/${d.swap?.total_gb||0} GB</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.swap?.percent||0}%;background:${barColor(d.swap?.percent||0)}"></div></div></div>
+            <div class="resource-card"><div class="resource-label">DISK</div><div class="resource-value" style="color:${barColor(d.disk?.percent||0)}">${d.disk?.percent||0}%</div><div class="resource-sub">${d.disk?.free_gb||0} GB free</div><div class="resource-bar"><div class="resource-bar-fill" style="width:${d.disk?.percent||0}%;background:${barColor(d.disk?.percent||0)}"></div></div></div>`;
+        const pb=document.getElementById('procs-body');pb.innerHTML='';
+        (d.top_processes||[]).forEach(p=>{pb.innerHTML+=`<tr><td>${p.pid}</td><td>${p.name}</td><td>${p.cpu}%</td><td>${p.mem}%</td></tr>`;});
+        if(!d.top_processes?.length) pb.innerHTML='<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">No active processes</td></tr>';
+        if(d.error) toast('Resource monitor: '+d.error,'error');
+    }catch(e){console.error(e);}
+}
 
-                // Mini table (dashboard)
-                const miniBody = document.getElementById('jobs-body-mini');
-                miniBody.innerHTML = '';
-                jobs.slice(0, 5).forEach(j => {
-                    miniBody.innerHTML += `<tr>
-                        <td style="text-transform:capitalize;font-weight:500">${j.nicho}</td>
-                        <td>${j.titulo || '—'}</td>
-                        <td>${statusBadge(j.status)}</td>
-                        <td>${scoreCell(j.quality_score)}</td>
-                        <td style="font-size:11px">${formatTime(j.timestamp)}</td>
-                    </tr>`;
-                });
+// VIDEOS
+async function fetchVideos(){
+    try{
+        const r=await fetch(API+'/api/videos'),videos=await r.json(),g=document.getElementById('videos-grid');g.innerHTML='';
+        if(!videos.length){g.innerHTML='<div class="empty-state"><div class="empty-state-icon">🎬</div><div class="empty-state-text">No videos yet.</div></div>';return;}
+        videos.forEach(v=>{const c=document.createElement('div');c.className='video-card';c.innerHTML=`<div class="video-name">🎬 ${v.name}</div><div class="video-meta">${v.size_mb} MB • ${v.created} • ${v.dir}</div><div style="display:flex;gap:8px"><a class="btn btn-sm btn-secondary" href="${v.download_url||'#'}">⬇ Download</a></div>`;g.appendChild(c);});
+    }catch(e){console.error(e);}
+}
 
-                if (jobs.length === 0) {
-                    miniBody.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-text">No jobs yet. Run a niche to get started.</div></td></tr>';
-                }
+// ACTIONS
+async function runNiche(s,d=false){try{const r=await fetch(API+'/api/run/'+s+(d?'?dry_run=true':''),{method:'POST'}),data=await r.json();if(data.error)toast(data.error,'error');else{toast(`${d?'🏜️ Dry':'▶ Pipeline'} started for ${s}`,'success');setTimeout(fetchNichos,1000)}}catch(e){toast('Failed: '+e.message,'error')}}
+async function runAll(){try{await fetch(API+'/api/run-all',{method:'POST'});toast('🚀 All queued','success');setTimeout(fetchNichos,1000)}catch(e){toast('Failed: '+e.message,'error')}}
+async function resumeJob(id){try{await fetch(API+'/api/resume/'+id,{method:'POST'});toast('🔄 Resuming '+id.substring(0,20),'info')}catch(e){toast('Failed: '+e.message,'error')}}
 
-                // Full table
-                const fullBody = document.getElementById('jobs-body-full');
-                fullBody.innerHTML = '';
-                jobs.forEach(j => {
-                    fullBody.innerHTML += `<tr>
-                        <td style="font-size:11px;font-family:monospace">${(j.job_id || '').substring(0,30)}</td>
-                        <td style="text-transform:capitalize">${j.nicho}</td>
-                        <td>${j.titulo || '—'}</td>
-                        <td>${statusBadge(j.status)}</td>
-                        <td>${scoreCell(j.quality_score)}</td>
-                        <td>${j.viral_score || '—'}</td>
-                        <td>${j.duration ? j.duration.toFixed(1) + 's' : '—'}</td>
-                        <td>${j.healing_count || 0}</td>
-                        <td>${j.status && !['success','error'].includes(j.status) ? `<button class="btn btn-sm btn-secondary" onclick="resumeJob('${j.job_id}')">Resume</button>` : ''}</td>
-                    </tr>`;
-                });
-            } catch (e) {
-                console.error('Jobs fetch failed:', e);
-            }
-        }
+// LOGS
+function connectLogs(){if(logSource)logSource.close();logSource=new EventSource(API+'/api/logs');logSource.addEventListener('log',(e)=>{try{addLogLine(JSON.parse(e.data))}catch(err){}});logSource.onerror=()=>{setTimeout(connectLogs,3000)};}
+function addLogLine(entry){const c=document.getElementById('log-console'),l=document.createElement('div');l.className='log-line';l.innerHTML=`<span class="log-time">${entry.time}</span><span class="log-level log-level-${entry.level}">${entry.level}</span><span class="log-msg">${escapeHtml(entry.message)}</span>`;c.appendChild(l);if(c.scrollHeight-c.scrollTop<400)c.scrollTop=c.scrollHeight;while(c.children.length>200)c.removeChild(c.firstChild);}
+function clearLogs(){document.getElementById('log-console').innerHTML='';}
 
-        async function fetchVideos() {
-            try {
-                const res = await fetch(API + '/api/videos');
-                const videos = await res.json();
-                const grid = document.getElementById('videos-grid');
-                grid.innerHTML = '';
+// HELPERS
+function statusBadge(s){const m={success:'status-success',error:'status-error',manual_review:'status-review',draft:'status-draft'};return `<span class="status-badge ${m[s]||'status-running'}">${(s||'pending').replace(/_/g,' ')}</span>`;}
+function scoreCell(s){if(!s)return'—';const p=Math.min(100,s*10),c=s>=8?'var(--accent-green)':s>=7?'var(--accent-orange)':'var(--accent-red)';return`${s} <span class="score-bar"><span class="score-bar-fill" style="width:${p}%;background:${c}"></span></span>`;}
+function formatTime(ts){if(!ts)return'—';return new Date(ts).toLocaleString('es-MX',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'});}
+function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function toast(m,t='info'){const c=document.getElementById('toast-container'),e=document.createElement('div');e.className='toast toast-'+t;e.textContent=m;c.appendChild(e);setTimeout(()=>e.remove(),4000);}
+async function refreshAll(){await Promise.all([fetchStatus(),fetchNichos(),fetchJobs(),fetchVideos()]);}
 
-                if (videos.length === 0) {
-                    grid.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🎬</div><div class="empty-state-text">No videos generated yet.</div></div>';
-                    return;
-                }
+// CHECKPOINTS
+let activeCheckpointJob=null,isEditMode=false;
+async function fetchCheckpoints(){if(activeCheckpointJob)return;try{const r=await fetch(API+'/api/checkpoints'),d=await r.json(),jobs=Object.keys(d.checkpoints);if(jobs.length>0)showCheckpoint(jobs[0],d.checkpoints[jobs[0]])}catch(e){}}
+function showCheckpoint(j,cp){activeCheckpointJob=j;document.getElementById('cp-job-id').textContent=j.substring(0,20)+'...';document.getElementById('cp-stage').textContent=cp.stage.toUpperCase();let m='';for(const[k,v]of Object.entries(cp.metadata||{}))m+=`<b>${k}:</b> ${v} | `;document.getElementById('cp-metadata').innerHTML=m||cp.topic;document.getElementById('cp-content').textContent=typeof cp.content==='object'?JSON.stringify(cp.content,null,2):cp.content;isEditMode=false;document.getElementById('cp-edit-notes').style.display='none';document.getElementById('cp-edit-notes').value='';document.getElementById('btn-submit-edit').style.display='none';document.getElementById('copilot-modal').classList.add('active');}
+function toggleEditMode(){isEditMode=!isEditMode;document.getElementById('cp-edit-notes').style.display=isEditMode?'block':'none';document.getElementById('btn-submit-edit').style.display=isEditMode?'flex':'none';if(isEditMode)document.getElementById('cp-edit-notes').focus();}
+async function submitCheckpoint(dec){if(!activeCheckpointJob)return;const n=document.getElementById('cp-edit-notes').value;if(dec==='edit'&&!n.trim()){toast('Escribe instrucciones','error');return;}try{await fetch(API+'/api/checkpoints/'+activeCheckpointJob+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:dec,notes:n})});toast('Pipeline reanudado','success');document.getElementById('copilot-modal').classList.remove('active');activeCheckpointJob=null;setTimeout(fetchJobs,1000)}catch(e){toast('Error: '+e.message,'error')}}
 
-                videos.forEach(v => {
-                    const card = document.createElement('div');
-                    card.className = 'video-card';
-                    card.innerHTML = `
-                        <div class="video-name">🎬 ${v.name}</div>
-                        <div class="video-meta">${v.size_mb} MB • ${v.created} • ${v.dir}</div>
-                        <div class="video-actions">
-                            <a class="btn btn-sm btn-secondary" href="${v.download_url || '#'}" ${v.download_url ? '' : 'aria-disabled="true"'}>⬇ Descargar</a>
-                        </div>
-                    `;
-                    grid.appendChild(card);
-                });
-            } catch (e) {
-                console.error('Videos fetch failed:', e);
-            }
-        }
-
-        // ===== ACTIONS =====
-        async function runNiche(slug, dryRun = false) {
-            try {
-                const url = API + '/api/run/' + slug + (dryRun ? '?dry_run=true' : '');
-                const res = await fetch(url, { method: 'POST' });
-                const data = await res.json();
-                if (data.error) {
-                    toast(data.error, 'error');
-                } else {
-                    toast(`${dryRun ? '🏜️ Dry run' : '▶ Pipeline'} started for ${slug}`, 'success');
-                    setTimeout(fetchNichos, 1000);
-                }
-            } catch (e) {
-                toast('Failed to start: ' + e.message, 'error');
-            }
-        }
-
-        async function runAll() {
-            try {
-                await fetch(API + '/api/run-all', { method: 'POST' });
-                toast('🚀 All nichos queued', 'success');
-                setTimeout(fetchNichos, 1000);
-            } catch (e) {
-                toast('Failed: ' + e.message, 'error');
-            }
-        }
-
-        async function resumeJob(jobId) {
-            try {
-                await fetch(API + '/api/resume/' + jobId, { method: 'POST' });
-                toast('🔄 Resuming ' + jobId.substring(0, 25), 'info');
-            } catch (e) {
-                toast('Resume failed: ' + e.message, 'error');
-            }
-        }
-
-        // ===== LOG STREAMING =====
-        function connectLogs() {
-            if (logSource) logSource.close();
-            logSource = new EventSource(API + '/api/logs');
-
-            logSource.addEventListener('log', (e) => {
-                try {
-                    const data = JSON.parse(e.data);
-                    addLogLine(data);
-                } catch (err) {}
-            });
-
-            logSource.onerror = () => {
-                setTimeout(connectLogs, 3000);
-            };
-        }
-
-        function addLogLine(entry) {
-            const console_el = document.getElementById('log-console');
-            const line = document.createElement('div');
-            line.className = 'log-line';
-            line.innerHTML = `
-                <span class="log-time">${entry.time}</span>
-                <span class="log-level log-level-${entry.level}">${entry.level}</span>
-                <span class="log-msg">${escapeHtml(entry.message)}</span>
-            `;
-            console_el.appendChild(line);
-
-            // Auto-scroll
-            if (console_el.scrollHeight - console_el.scrollTop < 400) {
-                console_el.scrollTop = console_el.scrollHeight;
-            }
-
-            // Limit lines
-            while (console_el.children.length > 200) {
-                console_el.removeChild(console_el.firstChild);
-            }
-        }
-
-        function clearLogs() {
-            document.getElementById('log-console').innerHTML = '';
-        }
-
-        // ===== HELPERS =====
-        function statusBadge(status) {
-            const map = {
-                success: 'status-success', error: 'status-error',
-                manual_review: 'status-review', draft: 'status-draft',
-            };
-            const cls = map[status] || 'status-running';
-            const label = (status || 'pending').replace(/_/g, ' ').replace('completed ', '');
-            return `<span class="status-badge ${cls}">${label}</span>`;
-        }
-
-        function scoreCell(score) {
-            if (!score) return '—';
-            const pct = Math.min(100, score * 10);
-            const color = score >= 8 ? 'var(--accent-green)' : score >= 7 ? 'var(--accent-orange)' : 'var(--accent-red)';
-            return `${score} <span class="score-bar"><span class="score-bar-fill" style="width:${pct}%;background:${color}"></span></span>`;
-        }
-
-        function formatTime(ts) {
-            if (!ts) return '—';
-            const d = new Date(ts);
-            return d.toLocaleString('es-MX', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' });
-        }
-
-        function escapeHtml(s) {
-            const div = document.createElement('div');
-            div.textContent = s;
-            return div.innerHTML;
-        }
-
-        function toast(message, type = 'info') {
-            const container = document.getElementById('toast-container');
-            const el = document.createElement('div');
-            el.className = 'toast toast-' + type;
-            el.textContent = message;
-            container.appendChild(el);
-            setTimeout(() => el.remove(), 4000);
-        }
-
-        async function refreshAll() {
-            await Promise.all([fetchStatus(), fetchNichos(), fetchJobs(), fetchVideos()]);
-        }
-        
-        // ===== COPILOT CHECKPOINTS =====
-        let activeCheckpointJob = null;
-        let isEditMode = false;
-
-        async function fetchCheckpoints() {
-            if (activeCheckpointJob) return; // Wait if modal is open
-            try {
-                const res = await fetch(API + '/api/checkpoints');
-                const data = await res.json();
-                const jobs = Object.keys(data.checkpoints);
-                if (jobs.length > 0) {
-                    const jobId = jobs[0];
-                    showCheckpoint(jobId, data.checkpoints[jobId]);
-                }
-            } catch (e) {
-                console.error("Checkpoints fetch failed:", e);
-            }
-        }
-
-        function showCheckpoint(jobId, cp) {
-            activeCheckpointJob = jobId;
-            document.getElementById('cp-job-id').textContent = jobId.substring(0, 20) + '...';
-            document.getElementById('cp-stage').textContent = cp.stage.toUpperCase();
-            
-            let metaTxt = "";
-            for (const [k, v] of Object.entries(cp.metadata || {})) metaTxt += `<b>${k}:</b> ${v} | `;
-            document.getElementById('cp-metadata').innerHTML = metaTxt || cp.topic;
-            
-            document.getElementById('cp-content').textContent = typeof cp.content === 'object' ? JSON.stringify(cp.content, null, 2) : cp.content;
-            
-            // Reset edit mode
-            isEditMode = false;
-            document.getElementById('cp-edit-notes').style.display = 'none';
-            document.getElementById('cp-edit-notes').value = '';
-            document.getElementById('btn-submit-edit').style.display = 'none';
-            
-            document.getElementById('copilot-modal').classList.add('active');
-            
-            // Notification sound
-            try { new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU').play() } catch(e){}
-        }
-
-        function toggleEditMode() {
-            isEditMode = !isEditMode;
-            document.getElementById('cp-edit-notes').style.display = isEditMode ? 'block' : 'none';
-            document.getElementById('btn-submit-edit').style.display = isEditMode ? 'flex' : 'none';
-            if(isEditMode) document.getElementById('cp-edit-notes').focus();
-        }
-
-        async function submitCheckpoint(decision) {
-            if (!activeCheckpointJob) return;
-            
-            const notes = document.getElementById('cp-edit-notes').value;
-            if (decision === 'edit' && !notes.trim()) {
-                toast("Debes escribir unas instrucciones para editar", "error");
-                document.getElementById('cp-edit-notes').focus();
-                return;
-            }
-
-            try {
-                await fetch(API + '/api/checkpoints/' + activeCheckpointJob + '/resolve', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({decision: decision, notes: notes})
-                });
-                
-                toast("Decisión enviada. Pipeline reanudado.", "success");
-                document.getElementById('copilot-modal').classList.remove('active');
-                activeCheckpointJob = null;
-                setTimeout(fetchJobs, 1000);
-            } catch(e) {
-                toast("Error al enviar decisión: " + e.message, "error");
-            }
-        }
-
-        // ===== INIT =====
-        refreshAll();
-        connectLogs();
-        setInterval(fetchStatus, 15000);
-        setInterval(fetchNichos, 10000);
-        setInterval(fetchJobs, 30000);
-        setInterval(fetchCheckpoints, 2000);
-    </script>
+// INIT
+refreshAll(); connectLogs();
+setInterval(fetchStatus,15000); setInterval(fetchNichos,10000); setInterval(fetchJobs,30000); setInterval(fetchCheckpoints,2000);
+setInterval(()=>{if(document.getElementById('page-monitor').classList.contains('active'))fetchResources();},3000);
+</script>
 </body>
 </html>
