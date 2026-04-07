@@ -391,6 +391,7 @@ def run_pipeline(
                     rate_tts=nicho.rate_tts,
                     pitch_tts=nicho.pitch_tts,
                     subs_vtt_path=vtt_path,
+                    enforce_provider_policy=False,
                 )
 
                 if not tts_ok:
@@ -409,6 +410,7 @@ def run_pipeline(
                                 rate_tts=nicho.rate_tts,
                                 pitch_tts=nicho.pitch_tts,
                                 subs_vtt_path=vtt_path,
+                                enforce_provider_policy=False,
                             )
 
                     if not tts_ok:
