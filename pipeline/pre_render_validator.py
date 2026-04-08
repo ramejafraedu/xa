@@ -117,6 +117,31 @@ def validate_pre_render(
     return len(errors) == 0, errors
 
 
+def extract_flagged_greenscreen_clips(
+    errors: list[tuple[ErrorCode, str]],
+) -> set[str]:
+    """Extract clip filenames flagged as greenscreen from validator errors."""
+    flagged: set[str] = set()
+    pattern = re.compile(r"greenscreen:\s*([^()]+?)\s*\(", flags=re.IGNORECASE)
+
+    for code, message in errors:
+        if code != ErrorCode.GREENSCREEN_DETECTED:
+            continue
+
+        msg = str(message or "")
+        match = pattern.search(msg)
+        if match:
+            flagged.add(Path(match.group(1).strip()).name)
+            continue
+
+        if ":" in msg:
+            candidate = msg.split(":", 1)[1].strip().split("(", 1)[0].strip()
+            if candidate:
+                flagged.add(Path(candidate).name)
+
+    return flagged
+
+
 def _estimate_green_screen_ratio(video_path: Path, sample_offset: float = 0.5) -> float:
     """Estimate dominant chroma-green coverage using one sampled frame."""
     try:

@@ -1411,6 +1411,76 @@ async def provider_status():
     }
 
 
+@app.get("/api/providers/gemini/stats")
+async def gemini_provider_stats():
+    """Return aggregated Gemini usage stats (key slots + models)."""
+    stats_path = settings.gemini_usage_stats_path
+    data = _read_json_file(stats_path) or {}
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    keys = data.get("keys") if isinstance(data.get("keys"), dict) else {}
+    models = data.get("models") if isinstance(data.get("models"), dict) else {}
+
+    now_ts = int(time.time())
+    key_items = []
+    cooling_keys = 0
+    for key_name in sorted(keys.keys(), key=lambda x: int(x) if str(x).isdigit() else 999):
+        item = keys.get(key_name) if isinstance(keys.get(key_name), dict) else {}
+        cooldown_until = int(item.get("cooldown_until", 0) or 0)
+        is_cooling = cooldown_until > now_ts
+        if is_cooling:
+            cooling_keys += 1
+        key_items.append(
+            {
+                "key_slot": key_name,
+                "attempts": int(item.get("attempts", 0) or 0),
+                "success": int(item.get("success", 0) or 0),
+                "failure": int(item.get("failure", 0) or 0),
+                "last_latency_ms": int(item.get("last_latency_ms", 0) or 0),
+                "cooldown_until": cooldown_until,
+                "cooling_down": is_cooling,
+                "last_error": str(item.get("last_error", "") or "")[:220],
+            }
+        )
+
+    model_items = []
+    cooling_models = 0
+    for model_name in sorted(models.keys()):
+        item = models.get(model_name) if isinstance(models.get(model_name), dict) else {}
+        cooldown_until = int(item.get("cooldown_until", 0) or 0)
+        is_cooling = cooldown_until > now_ts
+        if is_cooling:
+            cooling_models += 1
+        model_items.append(
+            {
+                "model": model_name,
+                "attempts": int(item.get("attempts", 0) or 0),
+                "success": int(item.get("success", 0) or 0),
+                "failure": int(item.get("failure", 0) or 0),
+                "cooldown_until": cooldown_until,
+                "cooling_down": is_cooling,
+                "last_error": str(item.get("last_error", "") or "")[:220],
+            }
+        )
+
+    return {
+        "mode": settings.execution_mode_label(),
+        "feature_flags": settings.active_feature_flags(),
+        "stats_path": str(stats_path),
+        "summary": {
+            "attempts": int(summary.get("attempts", 0) or 0),
+            "success": int(summary.get("success", 0) or 0),
+            "failure": int(summary.get("failure", 0) or 0),
+            "last_success_model": str(summary.get("last_success_model", "") or ""),
+            "last_error": str(summary.get("last_error", "") or "")[:220],
+            "keys_cooling": cooling_keys,
+            "models_cooling": cooling_models,
+            "updated_at": int(data.get("updated_at", 0) or 0),
+        },
+        "keys": key_items,
+        "models": model_items,
+    }
+
+
 @app.get("/api/costs")
 async def costs_summary():
     """Return cost governance summary and recent per-job costs."""

@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     gemini_api_key2: str = ""
     gemini_api_key3: str = ""
     gemini_api_key4: str = ""
+    gemini_chat_models: str = "gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash,gemini-3-flash"
+    gemini_key_cooldown_seconds: int = 25
+    gemini_model_cooldown_seconds: int = 600
+    gemini_enable_usage_stats: bool = True
 
     # ElevenLabs TTS
     elevenlabs_api_key: str = ""
@@ -111,6 +115,7 @@ class Settings(BaseSettings):
     # Lyria 3 (AI music via Gemini)
     use_lyria_music: bool = True
     use_suno_music: bool = True
+    use_veo_clips: bool = False
 
     # WhisperX (local word-level subtitles)
     use_whisperx: bool = True
@@ -192,6 +197,28 @@ class Settings(BaseSettings):
         ]
         return [k for k in keys if k]
 
+    def get_gemini_chat_models(self) -> list[str]:
+        """Return ordered Gemini chat models allowed for this deployment."""
+        default_models = [
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-3-flash",
+        ]
+        configured = [m.strip() for m in (self.gemini_chat_models or "").split(",") if m.strip()]
+        models = configured or default_models
+
+        # De-duplicate while preserving order to avoid redundant attempts.
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for model in models:
+            lowered = model.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(model)
+        return deduped
+
     def next_gemini_key(self) -> str:
         """Get next Gemini key in round-robin rotation.
 
@@ -241,12 +268,14 @@ class Settings(BaseSettings):
             "enable_web_research_plus": self.enable_web_research_plus,
             "enable_reference_driven": self.enable_reference_driven,
             "enable_cost_governance": self.enable_cost_governance,
+            "gemini_usage_stats": self.gemini_enable_usage_stats,
             "openrouter_enabled": bool(self.openrouter_api_key),
             "elevenlabs_enabled": bool(self.elevenlabs_api_key),
             "suno_enabled": bool(self.suno_api_key and self.use_suno_music),
             "scheduler_canary_mode": self.scheduler_canary_mode,
             "scheduler_use_v15": self.scheduler_use_v15,
             "enable_tiktok_trending_api": self.enable_tiktok_trending_api,
+            "use_veo_clips": self.use_veo_clips,
             "enable_openmontage_free_tools": self.enable_openmontage_free_tools,
             "openmontage_enable_styles": self.openmontage_enable_styles,
             "openmontage_enable_analysis": self.openmontage_enable_analysis,
@@ -409,6 +438,10 @@ class Settings(BaseSettings):
     @property
     def budget_state_path(self) -> Path:
         return self.temp_dir / "daily_budget_state.json"
+
+    @property
+    def gemini_usage_stats_path(self) -> Path:
+        return self.temp_dir / "gemini_usage_stats.json"
 
     @property
     def video_cache_dir(self) -> Path:

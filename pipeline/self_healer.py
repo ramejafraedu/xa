@@ -273,6 +273,11 @@ def _fix_render(error_message: str, original_params: str, error_code: ErrorCode 
             "skip_music": True,
             "add_flags": [],
         }),
+        ErrorCode.GREENSCREEN_DETECTED: json.dumps({
+            "action": "drop_greenscreen_clips",
+            "rebuild_timeline": True,
+            "retry_pre_render_validation": True,
+        }),
     }
     if error_code in deterministic:
         logger.info(f"Render fix by error_code: {error_code.value}")

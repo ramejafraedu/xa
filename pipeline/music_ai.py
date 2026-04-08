@@ -31,6 +31,26 @@ _lyria_cooldown_until = 0.0
 _suno_cooldown_until = 0.0
 
 
+def _rotated_gemini_keys() -> list[tuple[int, str]]:
+    """Return Gemini keys rotated from current round-robin pointer."""
+    keys = settings.get_gemini_keys()
+    if not keys:
+        return []
+
+    indexed_keys = list(enumerate(keys, start=1))
+    first_key = settings.next_gemini_key()
+    if not first_key:
+        return indexed_keys
+
+    start_idx = 0
+    for idx, (_slot, key) in enumerate(indexed_keys):
+        if key == first_key:
+            start_idx = idx
+            break
+
+    return indexed_keys[start_idx:] + indexed_keys[:start_idx]
+
+
 def generate_music_ai(
     mood: str,
     output_path: Path,
@@ -50,7 +70,8 @@ def generate_music_ai(
     """
     global _lyria_cooldown_until
 
-    if not settings.gemini_api_key:
+    gemini_keys = _rotated_gemini_keys()
+    if not gemini_keys:
         logger.debug("No GEMINI_API_KEY — skipping Lyria")
         return False
 
@@ -77,47 +98,58 @@ def generate_music_ai(
         logger.warning("google-genai not installed. Run: pip install google-genai")
         return False
 
-    try:
-        # Rotate keys to avoid rate limits
-        api_key = settings.next_gemini_key()
-        client = genai.Client(api_key=api_key)
+    prompt = _build_music_prompt(mood, duration_seconds, nicho)
+    logger.info(f"🎵 Lyria 3: Generating music — {mood}")
 
-        # Build a descriptive prompt
-        prompt = _build_music_prompt(mood, duration_seconds, nicho)
-        logger.info(f"🎵 Lyria 3: Generating music — {mood}")
+    last_error = ""
+    for key_slot, api_key in gemini_keys:
+        try:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model="lyria-3-generate-preview",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                ),
+            )
 
-        response = client.models.generate_content(
-            model="lyria-3-generate-preview",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-            ),
-        )
+            if response and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, "inline_data") and part.inline_data:
+                        audio_data = part.inline_data.data
+                        if audio_data:
+                            output_path.parent.mkdir(parents=True, exist_ok=True)
+                            output_path.write_bytes(audio_data)
 
-        # Extract audio data
-        if response and response.candidates:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, 'inline_data') and part.inline_data:
-                    audio_data = part.inline_data.data
-                    if audio_data:
-                        output_path.parent.mkdir(parents=True, exist_ok=True)
-                        output_path.write_bytes(audio_data)
+                            if output_path.stat().st_size > 5000:
+                                logger.info(
+                                    "✅ Lyria music saved: "
+                                    f"{output_path.name} ({output_path.stat().st_size // 1024}KB) "
+                                    f"key#{key_slot}"
+                                )
+                                return True
 
-                        if output_path.stat().st_size > 5000:
-                            logger.info(f"✅ Lyria music saved: {output_path.name} ({output_path.stat().st_size // 1024}KB)")
-                            return True
+            last_error = f"Lyria key#{key_slot}: no audio data in response"
+            logger.debug(last_error)
+        except Exception as exc:
+            err_text = str(exc)
+            err_lower = err_text.lower()
+            last_error = err_text
 
-        logger.warning("Lyria: no audio data in response")
-        return False
+            if any(token in err_lower for token in ("not_found", "404", "is not found", "unsupported")):
+                _lyria_cooldown_until = time.time() + (6 * 3600)
+                logger.warning("Lyria model unavailable (404). Cooling down for 6h.")
+                return False
 
-    except Exception as e:
-        err = str(e).lower()
-        if "not_found" in err or "404" in err or "is not found" in err:
-            _lyria_cooldown_until = time.time() + (6 * 3600)
-            logger.warning("Lyria model unavailable (404). Cooling down for 6h.")
-            return False
-        logger.warning(f"Lyria music generation failed: {e}")
-        return False
+            if any(token in err_lower for token in ("resource_exhausted", "quota", "429", "rate")):
+                logger.debug(f"Lyria key#{key_slot} quota/rate hit, rotating")
+                continue
+
+            logger.warning(f"Lyria music generation failed on key#{key_slot}: {err_text}")
+
+    if last_error:
+        logger.warning(f"Lyria music generation failed for all keys: {last_error[:220]}")
+    return False
 
 
 def generate_music_suno(

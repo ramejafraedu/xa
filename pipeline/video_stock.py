@@ -18,6 +18,19 @@ from config import settings
 from services.http_client import get_json, request_with_retry
 
 
+_GREENSCREEN_HINTS = {
+    "green screen",
+    "greenscreen",
+    "green-screen",
+    "chroma",
+    "chroma key",
+    "chromakey",
+    "isolated on green",
+    "alpha matte",
+}
+_pexels_rotation_counter: list[int] = [0]
+
+
 def fetch_stock_videos(
     keywords: list[str],
     num_needed: int = 8,
@@ -38,6 +51,7 @@ def fetch_stock_videos(
     seen_paths = set()
     pexels_keys = settings.pexels_keys
     target_pool = max(num_needed, min(num_needed + 4, num_needed * 2))
+    provider_counts: dict[str, int] = {}
 
     # 1. First, check cache for all requested keywords
     for kw in keywords:
@@ -77,6 +91,7 @@ def fetch_stock_videos(
                             "provider": provider,
                         }
                     )
+                    provider_counts[provider] = provider_counts.get(provider, 0) + 1
 
             if fresh_entries:
                 index_data[kw_clean] = fresh_entries
@@ -92,9 +107,23 @@ def fetch_stock_videos(
     # 2. Fetch more following selected provider order.
     provider_order = provider_order or ["pexels", "pixabay", "coverr"]
 
+    # Hybrid sourcing: keep Pexels as primary and guarantee some Pixabay presence
+    # when both providers are enabled, to increase coverage diversity.
+    provider_min_targets: dict[str, int] = {}
+    if "pexels" in provider_order and "pixabay" in provider_order and num_needed >= 4:
+        provider_min_targets["pexels"] = max(1, int(round(num_needed * 0.65)))
+        provider_min_targets["pixabay"] = max(1, int(round(num_needed * 0.20)))
+        if "coverr" in provider_order and num_needed >= 6:
+            provider_min_targets["coverr"] = 1
+
+    def _needs_more(provider: str) -> bool:
+        total_missing = len(all_items) < target_pool
+        provider_missing = provider_counts.get(provider, 0) < provider_min_targets.get(provider, 0)
+        return total_missing or provider_missing
+
     for provider in provider_order:
-        if len(all_items) >= target_pool:
-            break
+        if not _needs_more(provider):
+            continue
 
         keyword_limit = len(keywords)
         if provider == "pixabay":
@@ -103,7 +132,7 @@ def fetch_stock_videos(
             keyword_limit = min(len(keywords), 3)
 
         for kw in keywords[:keyword_limit]:
-            if len(all_items) >= target_pool:
+            if not _needs_more(provider):
                 break
 
             if provider == "pexels":
@@ -128,6 +157,7 @@ def fetch_stock_videos(
                         "provider": provider,
                     }
                 )
+                provider_counts[provider] = provider_counts.get(provider, 0) + 1
 
                 # Update index optimistically (renderer will download it there)
                 kw_clean = kw.strip().lower()
@@ -138,9 +168,21 @@ def fetch_stock_videos(
     # Save index
     _save_cache_index(index_file, index_data)
 
+    if provider_counts:
+        composition = ", ".join(f"{k}:{v}" for k, v in sorted(provider_counts.items()))
+        logger.info(f"Stock provider mix -> {composition}")
+
     logger.info(f"Stock videos found: {len(all_items)} (needed: {num_needed})")
     # Return at most requested pool size
     return all_items[:target_pool]
+
+
+def _rotated_pexels_keys(keys: list[str]) -> list[str]:
+    if not keys:
+        return []
+    start = _pexels_rotation_counter[0] % len(keys)
+    _pexels_rotation_counter[0] += 1
+    return keys[start:] + keys[:start]
 
 
 def _load_cache_index(index_file: Path) -> dict[str, list[dict]]:
@@ -217,7 +259,7 @@ def _fetch_pexels(keyword: str, keys: list[str]) -> list[str]:
     q = urllib.parse.quote(keyword.strip())
     url = f"https://api.pexels.com/videos/search?query={q}&orientation=portrait&size=large&per_page=8"
 
-    for i, key in enumerate(keys):
+    for i, key in enumerate(_rotated_pexels_keys(keys)):
         try:
             response = request_with_retry(
                 "GET", url,
@@ -277,6 +319,11 @@ def _fetch_pixabay_video(keyword: str) -> list[str]:
         hits = data.get("hits", [])
         urls = []
         for h in hits:
+            tags = str(h.get("tags", "") or "")
+            page_url = str(h.get("pageURL", "") or "")
+            if _looks_like_greenscreen_meta(tags, page_url):
+                continue
+
             vids = h.get("videos", {})
             for quality in ["medium", "large", "small"]:
                 video_url = vids.get(quality, {}).get("url")
@@ -291,6 +338,11 @@ def _fetch_pixabay_video(keyword: str) -> list[str]:
     except Exception as e:
         logger.debug(f"Pixabay video error: {e}")
         return []
+
+
+def _looks_like_greenscreen_meta(*fields: str) -> bool:
+    blob = " ".join(str(x or "") for x in fields).lower()
+    return any(hint in blob for hint in _GREENSCREEN_HINTS)
 
 
 def _fetch_coverr(keyword: str) -> list[str]:

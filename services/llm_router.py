@@ -6,6 +6,7 @@ to Azure Inference GPT models when Gemini is unavailable.
 """
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -14,16 +15,138 @@ from loguru import logger
 from config import settings
 from services.http_client import request_with_retry
 
-_GEMINI_CHAT_MODELS = [
+_DEFAULT_GEMINI_CHAT_MODELS = [
     "gemini-3.1-flash-lite",
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
     "gemini-3-flash",
-    "gemini-3.1-flash",
-    "gemini-3.1-pro",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash",
 ]
+_gemini_key_cooldowns: dict[int, float] = {}
+_gemini_model_cooldowns: dict[str, float] = {}
+
+
+def _now_ts() -> float:
+    return time.time()
+
+
+def _is_key_cooling_down(key_slot: int) -> bool:
+    return _gemini_key_cooldowns.get(key_slot, 0.0) > _now_ts()
+
+
+def _is_model_cooling_down(model_name: str) -> bool:
+    return _gemini_model_cooldowns.get(model_name, 0.0) > _now_ts()
+
+
+def _set_key_cooldown(key_slot: int) -> None:
+    seconds = max(5, int(settings.gemini_key_cooldown_seconds or 25))
+    _gemini_key_cooldowns[key_slot] = _now_ts() + seconds
+
+
+def _set_model_cooldown(model_name: str) -> None:
+    seconds = max(60, int(settings.gemini_model_cooldown_seconds or 600))
+    _gemini_model_cooldowns[model_name] = _now_ts() + seconds
+
+
+def _gemini_models_order() -> list[str]:
+    configured = settings.get_gemini_chat_models()
+    return configured or list(_DEFAULT_GEMINI_CHAT_MODELS)
+
+
+def _classify_gemini_error(error_text: str) -> str:
+    text = (error_text or "").lower()
+    if any(token in text for token in ("resource_exhausted", "quota", "429", "rate", "too many requests")):
+        return "quota"
+    if any(token in text for token in ("not_found", "unsupported", "404", "model is not found", "invalid model")):
+        return "model_unavailable"
+    return "generic"
+
+
+def _read_usage_stats() -> dict:
+    path = settings.gemini_usage_stats_path
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_usage_stats(data: dict) -> None:
+    try:
+        settings.ensure_dirs()
+        settings.gemini_usage_stats_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _record_gemini_usage(
+    model_name: str,
+    key_slot: int,
+    success: bool,
+    latency_ms: int,
+    error: str = "",
+) -> None:
+    """Persist lightweight Gemini usage stats without storing secrets."""
+    if not settings.gemini_enable_usage_stats:
+        return
+
+    data = _read_usage_stats()
+    summary = data.setdefault("summary", {
+        "attempts": 0,
+        "success": 0,
+        "failure": 0,
+        "last_success_model": "",
+        "last_error": "",
+    })
+    summary["attempts"] = int(summary.get("attempts", 0)) + 1
+    if success:
+        summary["success"] = int(summary.get("success", 0)) + 1
+        summary["last_success_model"] = model_name
+    else:
+        summary["failure"] = int(summary.get("failure", 0)) + 1
+        if error:
+            summary["last_error"] = str(error)[:220]
+
+    key_stats = data.setdefault("keys", {}).setdefault(str(key_slot), {
+        "attempts": 0,
+        "success": 0,
+        "failure": 0,
+        "last_error": "",
+        "last_latency_ms": 0,
+        "cooldown_until": 0,
+    })
+    key_stats["attempts"] = int(key_stats.get("attempts", 0)) + 1
+    key_stats["last_latency_ms"] = int(max(0, latency_ms))
+    key_stats["cooldown_until"] = int(_gemini_key_cooldowns.get(key_slot, 0))
+    if success:
+        key_stats["success"] = int(key_stats.get("success", 0)) + 1
+    else:
+        key_stats["failure"] = int(key_stats.get("failure", 0)) + 1
+        if error:
+            key_stats["last_error"] = str(error)[:220]
+
+    model_stats = data.setdefault("models", {}).setdefault(model_name, {
+        "attempts": 0,
+        "success": 0,
+        "failure": 0,
+        "last_error": "",
+        "cooldown_until": 0,
+    })
+    model_stats["attempts"] = int(model_stats.get("attempts", 0)) + 1
+    model_stats["cooldown_until"] = int(_gemini_model_cooldowns.get(model_name, 0))
+    if success:
+        model_stats["success"] = int(model_stats.get("success", 0)) + 1
+    else:
+        model_stats["failure"] = int(model_stats.get("failure", 0)) + 1
+        if error:
+            model_stats["last_error"] = str(error)[:220]
+
+    data["updated_at"] = int(_now_ts())
+    _write_usage_stats(data)
 
 
 def call_llm_primary_gemini(
@@ -98,7 +221,7 @@ def _call_gemini_chat(
     user_prompt: str,
     temperature: float,
 ) -> tuple[str, str, str]:
-    """Try Gemini models with key rotation; return first valid response."""
+    """Try Gemini models with key rotation and lightweight cooldown guards."""
     keys = settings.get_gemini_keys()
     if not keys:
         return "", "", "No GEMINI_API_KEY configured"
@@ -108,9 +231,22 @@ def _call_gemini_chat(
         return "", "", f"google-genai unavailable: {import_error}"
 
     last_error = ""
+    attempted_any = False
+    models = _gemini_models_order()
 
-    for model_name in _GEMINI_CHAT_MODELS:
+    for model_name in models:
+        if _is_model_cooling_down(model_name):
+            continue
+
+        attempted_model = False
         for key_idx, api_key in enumerate(keys):
+            key_slot = key_idx + 1
+            if _is_key_cooling_down(key_slot):
+                continue
+
+            attempted_model = True
+            attempted_any = True
+            started = _now_ts()
             try:
                 client = genai.Client(api_key=api_key)
                 response = client.models.generate_content(
@@ -124,25 +260,39 @@ def _call_gemini_chat(
 
                 text = (getattr(response, "text", "") or "").strip()
                 if text:
+                    latency_ms = int(round((_now_ts() - started) * 1000))
+                    _record_gemini_usage(model_name, key_slot, True, latency_ms)
                     return text, f"gemini:{model_name}", ""
 
                 last_error = f"Empty response from {model_name}"
+                latency_ms = int(round((_now_ts() - started) * 1000))
+                _record_gemini_usage(model_name, key_slot, False, latency_ms, last_error)
             except Exception as exc:
                 err = str(exc)
-                err_lower = err.lower()
                 last_error = err
+                latency_ms = int(round((_now_ts() - started) * 1000))
+                category = _classify_gemini_error(err)
+                _record_gemini_usage(model_name, key_slot, False, latency_ms, err)
 
-                if any(token in err_lower for token in ("resource_exhausted", "quota", "429", "rate")):
-                    logger.debug(f"Gemini {model_name} key#{key_idx + 1} quota/rate hit, rotating")
+                if category == "quota":
+                    _set_key_cooldown(key_slot)
+                    logger.debug(f"Gemini {model_name} key#{key_slot} quota/rate hit, rotating")
                     continue
 
-                if any(token in err_lower for token in ("not_found", "invalid", "404", "unsupported")):
+                if category == "model_unavailable":
+                    _set_model_cooldown(model_name)
                     logger.debug(f"Gemini model unavailable, skipping {model_name}")
                     break
 
-                logger.warning(f"Gemini call failed for {model_name} key#{key_idx + 1}: {err}")
+                logger.warning(f"Gemini call failed for {model_name} key#{key_slot}: {err}")
 
-        time.sleep(0.25)
+        if not attempted_model:
+            last_error = f"All keys in cooldown for {model_name}"
+
+        time.sleep(0.20)
+
+    if not attempted_any:
+        return "", "", "All Gemini keys/models are temporarily in cooldown"
 
     return "", "", last_error or "Gemini call failed"
 

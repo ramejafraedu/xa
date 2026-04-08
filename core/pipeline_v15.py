@@ -96,7 +96,7 @@ def run_pipeline_v15(
     from pipeline.renderer import download_clips
     from pipeline.renderer_remotion import render_video_with_fallback
     from pipeline.duration_validator import validate_duration
-    from pipeline.pre_render_validator import validate_pre_render
+    from pipeline.pre_render_validator import validate_pre_render, extract_flagged_greenscreen_clips
     from pipeline.cleanup import cleanup_temp, cleanup_stale_temp
     from publishers.telegram import notify_success, notify_error, notify_review
     from publishers.drive_sheets import upload_to_drive, log_to_sheets
@@ -1020,6 +1020,67 @@ def run_pipeline_v15(
                 platform=nicho.plataforma,
                 audio_duration=audio_duration,
             )
+
+            if not pre_ok:
+                flagged_names = extract_flagged_greenscreen_clips(pre_errors)
+                if flagged_names:
+                    _add_decision(
+                        "validated",
+                        "Greenscreen clips detected in pre-render",
+                        ", ".join(sorted(flagged_names)[:4]),
+                        severity="warning",
+                        metadata={"flagged_count": len(flagged_names)},
+                    )
+
+                    # Deterministic healing path: drop flagged clips, rebuild timeline, retry validation.
+                    attempt_healing(
+                        manifest,
+                        FailureType.RENDER,
+                        "pre_render_validation",
+                        "; ".join(msg for _, msg in pre_errors),
+                        json.dumps({"flagged_clips": sorted(flagged_names)}),
+                        error_code=ErrorCode.GREENSCREEN_DETECTED,
+                    )
+
+                    before_count = len(clips)
+                    clips = [c for c in clips if c.name not in flagged_names]
+                    removed_count = before_count - len(clips)
+
+                    if removed_count > 0:
+                        manifest.clip_paths = [str(p) for p in clips]
+
+                        # Recompute edit decisions/timeline to keep durations consistent after clip removal.
+                        edit_decisions = editor_agent.run(story, nicho, len(clips), audio_duration)
+                        duraciones = [d.duration for d in edit_decisions] if edit_decisions else None
+                        render_inputs = clips if clips else images
+                        timeline_payload = editor_agent.build_timeline_json(
+                            state=story,
+                            media_paths=render_inputs,
+                            decisions=edit_decisions,
+                            audio_duration=audio_duration,
+                            timeline_path=timeline_path,
+                            subtitles_path=ass_path if ass_path.exists() else None,
+                            narration_audio_path=audio_path,
+                            music_path=music_path if music_path and music_path.exists() else None,
+                        )
+
+                        _add_decision(
+                            "validated",
+                            "Greenscreen clips removed and timeline rebuilt",
+                            f"removed={removed_count}, clips={len(clips)}, images={len(images)}",
+                            severity="warning",
+                        )
+
+                        pre_ok, pre_errors = validate_pre_render(
+                            audio_path=audio_path,
+                            subs_path=ass_path if ass_path.exists() else None,
+                            clips=clips,
+                            images=images,
+                            music_path=music_path if music_path and music_path.exists() else None,
+                            platform=nicho.plataforma,
+                            audio_duration=audio_duration,
+                        )
+
             if not pre_ok:
                 first_code = pre_errors[0][0] if pre_errors else ErrorCode.ASSET_MISSING
                 _stage_end("validated", "error", "; ".join(m for _, m in pre_errors)[:180])

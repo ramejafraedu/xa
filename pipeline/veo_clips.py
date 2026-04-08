@@ -22,6 +22,26 @@ from loguru import logger
 from config import settings
 
 
+def _rotated_gemini_keys() -> list[tuple[int, str]]:
+    """Return Gemini keys rotated from current round-robin pointer."""
+    keys = settings.get_gemini_keys()
+    if not keys:
+        return []
+
+    indexed_keys = list(enumerate(keys, start=1))
+    first_key = settings.next_gemini_key()
+    if not first_key:
+        return indexed_keys
+
+    start_idx = 0
+    for idx, (_slot, key) in enumerate(indexed_keys):
+        if key == first_key:
+            start_idx = idx
+            break
+
+    return indexed_keys[start_idx:] + indexed_keys[:start_idx]
+
+
 def generate_veo_clips(
     prompts: list[str],
     timestamp: int,
@@ -41,11 +61,12 @@ def generate_veo_clips(
     Returns:
         List of paths to generated MP4 clips.
     """
-    if not settings.gemini_api_key:
+    gemini_keys = _rotated_gemini_keys()
+    if not gemini_keys:
         logger.warning("No GEMINI_API_KEY — skipping Veo, using stock fallback")
         return []
 
-    if not settings.use_veo_clips:
+    if not bool(getattr(settings, "use_veo_clips", False)):
         logger.debug("Veo clips disabled in config")
         return []
 
@@ -68,54 +89,69 @@ def generate_veo_clips(
             clips.append(clip_path)
             continue
 
-        try:
-            logger.info(f"🎬 Veo 3.1: Generating clip {i+1}/{len(prompts_to_use)}")
+        logger.info(f"🎬 Veo 3.1: Generating clip {i+1}/{len(prompts_to_use)}")
+        enhanced = _enhance_prompt(prompt)
+        clip_generated = False
 
-            # Rotate keys to avoid rate limits
-            api_key = settings.next_gemini_key()
-            client = genai.Client(api_key=api_key)
+        for key_slot, api_key in gemini_keys:
+            try:
+                client = genai.Client(api_key=api_key)
 
-            # Enhance prompt for better video quality
-            enhanced = _enhance_prompt(prompt)
+                operation = client.models.generate_videos(
+                    model="veo-3.1-generate-preview",
+                    prompt=enhanced,
+                    config=types.GenerateVideosConfig(
+                        aspect_ratio=aspect_ratio,
+                    ),
+                )
 
-            operation = client.models.generate_videos(
-                model="veo-3.1-generate-preview",
-                prompt=enhanced,
-                config=types.GenerateVideosConfig(
-                    aspect_ratio=aspect_ratio,
-                ),
-            )
+                # Poll until ready (max 5 min per clip)
+                max_wait = 300
+                waited = 0
+                while not operation.done and waited < max_wait:
+                    time.sleep(10)
+                    waited += 10
+                    operation = client.operations.get(operation)
+                    if waited % 30 == 0:
+                        logger.debug(f"  Veo clip {i+1}: waiting... ({waited}s)")
 
-            # Poll until ready (max 5 min per clip)
-            max_wait = 300
-            waited = 0
-            while not operation.done and waited < max_wait:
-                time.sleep(10)
-                waited += 10
-                operation = client.operations.get(operation)
-                if waited % 30 == 0:
-                    logger.debug(f"  Veo clip {i+1}: waiting... ({waited}s)")
+                if not operation.done:
+                    logger.warning(f"Veo clip {i+1} timed out after {max_wait}s on key#{key_slot}")
+                    continue
 
-            if not operation.done:
-                logger.warning(f"Veo clip {i+1} timed out after {max_wait}s")
-                continue
+                if operation.response and operation.response.generated_videos:
+                    video = operation.response.generated_videos[0]
+                    client.files.download(file=video.video)
+                    video.video.save(str(clip_path))
 
-            # Download the clip
-            if operation.response and operation.response.generated_videos:
-                video = operation.response.generated_videos[0]
-                client.files.download(file=video.video)
-                video.video.save(str(clip_path))
+                    if clip_path.exists() and clip_path.stat().st_size > 5000:
+                        logger.info(
+                            f"✅ Veo clip {i+1} saved: {clip_path.name} "
+                            f"({clip_path.stat().st_size // 1024}KB) key#{key_slot}"
+                        )
+                        clips.append(clip_path)
+                        clip_generated = True
+                        break
 
-                if clip_path.exists() and clip_path.stat().st_size > 5000:
-                    logger.info(f"✅ Veo clip {i+1} saved: {clip_path.name} ({clip_path.stat().st_size // 1024}KB)")
-                    clips.append(clip_path)
-                else:
-                    logger.warning(f"Veo clip {i+1} file too small or missing")
-            else:
-                logger.warning(f"Veo clip {i+1}: no video in response")
+                    logger.warning(f"Veo clip {i+1} file too small or missing on key#{key_slot}")
+                    continue
 
-        except Exception as e:
-            logger.warning(f"Veo clip {i+1} failed: {e}")
+                logger.warning(f"Veo clip {i+1}: no video in response on key#{key_slot}")
+            except Exception as e:
+                err = str(e)
+                lowered = err.lower()
+                if any(token in lowered for token in ("resource_exhausted", "quota", "429", "rate")):
+                    logger.debug(f"Veo clip {i+1}: key#{key_slot} quota/rate hit, rotating")
+                    continue
+
+                if any(token in lowered for token in ("not_found", "404", "unsupported", "is not found")):
+                    logger.warning("Veo model unavailable. Skipping Veo generation for remaining clips.")
+                    return clips
+
+                logger.warning(f"Veo clip {i+1} failed on key#{key_slot}: {err}")
+
+        if not clip_generated:
+            logger.warning(f"Veo clip {i+1} could not be generated with available keys")
             continue
 
     logger.info(f"Veo generated {len(clips)}/{len(prompts_to_use)} clips")

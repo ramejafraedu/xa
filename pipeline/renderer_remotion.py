@@ -535,30 +535,97 @@ def _parse_ass_words(subtitles_path: Optional[Path]) -> list[dict]:
             if end_s <= start_s:
                 continue
 
-            text = re.sub(r"\{[^}]*\}", "", parts[9])
-            text = text.replace("\\N", " ").replace("\\n", " ")
-            text = re.sub(r"\s+", " ", text).strip()
-            if not text:
-                continue
-
-            tokens = re.findall(r"[A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü]+|[^\s]", text)
-            if not tokens:
-                continue
-
-            span = end_s - start_s
-            step = span / len(tokens)
-            cursor = start_s
-            for token in tokens:
-                start_ms = int(round(cursor * 1000))
-                end_ms = int(round(min(end_s, cursor + step) * 1000))
-                if end_ms <= start_ms:
-                    end_ms = start_ms + 40
-                words.append({"word": token, "startMs": start_ms, "endMs": end_ms})
-                cursor += step
+            raw_text = parts[9]
+            if not _append_karaoke_words(words, raw_text, start_s, end_s):
+                _append_uniform_words(words, raw_text, start_s, end_s)
     except Exception as exc:
         logger.debug(f"ASS parsing failed for Remotion captions: {exc}")
 
     return words
+
+
+def _append_karaoke_words(words: list[dict], raw_text: str, start_s: float, end_s: float) -> bool:
+    """Extract precise timings from ASS karaoke tags (\\k/\\kf/\\ko)."""
+    karaoke_re = re.compile(r"\{\\(?:k|K|kf|KF|ko|KO)(\d+)\}")
+    matches = list(karaoke_re.finditer(raw_text or ""))
+    if not matches:
+        return False
+
+    chunks: list[tuple[float, list[str]]] = []
+    for idx, match in enumerate(matches):
+        next_pos = matches[idx + 1].start() if idx + 1 < len(matches) else len(raw_text)
+        chunk_text = raw_text[match.end() : next_pos]
+        chunk_text = re.sub(r"\{[^}]*\}", "", chunk_text)
+        chunk_text = chunk_text.replace("\\N", " ").replace("\\n", " ")
+        chunk_text = re.sub(r"\s+", " ", chunk_text).strip()
+        tokens = _tokenize_caption_words(chunk_text)
+        if not tokens:
+            continue
+
+        dur_cs = max(1, int(match.group(1) or 0))
+        chunks.append((dur_cs / 100.0, tokens))
+
+    if not chunks:
+        return False
+
+    total_tag_span = sum(span for span, _ in chunks)
+    line_span = max(0.04, end_s - start_s)
+    scale = (line_span / total_tag_span) if total_tag_span > 0 else 1.0
+
+    cursor = start_s
+    line_words: list[dict] = []
+    for chunk_span, tokens in chunks:
+        alloc = max(0.04, chunk_span * scale)
+        step = alloc / max(len(tokens), 1)
+        for token in tokens:
+            w_start = cursor
+            w_end = min(end_s, cursor + step)
+            line_words.append(
+                {
+                    "word": token,
+                    "startMs": int(round(w_start * 1000)),
+                    "endMs": int(round(w_end * 1000)),
+                }
+            )
+            cursor = w_end
+
+    if not line_words:
+        return False
+
+    last_end = int(round(end_s * 1000))
+    if line_words[-1]["endMs"] < last_end:
+        line_words[-1]["endMs"] = last_end
+
+    for item in line_words:
+        if item["endMs"] <= item["startMs"]:
+            item["endMs"] = item["startMs"] + 40
+        words.append(item)
+    return True
+
+
+def _append_uniform_words(words: list[dict], raw_text: str, start_s: float, end_s: float) -> None:
+    """Fallback parser for ASS lines without karaoke tags."""
+    text = re.sub(r"\{[^}]*\}", "", raw_text or "")
+    text = text.replace("\\N", " ").replace("\\n", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    tokens = _tokenize_caption_words(text)
+    if not tokens:
+        return
+
+    span = max(0.04, end_s - start_s)
+    step = span / len(tokens)
+    cursor = start_s
+    for token in tokens:
+        start_ms = int(round(cursor * 1000))
+        end_ms = int(round(min(end_s, cursor + step) * 1000))
+        if end_ms <= start_ms:
+            end_ms = start_ms + 40
+        words.append({"word": token, "startMs": start_ms, "endMs": end_ms})
+        cursor += step
+
+
+def _tokenize_caption_words(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü]+|[^\s]", text or "")
 
 
 def _ass_time_to_seconds(value: str) -> float:
