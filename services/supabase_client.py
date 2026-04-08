@@ -195,7 +195,7 @@ def save_performance(
             "healing_count": healing_count,
             "timestamp": str(timestamp),
         }
-        post_json(url, data, headers=headers, max_retries=1)
+        post_json(url, data, headers=headers, max_retries=2)
         logger.debug(f"Performance saved: {nicho_slug} q={quality_score}")
         return True
 

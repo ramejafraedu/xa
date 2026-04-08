@@ -1,0 +1,32 @@
+name: CI — Syntax + Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal deps
+        run: pip install ruff
+
+      - name: Syntax check (py_compile)
+        run: |
+          find . -name '*.py' \
+            -not -path './.venv/*' \
+            -not -path './.git/*' \
+            -not -path './remotion-composer/*' \
+            -not -path './OpenMontage-main/*' \
+            | xargs -I{} python -m py_compile {}
+
+      - name: Lint (ruff)
+        run: ruff check . --select=E,F --ignore=E501,F401 --exclude=.venv,remotion-composer,OpenMontage-main

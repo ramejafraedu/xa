@@ -2,6 +2,7 @@
 
 Usage:
     python video_factory.py --test              # Quick test V15 (finanzas, 1 video)
+    python video_factory.py --test curiosidades # Quick test V15 with specific niche
     python video_factory.py --director finanzas # Interactive mode (approve each stage)
     python video_factory.py --v15 finanzas      # V15 autonomous (multi-agent + coherence)
     python video_factory.py finanzas            # V14 classic mode (backward compat)
@@ -224,6 +225,678 @@ def _elapsed(timer: dict) -> float:
     return round(time.time() - timer["start"], 2)
 
 
+# ── Stage Methods ────────────────────────────────────────────────────────────
+# Each stage is a private function that receives the shared context dict and
+# returns it (or raises).  The main loop in run_pipeline() stays short.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _stage_memory(ctx: dict) -> dict:
+    """Stage 1: Read Memory / Context."""
+    from services.supabase_client import read_memory
+    from services.niche_memory import build_niche_memory_context
+    from services.trends import get_trending_context
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🧠 Reading memory...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    nicho = ctx["nicho"]
+    nicho_slug = ctx["nicho_slug"]
+    manual_idea_lines = ctx["manual_idea_lines"]
+
+    if not state.is_stage_done(manifest, "content_gen"):
+        memoria = read_memory(
+            settings.supabase_url, settings.supabase_anon_key, nicho_slug
+        )
+        local_memory_ctx = build_niche_memory_context(nicho_slug, limit=8)
+        if local_memory_ctx != "Sin memoria local por nicho":
+            if memoria and memoria != "Sin memoria previa":
+                memoria = f"{memoria} | MEMORIA_LOCAL: {local_memory_ctx}"
+            else:
+                memoria = f"MEMORIA_LOCAL: {local_memory_ctx}"
+        if manual_idea_lines:
+            manual_ctx = " | ".join(manual_idea_lines)
+            memoria = (
+                f"{memoria} | IDEAS_MANUALES: {manual_ctx}"
+                if memoria
+                else f"IDEAS_MANUALES: {manual_ctx}"
+            )
+        trending = get_trending_context(nicho.nombre, settings.rapidapi_key)
+    else:
+        memoria = "Sin memoria previa"
+        trending = ""
+
+    ctx["memoria"] = memoria
+    ctx["trending"] = trending
+    manifest.timings["memory"] = _elapsed(timer)
+    ctx["progress"].advance(ctx["task_id"])
+    return ctx
+
+
+def _stage_content_gen(ctx: dict) -> dict:
+    """Stage 2: Generate Content."""
+    from pipeline.content_gen import generate_content, ContentGenerationError
+    from publishers.telegram import notify_error
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🤖 Generating content...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    nicho = ctx["nicho"]
+    manual_idea_lines = ctx["manual_idea_lines"]
+
+    ctx["raw_content"] = {}
+    if not state.is_stage_done(manifest, "content_gen"):
+        try:
+            ctx["raw_content"] = generate_content(
+                nicho,
+                ctx["trending"],
+                ctx["memoria"],
+                manual_ideas=manual_idea_lines,
+            )
+        except ContentGenerationError as e:
+            manifest.status = JobStatus.ERROR.value
+            manifest.error_stage = "content_gen"
+            manifest.error_message = str(e)
+            manifest.error_code = ErrorCode.CONTENT_GEN_API_FAIL.value
+            state.save(manifest)
+            notify_error(manifest)
+            ctx["abort"] = True
+            return ctx
+
+        state.mark_stage(manifest, "content_gen", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+    return ctx
+
+
+def _stage_quality_gate(ctx: dict) -> dict:
+    """Stage 3: Quality Gate + Self-Healing."""
+    from pipeline.quality_gate import validate_and_score
+    from pipeline.self_healer import attempt_healing
+    from publishers.telegram import notify_error
+    from services.publish_package import build_publish_package
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🔎 Quality check...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    nicho = ctx["nicho"]
+    raw_content = ctx["raw_content"]
+
+    content, quality, errors = validate_and_score(raw_content, nicho)
+
+    # Self-healing loop
+    healing_attempts = 0
+    while (content is None or not quality.is_approved) and healing_attempts < app_config.max_healing_attempts:
+        healing_attempts += 1
+        error_detail = "; ".join(errors) if errors else "Quality below threshold"
+        primary_code = quality.error_codes[0] if quality.error_codes else ErrorCode.UNKNOWN
+
+        if content is None:
+            fix = attempt_healing(
+                manifest, FailureType.JSON, "quality_gate",
+                error_detail, json.dumps(raw_content, default=str)[:1000],
+                error_code=ErrorCode.JSON_SCHEMA_INVALID,
+            )
+            if fix:
+                try:
+                    raw_content = json.loads(fix)
+                    content, quality, errors = validate_and_score(raw_content, nicho)
+                    continue
+                except (json.JSONDecodeError, Exception):
+                    pass
+        else:
+            fix = attempt_healing(
+                manifest, FailureType.PROMPT, "quality_gate",
+                error_detail, content.guion[:500] if content else "",
+                nicho=nicho,
+                error_code=primary_code,
+            )
+            if fix:
+                try:
+                    fixed_data = json.loads(fix) if isinstance(fix, str) and fix.strip().startswith("{") else raw_content
+                    content, quality, errors = validate_and_score(fixed_data, nicho)
+                    continue
+                except (json.JSONDecodeError, Exception):
+                    pass
+        break
+
+    if content is None:
+        manifest.status = JobStatus.ERROR.value
+        manifest.error_stage = "quality_gate"
+        manifest.error_message = "Content validation failed after healing"
+        manifest.error_code = ErrorCode.JSON_SCHEMA_INVALID.value
+        state.save(manifest)
+        notify_error(manifest)
+        ctx["abort"] = True
+        return ctx
+
+    # Update manifest with content
+    manifest.titulo = content.titulo
+    manifest.gancho = content.gancho
+    manifest.guion = content.guion
+    manifest.cta = content.cta
+    manifest.caption = content.caption
+    publish_pkg = build_publish_package(
+        title=manifest.titulo,
+        hook=manifest.gancho,
+        cta=manifest.cta,
+        caption=manifest.caption,
+    )
+    manifest.publish_title = publish_pkg["title"]
+    manifest.publish_description = publish_pkg["description"]
+    manifest.publish_hashtags = publish_pkg["hashtags"]
+    manifest.publish_hashtags_text = publish_pkg["hashtags_text"]
+    manifest.publish_comment = publish_pkg["comment"]
+    manifest.quality_score = quality.quality_score
+    manifest.viral_score = content.viral_score
+    manifest.hook_score = quality.block_scores.hook
+    manifest.block_scores = quality.block_scores
+    manifest.ab_variant = raw_content.get("_ab_variant", "A")
+    manifest.input_hash = content.input_hash
+
+    if not quality.is_approved:
+        manifest.status = JobStatus.MANUAL_REVIEW.value
+        logger.warning(f"Content sent to manual review (score: {quality.quality_score})")
+
+    state.mark_stage(manifest, "quality_gate", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+    ctx["content"] = content
+    ctx["quality"] = quality
+    ctx["raw_content"] = raw_content
+    return ctx
+
+
+def _stage_tts(ctx: dict) -> dict:
+    """Stage 4: TTS Audio Generation."""
+    from pipeline.tts_engine import generate_tts, clean_tts_text
+    from pipeline.self_healer import attempt_healing
+    from publishers.telegram import notify_error
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🗣️ Generating TTS...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    nicho = ctx["nicho"]
+    content = ctx["content"]
+    timestamp = ctx["timestamp"]
+
+    guion_tts = " ".join(filter(None, [content.gancho, content.guion, content.cta]))
+    guion_tts = clean_tts_text(guion_tts)
+
+    audio_path = settings.temp_dir / f"audio_{timestamp}.mp3"
+    vtt_path = settings.temp_dir / f"subs_{timestamp}.vtt"
+
+    # Idempotency: skip if audio already exists with same input
+    tts_hash = state.compute_input_hash(guion_tts)
+    if state.should_skip_stage(manifest, "tts", audio_path, tts_hash):
+        tts_engine = manifest.tts_engine_used or "cached"
+    else:
+        tts_ok, tts_engine = generate_tts(
+            guion_tts, audio_path,
+            voz_gemini=nicho.voz_gemini,
+            voz_edge=nicho.voz_edge,
+            rate_tts=nicho.rate_tts,
+            pitch_tts=nicho.pitch_tts,
+            subs_vtt_path=vtt_path,
+            enforce_provider_policy=False,
+        )
+
+        if not tts_ok:
+            fix = attempt_healing(
+                manifest, FailureType.AUDIO, "tts",
+                "TTS generation failed for both Gemini and Edge-TTS",
+                error_code=ErrorCode.TTS_EMPTY_AUDIO,
+            )
+            if fix:
+                fix_data = json.loads(fix) if isinstance(fix, str) else {}
+                if fix_data.get("action") == "retry_edge_tts":
+                    tts_ok, tts_engine = generate_tts(
+                        guion_tts, audio_path,
+                        voz_gemini="",
+                        voz_edge=nicho.voz_edge,
+                        rate_tts=nicho.rate_tts,
+                        pitch_tts=nicho.pitch_tts,
+                        subs_vtt_path=vtt_path,
+                        enforce_provider_policy=False,
+                    )
+
+            if not tts_ok:
+                manifest.status = JobStatus.ERROR.value
+                manifest.error_stage = "tts"
+                manifest.error_message = "TTS failed after healing"
+                manifest.error_code = ErrorCode.TTS_EMPTY_AUDIO.value
+                state.save(manifest)
+                notify_error(manifest)
+                ctx["abort"] = True
+                return ctx
+
+        manifest.tts_engine_used = tts_engine
+
+    manifest.audio_path = str(audio_path)
+    state.mark_stage(manifest, "tts", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+    ctx["audio_path"] = audio_path
+    ctx["vtt_path"] = vtt_path
+    ctx["guion_tts"] = guion_tts
+    ctx["tts_engine"] = tts_engine
+    return ctx
+
+
+def _stage_subtitles(ctx: dict) -> dict:
+    """Stage 5: Subtitles (script-locked timing)."""
+    from pipeline.tts_engine import get_audio_duration
+    from pipeline.subtitles import generate_timed_ass_from_text
+    from pipeline.duration_validator import validate_duration
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]📝 Creating subtitles...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    nicho = ctx["nicho"]
+    audio_path = ctx["audio_path"]
+    timestamp = ctx["timestamp"]
+    guion_tts = ctx["guion_tts"]
+
+    ass_path = settings.temp_dir / f"subs_{timestamp}.ass"
+    audio_duration = get_audio_duration(audio_path)
+
+    if not state.should_skip_stage(manifest, "subtitles", ass_path):
+        subtitle_events = generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
+        logger.info(f"Script-locked subtitles: {subtitle_events} events")
+
+    manifest.subs_path = str(ass_path)
+    manifest.duration_seconds = audio_duration
+
+    # Duration validation
+    audio_duration, was_trimmed = validate_duration(
+        audio_duration, nicho.plataforma, audio_path,
+        niche_slug=nicho.slug,
+    )
+    if was_trimmed:
+        manifest.duration_seconds = audio_duration
+
+    state.mark_stage(manifest, "subtitles", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+    ctx["ass_path"] = ass_path
+    ctx["audio_duration"] = audio_duration
+    return ctx
+
+
+def _stage_media(ctx: dict) -> dict:
+    """Stage 6: Media (Stock clips, Images, Music, SFX)."""
+    from pipeline.video_stock import fetch_stock_videos
+    from pipeline.image_gen import generate_images
+    from pipeline.music import fetch_music
+    from pipeline.sfx import fetch_sfx
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🎨 Generating media...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    nicho = ctx["nicho"]
+    nicho_slug = ctx["nicho_slug"]
+    content = ctx["content"]
+    timestamp = ctx["timestamp"]
+    audio_duration = ctx["audio_duration"]
+
+    keywords = content.palabras_clave[:nicho.keywords_count]
+
+    stock_clips = fetch_stock_videos(keywords, nicho.num_clips)
+    logger.info(f"📦 Stock: fetching {len(stock_clips)} clips from Pexels")
+
+    images = generate_images(
+        content.prompt_imagen or (keywords[0] if keywords else nicho.nombre),
+        nicho.direccion_visual,
+        manifest.ab_variant,
+        timestamp,
+        settings.temp_dir,
+        count=max(4, min(10, int(settings.generated_images_count))),
+    )
+
+    # --- Lyria 3 AI music (with Pixabay/Jamendo fallback) ---
+    music_path = settings.temp_dir / f"musica_{timestamp}.mp3"
+    try:
+        from pipeline.music_ai import fetch_music_with_fallback
+        fetch_music_with_fallback(
+            content.mood_musica or nicho.genero_musica,
+            music_path,
+            duration_seconds=audio_duration,
+            nicho=nicho_slug,
+        )
+    except Exception:
+        fetch_music(content.mood_musica or nicho.genero_musica, music_path)
+
+    sfx_paths = fetch_sfx(timestamp, settings.temp_dir)
+
+    manifest.image_paths = [str(p) for p in images]
+    manifest.sfx_paths = [str(p) for p in sfx_paths]
+
+    state.mark_stage(manifest, "media", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+    ctx["stock_clips"] = stock_clips
+    ctx["images"] = images
+    ctx["music_path"] = music_path
+    ctx["sfx_paths"] = sfx_paths
+    ctx["keywords"] = keywords
+    return ctx
+
+
+def _stage_download(ctx: dict) -> dict:
+    """Stage 7: Download clips + Pre-render validation."""
+    from pipeline.renderer import download_clips
+    from pipeline.pre_render_validator import validate_pre_render
+    from publishers.telegram import notify_error
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]⬇️ Downloading clips...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    nicho = ctx["nicho"]
+    stock_clips = ctx["stock_clips"]
+    images = ctx["images"]
+    timestamp = ctx["timestamp"]
+    audio_path = ctx["audio_path"]
+    ass_path = ctx["ass_path"]
+    music_path = ctx["music_path"]
+    audio_duration = ctx["audio_duration"]
+
+    clips = download_clips(stock_clips, timestamp, settings.temp_dir)
+    manifest.clip_paths = [str(p) for p in clips]
+
+    if not clips and not images:
+        manifest.status = JobStatus.ERROR.value
+        manifest.error_stage = "download"
+        manifest.error_message = "No clips and no images"
+        manifest.error_code = ErrorCode.ASSET_MISSING.value
+        state.save(manifest)
+        notify_error(manifest)
+        ctx["abort"] = True
+        return ctx
+
+    logger.info(f"📊 Total clips: {len(clips)} (Stock: {len(stock_clips)})")
+    state.mark_stage(manifest, "combine", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+
+    # ── Stage 7.5: Pre-Render Validation ──
+    ctx["progress"].update(ctx["task_id"], description="[cyan]✅ Validating assets...")
+    pre_ok, pre_errors = validate_pre_render(
+        audio_path=audio_path,
+        subs_path=ass_path if ass_path.exists() else None,
+        clips=clips,
+        images=images,
+        music_path=music_path if music_path.exists() else None,
+        platform=nicho.plataforma,
+        audio_duration=audio_duration,
+    )
+
+    if not pre_ok:
+        first_code = pre_errors[0][0] if pre_errors else ErrorCode.ASSET_MISSING
+        all_msgs = "; ".join(msg for _, msg in pre_errors)
+        manifest.status = JobStatus.ERROR.value
+        manifest.error_stage = "pre_render_validation"
+        manifest.error_message = all_msgs[:200]
+        manifest.error_code = first_code.value
+        state.save(manifest)
+        notify_error(manifest)
+        ctx["abort"] = True
+        return ctx
+
+    state.mark_stage(manifest, "validated")
+    ctx["clips"] = clips
+    return ctx
+
+
+def _stage_render(ctx: dict) -> dict:
+    """Stage 8: Render video + Post-render QA."""
+    from pipeline.renderer import render_video
+    from pipeline.self_healer import attempt_healing
+    from publishers.telegram import notify_error
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🎥 Rendering video...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    nicho_slug = ctx["nicho_slug"]
+    content = ctx["content"]
+    clips = ctx["clips"]
+    audio_path = ctx["audio_path"]
+    ass_path = ctx["ass_path"]
+    music_path = ctx["music_path"]
+    images = ctx["images"]
+    timestamp = ctx["timestamp"]
+    audio_duration = ctx["audio_duration"]
+
+    output_target = settings.output_dir
+    if manifest.status == JobStatus.MANUAL_REVIEW.value:
+        output_target = settings.review_dir
+
+    video_path, thumb_path, render_error = render_video(
+        clips=clips,
+        audio_path=audio_path,
+        subs_path=ass_path if ass_path.exists() else None,
+        music_path=music_path if music_path.exists() else None,
+        images=images,
+        timestamp=timestamp,
+        temp_dir=settings.temp_dir,
+        output_dir=output_target,
+        nicho_slug=nicho_slug,
+        gancho=content.gancho,
+        titulo=content.titulo,
+        duracion_audio=audio_duration,
+        velocidad=content.velocidad_cortes.value if hasattr(content.velocidad_cortes, 'value') else str(content.velocidad_cortes),
+        num_clips=content.num_clips,
+        duraciones_clips=[float(d) for d in content.duraciones_clips] if content.duraciones_clips else None,
+    )
+
+    if render_error:
+        render_code = ErrorCode.FFMPEG_FILTER_FAIL
+        if "timeout" in render_error.lower():
+            render_code = ErrorCode.FFMPEG_TIMEOUT
+        elif "concat" in render_error.lower():
+            render_code = ErrorCode.FFMPEG_CONCAT_FAIL
+
+        fix = attempt_healing(
+            manifest, FailureType.RENDER, "render",
+            render_error, json.dumps({"velocidad": str(content.velocidad_cortes)}),
+            error_code=render_code,
+        )
+        if fix:
+            try:
+                render_fixes = json.loads(fix) if isinstance(fix, str) else fix
+                video_path, thumb_path, render_error2 = render_video(
+                    clips=clips,
+                    audio_path=audio_path,
+                    subs_path=ass_path if ass_path.exists() else None,
+                    music_path=music_path if music_path.exists() else None,
+                    images=images,
+                    timestamp=timestamp,
+                    temp_dir=settings.temp_dir,
+                    output_dir=output_target,
+                    nicho_slug=nicho_slug,
+                    gancho=content.gancho,
+                    titulo=content.titulo,
+                    duracion_audio=audio_duration,
+                    velocidad=content.velocidad_cortes.value if hasattr(content.velocidad_cortes, 'value') else str(content.velocidad_cortes),
+                    num_clips=content.num_clips,
+                    render_fixes=render_fixes,
+                )
+                if render_error2:
+                    render_error = render_error2
+            except Exception:
+                pass
+
+    if render_error or not video_path:
+        manifest.status = JobStatus.ERROR.value
+        manifest.error_stage = "render"
+        manifest.error_message = render_error or "Render produced no output"
+        manifest.error_code = ErrorCode.FFMPEG_FILTER_FAIL.value
+        state.save(manifest)
+        notify_error(manifest)
+        ctx["abort"] = True
+        return ctx
+
+    manifest.video_path = str(video_path)
+    manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
+    if manifest.thumbnail_path:
+        manifest.publish_cover_path = manifest.thumbnail_path
+    state.mark_stage(manifest, "render", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+
+    # ── Stage 8.5: Post-Render QA ──
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🔬 Post-render QA...")
+    try:
+        from pipeline.post_render_qa import post_render_qa
+        from pipeline.duration_validator import get_max_duration
+
+        platform_max_duration = float(get_max_duration(ctx["nicho"].plataforma))
+        qa_passed, qa_issues = post_render_qa(
+            video_path,
+            expected_width=1080,
+            expected_height=1920,
+            min_duration=10.0,
+            max_duration=platform_max_duration,
+        )
+        manifest.qa_passed = qa_passed
+        manifest.qa_issues = qa_issues
+
+        if not qa_passed:
+            logger.warning("⚠️ Post-render QA found issues — sending to review")
+            # Move to review instead of failing completely
+            if manifest.status != JobStatus.MANUAL_REVIEW.value:
+                manifest.status = JobStatus.MANUAL_REVIEW.value
+                # Move video to review dir
+                review_path = settings.review_dir / video_path.name
+                if video_path != review_path:
+                    import shutil as sh
+                    sh.move(str(video_path), str(review_path))
+                    manifest.video_path = str(review_path)
+                    video_path = review_path
+    except Exception as e:
+        logger.debug(f"Post-render QA skipped: {e}")
+
+    ctx["video_path"] = video_path
+    ctx["output_target"] = output_target
+    return ctx
+
+
+def _stage_publish(ctx: dict) -> dict:
+    """Stage 9: Publish (Drive, Sheets, Supabase, Telegram)."""
+    from publishers.telegram import notify_success, notify_review
+    from publishers.drive_sheets import upload_to_drive, log_to_sheets
+    from services.supabase_client import save_result, save_performance
+
+    timer = _stage_timer()
+    ctx["progress"].update(ctx["task_id"], description="[cyan]📤 Publishing...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    content = ctx["content"]
+    quality = ctx["quality"]
+    video_path = ctx["video_path"]
+    timestamp = ctx["timestamp"]
+    tts_engine = ctx["tts_engine"]
+    nicho_slug = ctx["nicho_slug"]
+
+    drive_link = "N/A"
+    if settings.use_drive and video_path:
+        link = upload_to_drive(video_path, video_path.name)
+        if link:
+            drive_link = link
+            manifest.drive_link = link
+
+    if settings.use_drive:
+        log_to_sheets({
+            "fecha": datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d"),
+            "nicho": nicho_slug,
+            "titulo": content.titulo,
+            "gancho": content.gancho,
+            "cta": content.cta,
+            "caption": manifest.publish_description,
+            "hook_score": quality.block_scores.hook,
+            "score_desarrollo": quality.block_scores.desarrollo,
+            "score_cierre": quality.block_scores.cierre,
+            "quality_score": quality.quality_score,
+            "quality_status": quality.quality_status,
+            "ab_variant": manifest.ab_variant,
+            "viral_score": content.viral_score,
+            "velocidad": str(content.velocidad_cortes),
+            "tts_engine": tts_engine,
+            "plataforma": ctx["nicho"].plataforma,
+            "num_clips": content.num_clips,
+            "hashtags": manifest.publish_hashtags_text,
+            "comment": manifest.publish_comment,
+            "cover_path": manifest.publish_cover_path,
+            "drive_link": drive_link,
+            "timestamp": timestamp,
+        })
+
+    # Save to Supabase: basic result + performance metrics
+    save_result(
+        settings.supabase_url, settings.supabase_anon_key,
+        nicho_slug, content.titulo, content.gancho,
+        content.viral_score, content.palabras_clave, timestamp,
+        manifest.ab_variant, quality.quality_score,
+    )
+    save_performance(
+        settings.supabase_url, settings.supabase_anon_key,
+        nicho_slug,
+        titulo=content.titulo,
+        gancho=content.gancho,
+        hook_score=quality.block_scores.hook,
+        desarrollo_score=quality.block_scores.desarrollo,
+        cierre_score=quality.block_scores.cierre,
+        quality_score=quality.quality_score,
+        viral_score=content.viral_score,
+        duration_seconds=manifest.duration_seconds,
+        ab_variant=manifest.ab_variant,
+        cta=content.cta,
+        tts_engine=tts_engine,
+        velocidad=str(content.velocidad_cortes),
+        healing_count=len(manifest.healing_attempts),
+        timestamp=timestamp,
+    )
+
+    # Notifications
+    if manifest.status == JobStatus.MANUAL_REVIEW.value:
+        notify_review(manifest)
+    else:
+        manifest.status = JobStatus.SUCCESS.value
+        notify_success(manifest, drive_link)
+
+    state.mark_stage(manifest, "publish", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+    return ctx
+
+
+def _stage_cleanup(ctx: dict) -> dict:
+    """Stage 10: Cleanup temp files and archive manifest."""
+    from pipeline.cleanup import cleanup_temp
+
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🧹 Cleaning up...")
+
+    manifest = ctx["manifest"]
+    state = ctx["state"]
+    timestamp = ctx["timestamp"]
+    video_path = ctx.get("video_path")
+    output_target = ctx.get("output_target", settings.output_dir)
+
+    cleanup_temp(timestamp)
+    state.archive_manifest(manifest, output_target if video_path else settings.output_dir)
+    ctx["progress"].advance(ctx["task_id"])
+    return ctx
+
+
+# ── Main Pipeline ────────────────────────────────────────────────────────────
+
 def run_pipeline(
     nicho_slug: str,
     dry_run: bool = False,
@@ -241,29 +914,12 @@ def run_pipeline(
     Returns:
         JobManifest with full audit trail.
     """
-    from pipeline.content_gen import generate_content, ContentGenerationError
-    from pipeline.quality_gate import validate_and_score
-    from pipeline.self_healer import attempt_healing
-    from pipeline.tts_engine import generate_tts, get_audio_duration
-    from pipeline.subtitles import generate_timed_ass_from_text
-    from pipeline.image_gen import generate_images
-    from pipeline.video_stock import fetch_stock_videos
-    from pipeline.music import fetch_music
-    from pipeline.sfx import fetch_sfx
-    from pipeline.renderer import download_clips, render_video
-    from pipeline.duration_validator import validate_duration
-    from pipeline.pre_render_validator import validate_pre_render
-    from pipeline.cleanup import cleanup_temp, cleanup_stale_temp
-    from publishers.telegram import notify_success, notify_error, notify_review
-    from publishers.drive_sheets import upload_to_drive, log_to_sheets
-    from services.publish_package import build_publish_package
-    from services.supabase_client import read_memory, save_result, save_performance
+    from pipeline.cleanup import cleanup_stale_temp
+    from publishers.telegram import notify_error
     from services.niche_memory import (
-        build_niche_memory_context,
         get_niche_memory_lines,
         normalize_manual_ideas,
     )
-    from services.trends import get_trending_context
 
     nicho = NICHOS.get(nicho_slug)
     if not nicho:
@@ -309,146 +965,43 @@ def run_pipeline(
     settings.ensure_dirs()
     cleanup_stale_temp()
 
+    # Shared context dict passed to all stage methods
+    ctx: dict = {
+        "manifest": manifest,
+        "state": state,
+        "nicho": nicho,
+        "nicho_slug": nicho_slug,
+        "timestamp": timestamp,
+        "manual_idea_lines": manual_idea_lines,
+        "abort": False,
+    }
+
     with _progress_scope() as progress:
         total_stages = 5 if dry_run else 10
         main_task = progress.add_task(
             f"[cyan]🎬 {nicho_slug.upper()} Pipeline", total=total_stages
         )
+        ctx["progress"] = progress
+        ctx["task_id"] = main_task
 
         try:
-            # ── Stage 1: Read Memory ─────────────────────────────────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]🧠 Reading memory...")
-            if not state.is_stage_done(manifest, "content_gen"):
-                memoria = read_memory(
-                    settings.supabase_url, settings.supabase_anon_key, nicho_slug
-                )
-                local_memory_ctx = build_niche_memory_context(nicho_slug, limit=8)
-                if local_memory_ctx != "Sin memoria local por nicho":
-                    if memoria and memoria != "Sin memoria previa":
-                        memoria = f"{memoria} | MEMORIA_LOCAL: {local_memory_ctx}"
-                    else:
-                        memoria = f"MEMORIA_LOCAL: {local_memory_ctx}"
-                if manual_idea_lines:
-                    manual_ctx = " | ".join(manual_idea_lines)
-                    memoria = (
-                        f"{memoria} | IDEAS_MANUALES: {manual_ctx}"
-                        if memoria
-                        else f"IDEAS_MANUALES: {manual_ctx}"
-                    )
-                trending = get_trending_context(nicho.nombre, settings.rapidapi_key)
-            else:
-                memoria = "Sin memoria previa"
-                trending = ""
-            manifest.timings["memory"] = _elapsed(timer)
-            progress.advance(main_task)
-
-            # ── Stage 2: Generate Content ────────────────────────────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]🤖 Generating content...")
-            raw_content = {}  # Inicializar antes del bloque (fix: NameError en --resume)
-            if not state.is_stage_done(manifest, "content_gen"):
-                try:
-                    raw_content = generate_content(
-                        nicho,
-                        trending,
-                        memoria,
-                        manual_ideas=manual_idea_lines,
-                    )
-                except ContentGenerationError as e:
-                    manifest.status = JobStatus.ERROR.value
-                    manifest.error_stage = "content_gen"
-                    manifest.error_message = str(e)
-                    manifest.error_code = ErrorCode.CONTENT_GEN_API_FAIL.value
-                    state.save(manifest)
-                    notify_error(manifest)
-                    return manifest
-
-                state.mark_stage(manifest, "content_gen", _elapsed(timer))
-            progress.advance(main_task)
-
-            # ── Stage 3: Quality Gate ────────────────────────────────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]🔎 Quality check...")
-            content, quality, errors = validate_and_score(raw_content, nicho)
-
-            # Self-healing loop
-            healing_attempts = 0
-            while (content is None or not quality.is_approved) and healing_attempts < app_config.max_healing_attempts:
-                healing_attempts += 1
-                error_detail = "; ".join(errors) if errors else "Quality below threshold"
-                primary_code = quality.error_codes[0] if quality.error_codes else ErrorCode.UNKNOWN
-
-                if content is None:
-                    fix = attempt_healing(
-                        manifest, FailureType.JSON, "quality_gate",
-                        error_detail, json.dumps(raw_content, default=str)[:1000],
-                        error_code=ErrorCode.JSON_SCHEMA_INVALID,
-                    )
-                    if fix:
-                        try:
-                            raw_content = json.loads(fix)
-                            content, quality, errors = validate_and_score(raw_content, nicho)
-                            continue
-                        except (json.JSONDecodeError, Exception):
-                            pass
-                else:
-                    fix = attempt_healing(
-                        manifest, FailureType.PROMPT, "quality_gate",
-                        error_detail, content.guion[:500] if content else "",
-                        nicho=nicho,
-                        error_code=primary_code,
-                    )
-                    if fix:
-                        try:
-                            fixed_data = json.loads(fix) if isinstance(fix, str) and fix.strip().startswith("{") else raw_content
-                            content, quality, errors = validate_and_score(fixed_data, nicho)
-                            continue
-                        except (json.JSONDecodeError, Exception):
-                            pass
-                break
-
-            if content is None:
-                manifest.status = JobStatus.ERROR.value
-                manifest.error_stage = "quality_gate"
-                manifest.error_message = "Content validation failed after healing"
-                manifest.error_code = ErrorCode.JSON_SCHEMA_INVALID.value
-                state.save(manifest)
-                notify_error(manifest)
+            # ── Stages 1-3: Content Generation ──
+            ctx = _stage_memory(ctx)
+            if ctx.get("abort"):
+                _print_summary(manifest)
                 return manifest
 
-            # Update manifest with content
-            manifest.titulo = content.titulo
-            manifest.gancho = content.gancho
-            manifest.guion = content.guion
-            manifest.cta = content.cta
-            manifest.caption = content.caption
-            publish_pkg = build_publish_package(
-                title=manifest.titulo,
-                hook=manifest.gancho,
-                cta=manifest.cta,
-                caption=manifest.caption,
-            )
-            manifest.publish_title = publish_pkg["title"]
-            manifest.publish_description = publish_pkg["description"]
-            manifest.publish_hashtags = publish_pkg["hashtags"]
-            manifest.publish_hashtags_text = publish_pkg["hashtags_text"]
-            manifest.publish_comment = publish_pkg["comment"]
-            manifest.quality_score = quality.quality_score
-            manifest.viral_score = content.viral_score
-            manifest.hook_score = quality.block_scores.hook
-            manifest.block_scores = quality.block_scores
-            manifest.ab_variant = raw_content.get("_ab_variant", "A")
-            manifest.input_hash = content.input_hash
+            ctx = _stage_content_gen(ctx)
+            if ctx.get("abort"):
+                _print_summary(manifest)
+                return manifest
 
-            if not quality.is_approved:
-                manifest.status = JobStatus.MANUAL_REVIEW.value
-                logger.warning(f"Content sent to manual review (score: {quality.quality_score})")
+            ctx = _stage_quality_gate(ctx)
+            if ctx.get("abort"):
+                _print_summary(manifest)
+                return manifest
 
-            state.mark_stage(manifest, "quality_gate", _elapsed(timer))
-            progress.advance(main_task)
-
-            # ── DRY RUN EXIT ─────────────────────────────────────────
+            # ── DRY RUN EXIT ──
             if dry_run:
                 manifest.status = JobStatus.DRAFT.value
                 state.save(manifest)
@@ -458,359 +1011,19 @@ def run_pipeline(
                 _print_summary(manifest)
                 return manifest
 
-            # ── Stage 4: TTS ─────────────────────────────────────────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]🗣️ Generating TTS...")
-            guion_tts = " ".join(filter(None, [content.gancho, content.guion, content.cta]))
-            guion_tts = _clean_tts_text(guion_tts)
-
-            audio_path = settings.temp_dir / f"audio_{timestamp}.mp3"
-            vtt_path = settings.temp_dir / f"subs_{timestamp}.vtt"
-
-            # Idempotency: skip if audio already exists with same input
-            tts_hash = state.compute_input_hash(guion_tts)
-            if state.should_skip_stage(manifest, "tts", audio_path, tts_hash):
-                tts_engine = manifest.tts_engine_used or "cached"
-            else:
-                tts_ok, tts_engine = generate_tts(
-                    guion_tts, audio_path,
-                    voz_gemini=nicho.voz_gemini,
-                    voz_edge=nicho.voz_edge,
-                    rate_tts=nicho.rate_tts,
-                    pitch_tts=nicho.pitch_tts,
-                    subs_vtt_path=vtt_path,
-                    enforce_provider_policy=False,
-                )
-
-                if not tts_ok:
-                    fix = attempt_healing(
-                        manifest, FailureType.AUDIO, "tts",
-                        "TTS generation failed for both Gemini and Edge-TTS",
-                        error_code=ErrorCode.TTS_EMPTY_AUDIO,
-                    )
-                    if fix:
-                        fix_data = json.loads(fix) if isinstance(fix, str) else {}
-                        if fix_data.get("action") == "retry_edge_tts":
-                            tts_ok, tts_engine = generate_tts(
-                                guion_tts, audio_path,
-                                voz_gemini="",
-                                voz_edge=nicho.voz_edge,
-                                rate_tts=nicho.rate_tts,
-                                pitch_tts=nicho.pitch_tts,
-                                subs_vtt_path=vtt_path,
-                                enforce_provider_policy=False,
-                            )
-
-                    if not tts_ok:
-                        manifest.status = JobStatus.ERROR.value
-                        manifest.error_stage = "tts"
-                        manifest.error_message = "TTS failed after healing"
-                        manifest.error_code = ErrorCode.TTS_EMPTY_AUDIO.value
-                        state.save(manifest)
-                        notify_error(manifest)
-                        return manifest
-
-                manifest.tts_engine_used = tts_engine
-
-            manifest.audio_path = str(audio_path)
-            state.mark_stage(manifest, "tts", _elapsed(timer))
-            progress.advance(main_task)
-
-            # ── Stage 5: Subtitles (script-locked timing) ────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]📝 Creating subtitles...")
-            ass_path = settings.temp_dir / f"subs_{timestamp}.ass"
-            audio_duration = get_audio_duration(audio_path)
-
-            if not state.should_skip_stage(manifest, "subtitles", ass_path):
-                subtitle_events = generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
-                logger.info(f"Script-locked subtitles: {subtitle_events} events")
-
-            manifest.subs_path = str(ass_path)
-            manifest.duration_seconds = audio_duration
-
-            # Duration validation
-            audio_duration, was_trimmed = validate_duration(
-                audio_duration, nicho.plataforma, audio_path,
-                niche_slug=nicho.slug,
-            )
-            if was_trimmed:
-                manifest.duration_seconds = audio_duration
-
-            state.mark_stage(manifest, "subtitles", _elapsed(timer))
-            progress.advance(main_task)
-
-            # ── Stage 6: Media (Stock, Lyria → Pixabay) ────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]🎨 Generating media...")
-            keywords = content.palabras_clave[:nicho.keywords_count]
-
-            stock_clips = fetch_stock_videos(keywords, nicho.num_clips)
-            logger.info(f"📦 Stock: fetching {len(stock_clips)} clips from Pexels")
-
-            images = generate_images(
-                content.prompt_imagen or (keywords[0] if keywords else nicho.nombre),
-                nicho.direccion_visual,
-                manifest.ab_variant,
-                timestamp,
-                settings.temp_dir,
-                count=max(4, min(10, int(settings.generated_images_count))),
-            )
-
-            # --- Lyria 3 AI music (NEW — with Pixabay/Jamendo fallback) ---
-            music_path = settings.temp_dir / f"musica_{timestamp}.mp3"
-            try:
-                from pipeline.music_ai import fetch_music_with_fallback
-                fetch_music_with_fallback(
-                    content.mood_musica or nicho.genero_musica,
-                    music_path,
-                    duration_seconds=audio_duration,
-                    nicho=nicho_slug,
-                )
-            except Exception:
-                fetch_music(content.mood_musica or nicho.genero_musica, music_path)
-
-            sfx_paths = fetch_sfx(timestamp, settings.temp_dir)
-
-            manifest.image_paths = [str(p) for p in images]
-            manifest.sfx_paths = [str(p) for p in sfx_paths]
-
-            state.mark_stage(manifest, "media", _elapsed(timer))
-            progress.advance(main_task)
-
-            # ── Stage 7: Download clips ─────────────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]⬇️ Downloading clips...")
-            clips = download_clips(stock_clips, timestamp, settings.temp_dir)
-            manifest.clip_paths = [str(p) for p in clips]
-
-            if not clips and not images:
-                manifest.status = JobStatus.ERROR.value
-                manifest.error_stage = "download"
-                manifest.error_message = "No clips and no images"
-                manifest.error_code = ErrorCode.ASSET_MISSING.value
-                state.save(manifest)
-                notify_error(manifest)
-                return manifest
-
-            logger.info(f"📊 Total clips: {len(clips)} (Stock: {len(stock_clips)})")
-            state.mark_stage(manifest, "combine", _elapsed(timer))
-            progress.advance(main_task)
-
-            # ── Stage 7.5: Pre-Render Validation ─────────────────────
-            progress.update(main_task, description="[cyan]✅ Validating assets...")
-            pre_ok, pre_errors = validate_pre_render(
-                audio_path=audio_path,
-                subs_path=ass_path if ass_path.exists() else None,
-                clips=clips,
-                images=images,
-                music_path=music_path if music_path.exists() else None,
-                platform=nicho.plataforma,
-                audio_duration=audio_duration,
-            )
-
-            if not pre_ok:
-                first_code = pre_errors[0][0] if pre_errors else ErrorCode.ASSET_MISSING
-                all_msgs = "; ".join(msg for _, msg in pre_errors)
-                manifest.status = JobStatus.ERROR.value
-                manifest.error_stage = "pre_render_validation"
-                manifest.error_message = all_msgs[:200]
-                manifest.error_code = first_code.value
-                state.save(manifest)
-                notify_error(manifest)
-                return manifest
-
-            state.mark_stage(manifest, "validated")
-
-            # ── Stage 8: Render ──────────────────────────────────────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]🎥 Rendering video...")
-            output_target = settings.output_dir
-            if manifest.status == JobStatus.MANUAL_REVIEW.value:
-                output_target = settings.review_dir
-
-            video_path, thumb_path, render_error = render_video(
-                clips=clips,
-                audio_path=audio_path,
-                subs_path=ass_path if ass_path.exists() else None,
-                music_path=music_path if music_path.exists() else None,
-                images=images,
-                timestamp=timestamp,
-                temp_dir=settings.temp_dir,
-                output_dir=output_target,
-                nicho_slug=nicho_slug,
-                gancho=content.gancho,
-                titulo=content.titulo,
-                duracion_audio=audio_duration,
-                velocidad=content.velocidad_cortes.value if hasattr(content.velocidad_cortes, 'value') else str(content.velocidad_cortes),
-                num_clips=content.num_clips,
-                duraciones_clips=[float(d) for d in content.duraciones_clips] if content.duraciones_clips else None,
-            )
-
-            if render_error:
-                render_code = ErrorCode.FFMPEG_FILTER_FAIL
-                if "timeout" in render_error.lower():
-                    render_code = ErrorCode.FFMPEG_TIMEOUT
-                elif "concat" in render_error.lower():
-                    render_code = ErrorCode.FFMPEG_CONCAT_FAIL
-
-                fix = attempt_healing(
-                    manifest, FailureType.RENDER, "render",
-                    render_error, json.dumps({"velocidad": str(content.velocidad_cortes)}),
-                    error_code=render_code,
-                )
-                if fix:
-                    try:
-                        render_fixes = json.loads(fix) if isinstance(fix, str) else fix
-                        video_path, thumb_path, render_error2 = render_video(
-                            clips=clips,
-                            audio_path=audio_path,
-                            subs_path=ass_path if ass_path.exists() else None,
-                            music_path=music_path if music_path.exists() else None,
-                            images=images,
-                            timestamp=timestamp,
-                            temp_dir=settings.temp_dir,
-                            output_dir=output_target,
-                            nicho_slug=nicho_slug,
-                            gancho=content.gancho,
-                            titulo=content.titulo,
-                            duracion_audio=audio_duration,
-                            velocidad=content.velocidad_cortes.value if hasattr(content.velocidad_cortes, 'value') else str(content.velocidad_cortes),
-                            num_clips=content.num_clips,
-                            render_fixes=render_fixes,
-                        )
-                        if render_error2:
-                            render_error = render_error2
-                    except Exception:
-                        pass
-
-            if render_error or not video_path:
-                manifest.status = JobStatus.ERROR.value
-                manifest.error_stage = "render"
-                manifest.error_message = render_error or "Render produced no output"
-                manifest.error_code = ErrorCode.FFMPEG_FILTER_FAIL.value
-                state.save(manifest)
-                notify_error(manifest)
-                return manifest
-
-            manifest.video_path = str(video_path)
-            manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
-            if manifest.thumbnail_path:
-                manifest.publish_cover_path = manifest.thumbnail_path
-            state.mark_stage(manifest, "render", _elapsed(timer))
-            progress.advance(main_task)
-
-            # ── Stage 8.5: Post-Render QA ─────────────────────────────
-            progress.update(main_task, description="[cyan]🔬 Post-render QA...")
-            try:
-                from pipeline.post_render_qa import post_render_qa
-                from pipeline.duration_validator import get_max_duration
-
-                platform_max_duration = float(get_max_duration(nicho.plataforma))
-                qa_passed, qa_issues = post_render_qa(
-                    video_path,
-                    expected_width=1080,
-                    expected_height=1920,
-                    min_duration=10.0,
-                    max_duration=platform_max_duration,
-                )
-                manifest.qa_passed = qa_passed
-                manifest.qa_issues = qa_issues
-
-                if not qa_passed:
-                    logger.warning(f"⚠️ Post-render QA found issues — sending to review")
-                    # Move to review instead of failing completely
-                    if manifest.status != JobStatus.MANUAL_REVIEW.value:
-                        manifest.status = JobStatus.MANUAL_REVIEW.value
-                        # Move video to review dir
-                        review_path = settings.review_dir / video_path.name
-                        if video_path != review_path:
-                            import shutil as sh
-                            sh.move(str(video_path), str(review_path))
-                            manifest.video_path = str(review_path)
-                            video_path = review_path
-            except Exception as e:
-                logger.debug(f"Post-render QA skipped: {e}")
-
-            # ── Stage 9: Publish ─────────────────────────────────────
-            timer = _stage_timer()
-            progress.update(main_task, description="[cyan]📤 Publishing...")
-
-            drive_link = "N/A"
-            if settings.use_drive and video_path:
-                link = upload_to_drive(video_path, video_path.name)
-                if link:
-                    drive_link = link
-                    manifest.drive_link = link
-
-            if settings.use_drive:
-                log_to_sheets({
-                    "fecha": datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d"),
-                    "nicho": nicho_slug,
-                    "titulo": content.titulo,
-                    "gancho": content.gancho,
-                    "cta": content.cta,
-                    "caption": manifest.publish_description,
-                    "hook_score": quality.block_scores.hook,
-                    "score_desarrollo": quality.block_scores.desarrollo,
-                    "score_cierre": quality.block_scores.cierre,
-                    "quality_score": quality.quality_score,
-                    "quality_status": quality.quality_status,
-                    "ab_variant": manifest.ab_variant,
-                    "viral_score": content.viral_score,
-                    "velocidad": str(content.velocidad_cortes),
-                    "tts_engine": tts_engine,
-                    "plataforma": nicho.plataforma,
-                    "num_clips": content.num_clips,
-                    "hashtags": manifest.publish_hashtags_text,
-                    "comment": manifest.publish_comment,
-                    "cover_path": manifest.publish_cover_path,
-                    "drive_link": drive_link,
-                    "timestamp": timestamp,
-                })
-
-            # Save to Supabase: basic result + performance metrics
-            save_result(
-                settings.supabase_url, settings.supabase_anon_key,
-                nicho_slug, content.titulo, content.gancho,
-                content.viral_score, content.palabras_clave, timestamp,
-                manifest.ab_variant, quality.quality_score,
-            )
-            save_performance(
-                settings.supabase_url, settings.supabase_anon_key,
-                nicho_slug,
-                titulo=content.titulo,
-                gancho=content.gancho,
-                hook_score=quality.block_scores.hook,
-                desarrollo_score=quality.block_scores.desarrollo,
-                cierre_score=quality.block_scores.cierre,
-                quality_score=quality.quality_score,
-                viral_score=content.viral_score,
-                duration_seconds=manifest.duration_seconds,
-                ab_variant=manifest.ab_variant,
-                cta=content.cta,
-                tts_engine=tts_engine,
-                velocidad=str(content.velocidad_cortes),
-                healing_count=len(manifest.healing_attempts),
-                timestamp=timestamp,
-            )
-
-            # Notifications
-            if manifest.status == JobStatus.MANUAL_REVIEW.value:
-                notify_review(manifest)
-            else:
-                manifest.status = JobStatus.SUCCESS.value
-                notify_success(manifest, drive_link)
-
-            state.mark_stage(manifest, "publish", _elapsed(timer))
-            progress.advance(main_task)
-
-            # ── Stage 10: Cleanup ────────────────────────────────────
-            progress.update(main_task, description="[cyan]🧹 Cleaning up...")
-            cleanup_temp(timestamp)
-            # Archive manifest to output dir for audit trail
-            state.archive_manifest(manifest, output_target if video_path else settings.output_dir)
-            progress.advance(main_task)
+            # ── Stages 4-10: Production ──
+            for stage_fn in [
+                _stage_tts,
+                _stage_subtitles,
+                _stage_media,
+                _stage_download,
+                _stage_render,
+                _stage_publish,
+                _stage_cleanup,
+            ]:
+                ctx = stage_fn(ctx)
+                if ctx.get("abort"):
+                    break
 
         except Exception as e:
             logger.exception(f"Pipeline crashed: {e}")
@@ -823,16 +1036,6 @@ def run_pipeline(
 
     _print_summary(manifest)
     return manifest
-
-
-def _clean_tts_text(text: str) -> str:
-    """Clean text for TTS input."""
-    import re
-    text = re.sub(r"<[^>]*>", " ", text)
-    text = re.sub(r'[{}\[\]|\\^~*_#@"]', " ", text)
-    text = re.sub(r"\s+", " ", text)
-    text = text.replace(", ", ", ").replace(". ", ". ")
-    return text.strip()
 
 
 def _print_summary(manifest: JobManifest):
@@ -862,7 +1065,7 @@ def _print_summary(manifest: JobManifest):
 @app.command()
 def run(
     niche: str = typer.Argument(None, help="Niche: finanzas, historia, curiosidades, historias_reddit, ia_herramientas"),
-    test: bool = typer.Option(False, "--test", help="Quick test with finanzas (V15)"),
+    test: bool = typer.Option(False, "--test", help="Quick test (default: finanzas, or specify niche)"),
     all_now: bool = typer.Option(False, "--all-now", help="Run all 5 nichos immediately (V15)"),
     schedule: bool = typer.Option(False, "--schedule", help="Start 24/7 scheduler"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Content gen + QA only, no render"),
@@ -934,20 +1137,27 @@ def run(
             console.print("[red]Job not found or no video path[/red]")
 
     elif test:
+        # --test accepts optional niche: --test curiosidades
+        test_niche = niche or "finanzas"
+        if test_niche not in NICHOS:
+            console.print(f"[red]❌ Unknown niche: {test_niche}[/red]")
+            console.print(f"Available: {', '.join(NICHOS.keys())}")
+            raise typer.Exit(1)
+
         if use_v15:
-            console.print("\n[yellow]🧪 TEST MODE — V15 PRO (finanzas)[/yellow]\n")
+            console.print(f"\n[yellow]🧪 TEST MODE — V15 PRO ({test_niche})[/yellow]\n")
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
             mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
             run_pipeline_v15(
-                "finanzas",
+                test_niche,
                 mode=mode,
                 reference_url=reference_url,
                 manual_ideas=manual_ideas,
             )
         else:
-            console.print("\n[yellow]🧪 TEST MODE — V14 Classic (finanzas)[/yellow]\n")
-            run_pipeline("finanzas", manual_ideas=manual_ideas)
+            console.print(f"\n[yellow]🧪 TEST MODE — V14 Classic ({test_niche})[/yellow]\n")
+            run_pipeline(test_niche, manual_ideas=manual_ideas)
 
     elif dry_run and niche:
         if use_v15:

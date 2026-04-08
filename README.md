@@ -1,18 +1,20 @@
-# Video Factory V14
+# Video Factory V15 PRO
 
-Fabrica automatizada de videos verticales (formato short) con pipeline por etapas, recuperacion por checkpoints y ejecucion manual, programada o desde dashboard web.
+Fabrica automatizada de videos verticales (formato short) con pipeline multi-agente por etapas, recuperacion por checkpoints y ejecucion manual, programada o desde dashboard web.
 
-Genera contenido, valida calidad, produce audio/subtitulos, construye el video final y publica resultados con trazabilidad por job.
+> **V14 → V15**: V14 es el pipeline clasico secuencial. V15 agrega un sistema multi-agente (Research → Script → Scene → Assets → Editor), director humano-en-el-loop, StoryState para coherencia narrativa y feedback loop con autoregenacion. V14 se mantiene como fallback con `--v14`.
 
 ## Caracteristicas
 
-- Pipeline completo end-to-end para 5 nichos.
+- Pipeline completo end-to-end para 5 nichos (V14 clasico + V15 multi-agent).
 - Checkpoints por etapa con resume de jobs fallidos.
 - Idempotencia por hashes para evitar reprocesos innecesarios.
 - QA antes y despues del render.
 - Dashboard web con API y logs en tiempo real (SSE).
 - Scheduler 24/7 con APScheduler y timezone America/Mexico_City.
 - Integraciones opcionales: Supabase, Google Drive/Sheets, Telegram.
+- Validacion Pydantic de configuraciones YAML al arrancar.
+- Retry con backoff exponencial + circuit breaker en todas las APIs externas.
 
 ## Nichos incluidos
 
@@ -22,46 +24,57 @@ Genera contenido, valida calidad, produce audio/subtitulos, construye el video f
 - historias_reddit
 - ia_herramientas
 
+Cada nicho se configura via YAML en `nichos/` — editable sin tocar Python.
+
 ## Stack tecnico
 
 - Python + Typer (CLI)
 - FastAPI + Uvicorn + SSE (dashboard)
 - APScheduler (ejecucion programada)
 - Loguru + Rich (observabilidad y UX en consola)
-- Pydantic / pydantic-settings (configuracion y modelos)
+- Pydantic / pydantic-settings (configuracion, modelos y validacion YAML)
+- httpx (HTTP con retry, backoff, circuit breaker)
 
 ## Estructura principal
 
 ```
 .
-|-- video_factory.py         # Orquestador principal (CLI)
-|-- scheduler.py             # Scheduler 24/7
-|-- dashboard.py             # Servidor dashboard/API
-|-- config.py                # Carga .env y settings globales
-|-- state_manager.py         # Checkpoints, manifests y resume
-|-- pipeline/                # Etapas de generacion/render
-|-- publishers/              # Telegram, Drive/Sheets
-|-- services/                # HTTP, trends, Supabase
-|-- workspace/
-|   |-- temp/                # Artefactos temporales por job
-|   `-- output/              # Videos y manifests finales
-`-- logs/                    # Logs rotados
+├── video_factory.py         # Orquestador principal (CLI) — stages extraidos
+├── scheduler.py             # Scheduler 24/7
+├── dashboard.py             # Servidor dashboard/API
+├── config.py                # Carga .env y settings globales
+├── state_manager.py         # Checkpoints, manifests y resume
+├── core/
+│   ├── pipeline_v15.py      # Pipeline V15 multi-agente
+│   └── director.py          # Director mode (human-in-the-loop)
+├── agents/                  # Agentes V15 (script, scene, etc.)
+├── pipeline/                # Etapas de generacion/render (TTS, subs, stock, etc.)
+├── publishers/              # Telegram, Drive/Sheets
+├── services/                # HTTP client, LLM router, trends, Supabase
+├── models/                  # Pydantic models (content, config)
+├── nichos/                  # Configuraciones YAML por nicho
+├── schemas/                 # JSON schemas
+├── tools/                   # OpenMontage tools
+├── workspace/
+│   ├── temp/                # Artefactos temporales por job
+│   └── output/              # Videos y manifests finales
+└── logs/                    # Logs rotados
 ```
 
-## Flujo del pipeline
+## Flujo del pipeline (V14)
 
-Etapas principales (resumidas):
+Etapas principales (cada una extraida a su propio metodo):
 
-1. Lectura de memoria/contexto
-2. Generacion de contenido
-3. Quality gate + self-healing
-4. TTS
-5. Subtitulos
-6. Media (clips/imagenes/musica/sfx)
-7. Descarga/combinacion de clips
-8. Render
-9. Publicacion y persistencia
-10. Limpieza y archivado de manifest
+1. Lectura de memoria/contexto (`_stage_memory`)
+2. Generacion de contenido (`_stage_content_gen`)
+3. Quality gate + self-healing (`_stage_quality_gate`)
+4. TTS (`_stage_tts`)
+5. Subtitulos (`_stage_subtitles`)
+6. Media — clips/imagenes/musica/sfx (`_stage_media`)
+7. Descarga/combinacion de clips + pre-render validation (`_stage_download`)
+8. Render + post-render QA (`_stage_render`)
+9. Publicacion y persistencia (`_stage_publish`)
+10. Limpieza y archivado de manifest (`_stage_cleanup`)
 
 Cada job genera/actualiza un manifest JSON para auditoria y recuperacion.
 
@@ -127,10 +140,34 @@ Probar 1 video de finanzas:
 python video_factory.py --test
 ```
 
-Ejecutar un nicho ahora:
+Probar con un nicho especifico:
+
+```bash
+python video_factory.py --test curiosidades
+```
+
+Ejecutar un nicho ahora (V14 clasico):
 
 ```bash
 python video_factory.py finanzas
+```
+
+Ejecutar con V15 multi-agente:
+
+```bash
+python video_factory.py --v15 finanzas
+```
+
+Modo director (interactivo, apruebas cada stage):
+
+```bash
+python video_factory.py --director finanzas
+```
+
+Forzar V14 clasico:
+
+```bash
+python video_factory.py --v14 finanzas
 ```
 
 Ejecutar todos los nichos:
@@ -210,4 +247,4 @@ Para uso continuo en Windows, puedes ejecutar en inicio de sesion con Task Sched
 
 ## Estado del proyecto
 
-Repositorio activo con rama main y pipeline funcional para ejecucion local.
+Repositorio activo con rama main y pipeline funcional V15 PRO para ejecucion local y VPS.

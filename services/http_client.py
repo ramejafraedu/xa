@@ -9,6 +9,7 @@ Features:
   - 429 rate-limit handling (Retry-After header)
   - Circuit breaker: after 3 consecutive failures to a domain,
     short-circuit for 60s to avoid hammering a dead API
+  - Reusable ``with_api_retry`` decorator for high-level functions
   - Secrets never logged (Authorization headers masked)
 
 MODULE CONTRACT:
@@ -17,13 +18,60 @@ MODULE CONTRACT:
 """
 from __future__ import annotations
 
+import functools
+import random
 import time
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional, TypeVar
 
 import httpx
 from loguru import logger
+
+
+T = TypeVar("T")
+
+
+def with_api_retry(
+    tries: int = 3,
+    delay: float = 2.0,
+    backoff: float = 2.0,
+    exceptions: tuple = (Exception,),
+    label: str = "",
+) -> Callable:
+    """Decorator: retry a function with exponential backoff + jitter.
+
+    Usage::
+
+        @with_api_retry(tries=3, delay=2, backoff=2, label="Supabase")
+        def save_to_supabase(...):
+            ...
+    """
+    def decorator(fn: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> T:
+            fn_label = label or fn.__name__
+            last_exc: Exception | None = None
+            current_delay = delay
+            for attempt in range(1, tries + 1):
+                try:
+                    return fn(*args, **kwargs)
+                except exceptions as exc:
+                    last_exc = exc
+                    if attempt == tries:
+                        break
+                    jitter = random.uniform(0, current_delay * 0.3)
+                    wait = current_delay + jitter
+                    logger.warning(
+                        f"{fn_label} attempt {attempt}/{tries} failed: {exc}. "
+                        f"Retrying in {wait:.1f}s..."
+                    )
+                    time.sleep(wait)
+                    current_delay *= backoff
+            logger.error(f"{fn_label} failed after {tries} attempts: {last_exc}")
+            raise last_exc  # type: ignore[misc]
+        return wrapper
+    return decorator
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +228,8 @@ def request_with_retry(
 
             # Server error — retry with backoff
             if response.status_code >= 500:
-                wait = backoff_base ** attempt
-                logger.warning(f"Server error {response.status_code}. Waiting {wait:.0f}s. [{attempt}/{max_retries}]")
+                wait = backoff_base ** attempt + random.uniform(0, 1)
+                logger.warning(f"Server error {response.status_code}. Waiting {wait:.1f}s. [{attempt}/{max_retries}]")
                 _breaker.record_failure(url)
                 time.sleep(wait)
                 continue
@@ -193,8 +241,8 @@ def request_with_retry(
 
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
             last_error = e
-            wait = backoff_base ** attempt
-            logger.warning(f"Connection error: {e}. Waiting {wait:.0f}s. [{attempt}/{max_retries}]")
+            wait = backoff_base ** attempt + random.uniform(0, 1)
+            logger.warning(f"Connection error: {e}. Waiting {wait:.1f}s. [{attempt}/{max_retries}]")
             _breaker.record_failure(url)
             time.sleep(wait)
 

@@ -48,11 +48,13 @@ id_rsa.pub
 *.pid
 logs/
 
-# Generated workspace artifacts
+# Generated workspace artifacts (videos, temp, caches)
 workspace/temp/
 workspace/output/
 workspace/review_manual/
 workspace/video_cache/
+workspace/image_cache/
+workspace/music_cache/
 
 # Remotion runtime artifacts
 remotion-composer/node_modules/

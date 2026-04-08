@@ -4,6 +4,10 @@ Loads all .yaml files from the /nichos/ directory and converts them to
 NichoConfig objects. Falls back to the hardcoded dict if YAML is unavailable
 or files are missing.
 
+Validation errors (e.g. ``num_clips: "ocho"``) are caught at load time
+and logged with full Pydantic context so they never surface as a mystery
+crash deep inside Stage 6.
+
 Usage (replaces the bottom of config.py):
     from nichos._loader import load_nichos_from_yaml_dir
     NICHOS = load_nichos_from_yaml_dir(NICHOS_HARDCODED)
@@ -77,7 +81,24 @@ def load_nichos_from_yaml_dir(
             logger.debug(f"✅ Loaded niche from YAML: {nicho.slug}")
 
         except Exception as exc:
-            logger.warning(f"Failed loading {yaml_path.name}: {exc}. Using hardcoded fallback for this niche.")
+            # Surface Pydantic ValidationError details clearly
+            from pydantic import ValidationError
+            if isinstance(exc, ValidationError):
+                logger.error(
+                    f"❌ Validation error in {yaml_path.name}:\n"
+                    f"{exc}"
+                )
+                for err in exc.errors():
+                    field = " → ".join(str(loc) for loc in err["loc"])
+                    logger.error(
+                        f"  Field '{field}': {err['msg']} "
+                        f"(input: {err.get('input', '?')})"
+                    )
+            else:
+                logger.warning(
+                    f"Failed loading {yaml_path.name}: {exc}. "
+                    f"Using hardcoded fallback for this niche."
+                )
             # Add the hardcoded version if available
             stem = yaml_path.stem
             if stem in base_nichos:

@@ -464,6 +464,16 @@ def _apply_audio_filters(input_wav: Path, output_mp3: Path) -> bool:
         return False
 
 
+def clean_tts_text(text: str) -> str:
+    """Clean text for TTS input — strip HTML, special chars, normalize whitespace."""
+    import re
+    text = re.sub(r"<[^>]*>", " ", text)
+    text = re.sub(r'[{}\\[\\]|\\\\^~*_#@"]', " ", text)
+    text = re.sub(r"\s+", " ", text)
+    text = text.replace(", ", ", ").replace(". ", ". ")
+    return text.strip()
+
+
 def get_audio_duration(audio_path: Path) -> float:
     """Get audio duration in seconds using ffprobe."""
     try:

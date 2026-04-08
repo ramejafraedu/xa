@@ -290,7 +290,7 @@ def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False
             response = request_with_retry(
                 "GET", url,
                 headers={"Authorization": key},
-                max_retries=1,
+                max_retries=2,
                 timeout=15,
             )
 
@@ -357,7 +357,7 @@ def _fetch_pixabay_video(keyword: str, require_realistic: bool = False) -> list[
             f"?key={settings.pixabay_api_key}"
             f"&q={q}&orientation=vertical&per_page=5&min_width=720"
         )
-        data = get_json(url, max_retries=1)
+        data = get_json(url, max_retries=2)
         hits = data.get("hits", [])
         urls = []
         for h in hits:
@@ -415,7 +415,7 @@ def _fetch_coverr(keyword: str, require_realistic: bool = False) -> list[str]:
         response = request_with_retry(
             "GET", url,
             headers={"Accept": "application/json"},
-            max_retries=1,
+            max_retries=2,
             timeout=10,
         )
         if response.status_code >= 400:
