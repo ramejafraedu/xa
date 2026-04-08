@@ -1184,10 +1184,13 @@ def run_pipeline_v15(
             _stage_start("qa_post", "Post-render QA")
             try:
                 from pipeline.post_render_qa import post_render_qa
+                from pipeline.duration_validator import get_max_duration
+
+                platform_max_duration = float(get_max_duration(nicho.plataforma))
                 qa_passed, qa_issues = post_render_qa(
                     video_path,
                     expected_width=1080, expected_height=1920,
-                    min_duration=10.0, max_duration=120.0,
+                    min_duration=10.0, max_duration=platform_max_duration,
                     subs_path=ass_path if ass_path.exists() else None,
                     platform=nicho.plataforma,
                     reference_promise=story.reference_delivery_promise,

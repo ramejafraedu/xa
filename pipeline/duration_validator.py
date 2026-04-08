@@ -1,6 +1,6 @@
 """Duration Validator — enforce platform max duration limits.
 
-TikTok: 60s, Reels: 90s, Shorts: 60s, Facebook: 120s.
+TikTok: 60m, Reels: 3m, Shorts: 3m, Facebook: 120s.
 If the generated audio exceeds the limit, trim it.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ def get_max_duration(platform: str) -> float:
         return app_config.max_duration_shorts
     if "facebook" in p:
         return app_config.max_duration_facebook
-    return 60.0
+    return app_config.max_duration_shorts
 
 
 def validate_duration(

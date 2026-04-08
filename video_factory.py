@@ -704,12 +704,15 @@ def run_pipeline(
             progress.update(main_task, description="[cyan]🔬 Post-render QA...")
             try:
                 from pipeline.post_render_qa import post_render_qa
+                from pipeline.duration_validator import get_max_duration
+
+                platform_max_duration = float(get_max_duration(nicho.plataforma))
                 qa_passed, qa_issues = post_render_qa(
                     video_path,
                     expected_width=1080,
                     expected_height=1920,
                     min_duration=10.0,
-                    max_duration=120.0,
+                    max_duration=platform_max_duration,
                 )
                 manifest.qa_passed = qa_passed
                 manifest.qa_issues = qa_issues

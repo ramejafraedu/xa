@@ -39,9 +39,10 @@ class AppConfig(BaseModel):
 
     max_healing_attempts: int = 2
     quality_threshold: float = 7.5
-    max_duration_tiktok: float = 60.0
-    max_duration_reels: float = 90.0
-    max_duration_shorts: float = 60.0
+    # Platform upload limits (seconds): TikTok up to 60m, Reels/Shorts up to 3m.
+    max_duration_tiktok: float = 3600.0
+    max_duration_reels: float = 180.0
+    max_duration_shorts: float = 180.0
     max_duration_facebook: float = 120.0
     min_disk_space_gb: float = 2.0
     output_retention_days: int = 0  # 0 = keep forever

@@ -27,7 +27,7 @@ def post_render_qa(
     expected_width: int = 1080,
     expected_height: int = 1920,
     min_duration: float = 15.0,
-    max_duration: float = 120.0,
+    max_duration: float = 180.0,
     min_size_kb: int = 500,
     subs_path: Path | None = None,
     platform: str = "tiktok_reels",
