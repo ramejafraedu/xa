@@ -89,12 +89,9 @@ def vtt_to_ass(vtt_path: Path, ass_path: Path) -> int:
 
             base = _subtitle_base_tag()
             line = base
-            chunk_words: list[str] = []
             for w in chunk:
                 line += r"{\k" + str(wdur_cs) + "}" + w + " "
-                chunk_words.append(w)
-
-            line += _line_emoticon(chunk_words)
+            line = _clean_subtitle_artifacts(line)
 
             events.append(
                 f"Dialogue: 1,{_to_ass_time(c_start)},{_to_ass_time(c_end)},Default,,0,0,0,,{line.strip()}"
@@ -154,8 +151,7 @@ def generate_timed_ass_from_text(
         line = base
         for w in chunk:
             line += r"{\k" + str(wdur_cs) + "}" + w + " "
-
-        line += _line_emoticon(chunk)
+        line = _clean_subtitle_artifacts(line)
 
         events.append(
             f"Dialogue: 1,{_to_ass_time(c_start)},{_to_ass_time(c_end)},Default,,0,0,0,,{line.strip()}"
@@ -192,15 +188,9 @@ def _subtitle_base_tag() -> str:
     )
 
 
-def _line_emoticon(words: list[str]) -> str:
-    """Attach lightweight emoticons based on subtitle context."""
-    joined = " ".join(words).upper()
-    if any(k in joined for k in ["DINERO", "NEGOCIO", "RICO", "CRIPTO", "VENTA"]):
-        return " (:$)"
-    if any(k in joined for k in ["SALUD", "ENERGIA", "CUERPO", "MENTE", "CEREBRO"]):
-        return " (^_^)"
-    if any(k in joined for k in ["TIP", "HACK", "TRUCO", "SECRETO", "APRENDE"]):
-        return " (*)"
-    if any(k in joined for k in ["ALERTA", "ERROR", "CUIDADO", "PELIGRO"]):
-        return " (!)"
-    return ""
+def _clean_subtitle_artifacts(line: str) -> str:
+    """Remove synthetic suffix artifacts from generated subtitle lines."""
+    cleaned = str(line or "").strip()
+    cleaned = re.sub(r"\s*\((?:!|:\$|\^_\^|\*)\)\s*$", "", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()

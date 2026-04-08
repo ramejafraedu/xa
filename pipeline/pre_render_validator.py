@@ -17,6 +17,7 @@ Checks performed:
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -64,6 +65,15 @@ def validate_pre_render(
             errors.append((ErrorCode.ASSET_MISSING, f"Clip missing: {clip.name}"))
         elif clip.stat().st_size < 1000:
             errors.append((ErrorCode.ASSET_CORRUPT, f"Clip corrupt/too small: {clip.name} ({clip.stat().st_size}B)"))
+        else:
+            green_ratio = _estimate_green_screen_ratio(clip)
+            if green_ratio >= 0.34:
+                errors.append(
+                    (
+                        ErrorCode.GREENSCREEN_DETECTED,
+                        f"Clip looks like unkeyed greenscreen: {clip.name} ({green_ratio * 100:.1f}% green)",
+                    )
+                )
 
     # 5. Subtitle file parseable
     if subs_path and subs_path.exists():
@@ -73,6 +83,8 @@ def validate_pre_render(
                 errors.append((ErrorCode.SUBS_INVALID, "ASS file missing [Script Info] header"))
             elif "Dialogue:" not in content:
                 errors.append((ErrorCode.SUBS_INVALID, "ASS file has no Dialogue events"))
+            elif re.search(r"\((?:!|:\$|\^_\^|\*)\)\s*$", content, flags=re.MULTILINE):
+                errors.append((ErrorCode.SUBS_INVALID, "ASS file has synthetic suffix artifacts"))
         except Exception as e:
             errors.append((ErrorCode.SUBS_INVALID, f"Cannot read ASS file: {e}"))
 
@@ -103,3 +115,44 @@ def validate_pre_render(
         logger.info("✅ Pre-render validation passed (all assets OK)")
 
     return len(errors) == 0, errors
+
+
+def _estimate_green_screen_ratio(video_path: Path, sample_offset: float = 0.5) -> float:
+    """Estimate dominant chroma-green coverage using one sampled frame."""
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-v", "error",
+                "-ss", str(sample_offset),
+                "-i", str(video_path),
+                "-frames:v", "1",
+                "-vf", "scale=192:-1,format=rgb24",
+                "-f", "rawvideo", "-",
+            ],
+            capture_output=True,
+            timeout=20,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return 0.0
+
+        raw = result.stdout
+        pixel_count = len(raw) // 3
+        if pixel_count <= 0:
+            return 0.0
+
+        green_pixels = 0
+        limit = pixel_count * 3
+        for idx in range(0, limit, 3):
+            r = raw[idx]
+            g = raw[idx + 1]
+            b = raw[idx + 2]
+
+            if g < 96:
+                continue
+            if g > int(r * 1.28) and g > int(b * 1.28) and (g - max(r, b)) > 20:
+                green_pixels += 1
+
+        return green_pixels / pixel_count
+    except Exception as exc:
+        logger.debug(f"Green-screen precheck skipped for {video_path.name}: {exc}")
+        return 0.0

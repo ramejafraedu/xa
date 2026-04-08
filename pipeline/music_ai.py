@@ -14,15 +14,21 @@ Provider hierarchy:
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import shutil
 import time
 from pathlib import Path
+from typing import Any, Optional
 
 from loguru import logger
 
 from config import settings
+from services.http_client import download_file, request_with_retry
 
 
 _lyria_cooldown_until = 0.0
+_suno_cooldown_until = 0.0
 
 
 def generate_music_ai(
@@ -114,6 +120,110 @@ def generate_music_ai(
         return False
 
 
+def generate_music_suno(
+    mood: str,
+    output_path: Path,
+    duration_seconds: float = 60,
+    nicho: str = "",
+    poll_seconds: int = 2,
+    max_polls: int = 40,
+) -> bool:
+    """Generate (or reuse cached) music using Suno API."""
+    global _suno_cooldown_until
+
+    if not settings.suno_api_key:
+        logger.debug("No SUNO_API_KEY — skipping Suno")
+        return False
+
+    if not settings.use_suno_music:
+        logger.debug("Suno music disabled in config")
+        return False
+
+    if not settings.provider_allowed("suno"):
+        logger.info("Suno music skipped by provider policy")
+        return False
+
+    if time.time() < _suno_cooldown_until:
+        return False
+
+    settings.ensure_dirs()
+    cache_path = _suno_cache_path(mood, duration_seconds, nicho)
+    if _copy_cached_music(cache_path, output_path):
+        logger.info(f"♻️ Suno cache reused: {cache_path.name}")
+        return True
+
+    if output_path.exists() and output_path.stat().st_size > 10000:
+        _store_cached_music(output_path, cache_path)
+        return True
+
+    prompt = _build_music_prompt(mood, duration_seconds, nicho)
+    payload = {
+        "prompt": prompt,
+        "tags": mood,
+        "title": f"{(nicho or 'video').strip()} instrumental",
+        "instrumental": True,
+        "make_instrumental": True,
+        "duration": int(max(8, min(180, round(duration_seconds)))),
+    }
+    headers = {
+        "authorization": f"Bearer {settings.suno_api_key}",
+        "x-api-key": settings.suno_api_key,
+        "content-type": "application/json",
+    }
+
+    try:
+        logger.info(f"🎵 Suno: generating music — {mood}")
+        response = request_with_retry(
+            "POST",
+            settings.suno_api_url,
+            headers=headers,
+            json_data=payload,
+            max_retries=2,
+            timeout=120,
+        )
+
+        if response.status_code >= 400:
+            logger.warning(f"Suno generation failed: HTTP {response.status_code}")
+            if response.status_code in (401, 403):
+                _suno_cooldown_until = time.time() + (30 * 60)
+            return False
+
+        data: dict[str, Any]
+        try:
+            data = response.json() or {}
+        except Exception:
+            logger.warning("Suno generation returned invalid JSON")
+            return False
+
+        audio_url = _extract_audio_url(data)
+
+        if not audio_url:
+            task_id = _extract_task_id(data)
+            if task_id:
+                audio_url = _poll_suno_audio_url(
+                    task_id=task_id,
+                    headers=headers,
+                    poll_seconds=poll_seconds,
+                    max_polls=max_polls,
+                )
+
+        if not audio_url:
+            logger.warning("Suno response did not include an audio URL")
+            return False
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if not download_file(audio_url, output_path, timeout=120):
+            logger.warning("Suno audio download failed")
+            return False
+
+        _store_cached_music(output_path, cache_path)
+        logger.info(f"✅ Suno music saved: {output_path.name} ({output_path.stat().st_size // 1024}KB)")
+        return True
+    except Exception as exc:
+        logger.warning(f"Suno music generation failed: {exc}")
+        return False
+
+
 def _build_music_prompt(mood: str, duration: float, nicho: str) -> str:
     """Build a descriptive prompt for music generation."""
     nicho_styles = {
@@ -162,9 +272,15 @@ def fetch_music_with_fallback_source(
     provider_order: list[str] | None = None,
 ) -> tuple[bool, str]:
     """Try providers in order and return (success, source)."""
-    provider_order = provider_order or ["lyria", "pixabay", "jamendo"]
+    if provider_order is None:
+        provider_order = ["suno", "lyria", "pixabay", "jamendo"] if settings.suno_api_key else ["lyria", "pixabay", "jamendo"]
 
     for provider in provider_order:
+        if provider == "suno":
+            if generate_music_suno(mood, output_path, duration_seconds, nicho):
+                return True, "suno"
+            continue
+
         if provider == "lyria":
             if generate_music_ai(mood, output_path, duration_seconds, nicho):
                 return True, "lyria"
@@ -182,3 +298,123 @@ def fetch_music_with_fallback_source(
 
     logger.warning("Music generation failed for all providers")
     return False, "none"
+
+
+def _suno_cache_path(mood: str, duration_seconds: float, nicho: str) -> Path:
+    payload = {
+        "provider": "suno",
+        "mood": str(mood or "").strip().lower(),
+        "nicho": str(nicho or "").strip().lower(),
+        "duration": int(max(8, min(180, round(duration_seconds)))),
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:18]
+    return settings.music_cache_dir / f"suno_{digest}.mp3"
+
+
+def _copy_cached_music(cache_path: Path, output_path: Path) -> bool:
+    if not cache_path.exists() or cache_path.stat().st_size < 10000:
+        return False
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cache_path, output_path)
+        return output_path.exists() and output_path.stat().st_size >= 10000
+    except Exception:
+        return False
+
+
+def _store_cached_music(output_path: Path, cache_path: Path) -> None:
+    if not output_path.exists() or output_path.stat().st_size < 10000:
+        return
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(output_path, cache_path)
+    except Exception as exc:
+        logger.debug(f"Could not store Suno cache: {exc}")
+
+
+def _poll_suno_audio_url(
+    task_id: str,
+    headers: dict[str, str],
+    poll_seconds: int,
+    max_polls: int,
+) -> Optional[str]:
+    status_api = (settings.suno_status_api_url or "").strip()
+    if not status_api:
+        return None
+
+    if "{task_id}" in status_api:
+        status_url = status_api.format(task_id=task_id)
+    else:
+        status_url = f"{status_api.rstrip('/')}/{task_id}"
+
+    for _ in range(max_polls):
+        try:
+            resp = request_with_retry(
+                "GET",
+                status_url,
+                headers=headers,
+                max_retries=1,
+                timeout=45,
+            )
+            if resp.status_code >= 400:
+                time.sleep(poll_seconds)
+                continue
+
+            data = resp.json() or {}
+            audio_url = _extract_audio_url(data)
+            if audio_url:
+                return audio_url
+
+            status = str((data or {}).get("status", "")).lower()
+            if status in {"error", "failed", "cancelled"}:
+                return None
+        except Exception:
+            pass
+        time.sleep(poll_seconds)
+
+    return None
+
+
+def _extract_audio_url(payload: Any) -> Optional[str]:
+    urls: list[tuple[int, str]] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                lowered = str(key).lower()
+                if isinstance(value, str) and value.startswith("http"):
+                    priority = 0 if any(k in lowered for k in ("audio", "stream", "download", "url")) else 1
+                    urls.append((priority, value))
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(payload)
+    if not urls:
+        return None
+
+    for _, url in sorted(urls, key=lambda x: x[0]):
+        lowered = url.lower()
+        if any(ext in lowered for ext in (".mp3", ".wav", ".m4a", ".ogg", "audio")):
+            return url
+
+    return sorted(urls, key=lambda x: x[0])[0][1]
+
+
+def _extract_task_id(payload: Any) -> Optional[str]:
+    keys = {"task_id", "taskid", "job_id", "jobid", "id", "generation_id"}
+    stack = [payload]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                lowered = str(key).lower()
+                if lowered in keys and value:
+                    return str(value)
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return None

@@ -24,6 +24,7 @@ class ProviderSelector:
             "pollinations": 0.72,
         },
         "music_generation": {
+            "suno": 0.90,
             "lyria": 0.88,
             "pixabay": 0.76,
             "jamendo": 0.68,

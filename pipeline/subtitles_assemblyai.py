@@ -5,6 +5,7 @@ This is used when WhisperX fails or is unavailable.
 """
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -156,13 +157,10 @@ def _words_to_ass(words: list[dict], ass_path: Path) -> int:
         end_s = chunk[-1][2] / 1000.0
 
         line = _subtitle_base_tag()
-        chunk_words: list[str] = []
         for text, start_ms, end_ms in chunk:
             dur_cs = max(4, int(round((end_ms - start_ms) / 10.0)))
             line += r"{\k" + str(dur_cs) + "}" + text + " "
-            chunk_words.append(text)
-
-        line += _line_emoticon(chunk_words)
+        line = _clean_subtitle_artifacts(line)
         events.append(
             f"Dialogue: 1,{_to_ass_time(start_s)},{_to_ass_time(end_s)},Default,,0,0,0,,{line.strip()}"
         )
@@ -186,14 +184,9 @@ def _subtitle_base_tag() -> str:
     )
 
 
-def _line_emoticon(words: list[str]) -> str:
-    joined = " ".join(words).upper()
-    if any(k in joined for k in ["DINERO", "NEGOCIO", "RICO", "CRIPTO", "VENTA"]):
-        return " (:$)"
-    if any(k in joined for k in ["SALUD", "ENERGIA", "CUERPO", "MENTE", "CEREBRO"]):
-        return " (^_^)"
-    if any(k in joined for k in ["TIP", "HACK", "TRUCO", "SECRETO", "APRENDE"]):
-        return " (*)"
-    if any(k in joined for k in ["ALERTA", "ERROR", "CUIDADO", "PELIGRO"]):
-        return " (!)"
-    return ""
+def _clean_subtitle_artifacts(line: str) -> str:
+    """Remove synthetic suffix artifacts from generated subtitle lines."""
+    cleaned = str(line or "").strip()
+    cleaned = re.sub(r"\s*\((?:!|:\$|\^_\^|\*)\)\s*$", "", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()

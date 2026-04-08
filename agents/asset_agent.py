@@ -13,7 +13,9 @@ Wraps existing V14 modules: image_gen, veo_clips, music, sfx.
 """
 from __future__ import annotations
 
+import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Optional, TypeVar
 
@@ -120,7 +122,9 @@ class AssetAgent:
                 selector.mark_result("image_generation", provider, False, "image generation failed")
 
         # --- 3. Music (mood from script) ---
-        music_candidates = strict_free_candidates(["lyria", "pixabay", "jamendo"], usage="media")
+        music_candidates = strict_free_candidates(["suno", "lyria", "pixabay", "jamendo"], usage="media")
+        if settings.suno_api_key and settings.use_suno_music and "suno" not in music_candidates:
+            music_candidates.insert(0, "suno")
         music_order = selector.get_provider_order("music_generation", music_candidates)
         results["provider_orders"]["music_generation"] = music_order
 
@@ -172,24 +176,94 @@ class AssetAgent:
         try:
             from pipeline.video_stock import fetch_stock_videos
 
-            # Use keywords from raw content (V14 compat)
-            raw_content = getattr(state, "_raw_content", {})
-            keywords = raw_content.get("palabras_clave", [])[:nicho.keywords_count]
-
+            keywords = self._build_stock_keywords(state, nicho, count)
             if not keywords:
-                # Fallback: extract from scene texts
-                keywords = []
-                for scene in state.scenes[:count]:
-                    words = scene.text.split()[:2]
-                    keywords.extend(words)
+                logger.warning("Stock keyword builder returned empty list; using niche slug fallback")
+                keywords = [nicho.slug]
 
             urls = fetch_stock_videos(keywords, count, provider_order=provider_order)
-            logger.info(f"📦 Stock: fetching {count} clips")
+            logger.info(f"📦 Stock: fetching {count} clips with keywords={', '.join(keywords[:6])}")
             return urls
 
         except Exception as e:
             logger.debug(f"Stock fetch failed: {e}")
             return []
+
+    def _build_stock_keywords(self, state: StoryState, nicho: NichoConfig, count: int) -> list[str]:
+        """Build high-signal stock keywords and filter cross-domain mismatches."""
+        raw_content = getattr(state, "_raw_content", {}) or {}
+        seeds: list[str] = []
+
+        raw_keywords = raw_content.get("palabras_clave", [])
+        if isinstance(raw_keywords, list):
+            seeds.extend(str(x) for x in raw_keywords[: max(nicho.keywords_count, 8)])
+
+        seeds.extend(state.key_points[:6])
+        seeds.extend([state.hook, state.topic])
+        for scene in state.scenes[: max(4, count)]:
+            seeds.append(scene.text)
+
+        candidates: list[str] = []
+        for seed in seeds:
+            normalized = self._normalize_keyword(seed)
+            if not normalized:
+                continue
+
+            # Keep compact multi-word cues and single high-signal terms.
+            if " " in normalized and len(normalized.split()) <= 4 and len(normalized) <= 40:
+                candidates.append(normalized)
+            for token in normalized.split():
+                if len(token) >= 4:
+                    candidates.append(token)
+
+        seen: set[str] = set()
+        filtered: list[str] = []
+        for kw in candidates:
+            if kw in seen:
+                continue
+            seen.add(kw)
+            if self._is_blocked_keyword(kw, nicho.slug):
+                continue
+            filtered.append(kw)
+
+        anchors_by_nicho = {
+            "finanzas": [
+                "finanzas", "dinero", "inversion", "inflacion", "ahorro",
+                "economia", "mercado", "deuda", "emprendimiento", "negocio",
+                "dolar", "peso",
+            ],
+        }
+        for anchor in anchors_by_nicho.get(nicho.slug, []):
+            if anchor not in seen:
+                filtered.append(anchor)
+                seen.add(anchor)
+
+        limit = max(nicho.keywords_count, 8)
+        return filtered[:limit]
+
+    def _is_blocked_keyword(self, keyword: str, nicho_slug: str) -> bool:
+        """Prevent obvious cross-domain stock matches for each niche."""
+        if nicho_slug != "finanzas":
+            return False
+
+        blocked = {
+            "aerobics", "aerobic", "fitness", "workout", "gym", "crossfit",
+            "entrenamiento", "deporte", "electrocardiograma", "hospital",
+            "doctor", "medico", "salud", "cardio", "yoga", "wellness",
+            "india", "indio", "rupia", "rupee",
+        }
+        return any(token in keyword for token in blocked)
+
+    @staticmethod
+    def _normalize_keyword(value: object) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        text = re.sub(r"[^a-z0-9\s_-]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
 
     def _generate_images(
         self,

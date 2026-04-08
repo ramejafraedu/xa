@@ -293,6 +293,10 @@ def _process_clips(
 
     total = sum(durations) or 1
     durations = [d * target / total for d in durations]
+    if durations:
+        # Keep total segment duration tightly aligned with target to reduce drift.
+        head = sum(durations[:-1])
+        durations[-1] = max(0.6, target - head)
 
     lista_lines = []
     ok = 0
@@ -531,7 +535,7 @@ def _mix_audio(
             "-i", mixed_audio.as_posix(),
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-t", str(duracion),
+            "-shortest",
             "-movflags", "+faststart",
             *_privacy_ffmpeg_args(),
             *extra_flags,
@@ -548,7 +552,7 @@ def _mix_audio(
             "-i", audio.as_posix(),
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-t", str(duracion),
+            "-shortest",
             "-movflags", "+faststart",
             *_privacy_ffmpeg_args(),
             *extra_flags,

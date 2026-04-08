@@ -74,6 +74,9 @@ class Settings(BaseSettings):
 
     # Music
     jamendo_client_id: str = "61b41aa8"
+    suno_api_key: str = ""
+    suno_api_url: str = "https://api.sunoapi.org/api/v1/generate"
+    suno_status_api_url: str = ""
 
     # AssemblyAI
     assemblyai_api_key: str = ""
@@ -107,6 +110,7 @@ class Settings(BaseSettings):
     # --- MEGA Upgrade: Provider Toggles ---
     # Lyria 3 (AI music via Gemini)
     use_lyria_music: bool = True
+    use_suno_music: bool = True
 
     # WhisperX (local word-level subtitles)
     use_whisperx: bool = True
@@ -239,6 +243,7 @@ class Settings(BaseSettings):
             "enable_cost_governance": self.enable_cost_governance,
             "openrouter_enabled": bool(self.openrouter_api_key),
             "elevenlabs_enabled": bool(self.elevenlabs_api_key),
+            "suno_enabled": bool(self.suno_api_key and self.use_suno_music),
             "scheduler_canary_mode": self.scheduler_canary_mode,
             "scheduler_use_v15": self.scheduler_use_v15,
             "enable_tiktok_trending_api": self.enable_tiktok_trending_api,
@@ -307,6 +312,7 @@ class Settings(BaseSettings):
         freemium_providers = {
             "gemini",
             "lyria",
+            "suno",
             "pexels",
             "leonardo",
             "assemblyai",
@@ -412,6 +418,10 @@ class Settings(BaseSettings):
     def image_cache_dir(self) -> Path:
         return self.workspace / "image_cache"
 
+    @property
+    def music_cache_dir(self) -> Path:
+        return self.workspace / "music_cache"
+
     max_cache_size_gb: float = 50.0
 
     @property
@@ -440,6 +450,7 @@ class Settings(BaseSettings):
             self.logs_dir,
             self.video_cache_dir,
             self.image_cache_dir,
+            self.music_cache_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)
 

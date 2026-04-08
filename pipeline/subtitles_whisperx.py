@@ -13,6 +13,7 @@ Provider hierarchy:
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -143,14 +144,11 @@ def _whisperx_to_ass(result: dict, ass_path: Path) -> int:
             # Build ASS line with karaoke timing
             base = _subtitle_base_tag()
             line = base
-            chunk_words: list[str] = []
             for word_text, w_start, w_end in chunk:
                 word_dur = max(0.08, w_end - w_start)
                 wdur_cs = max(6, int(round(word_dur * 100)))
                 line += r"{\k" + str(wdur_cs) + "}" + word_text + " "
-                chunk_words.append(word_text)
-
-            line += _line_emoticon(chunk_words)
+            line = _clean_subtitle_artifacts(line)
 
             events.append(
                 f"Dialogue: 1,{_to_ass_time(start_time)},{_to_ass_time(end_time)},"
@@ -267,15 +265,9 @@ def _subtitle_base_tag() -> str:
     )
 
 
-def _line_emoticon(words: list[str]) -> str:
-    """Attach lightweight emoticons based on subtitle context."""
-    joined = " ".join(words).upper()
-    if any(k in joined for k in ["DINERO", "NEGOCIO", "RICO", "CRIPTO", "VENTA"]):
-        return " (:$)"
-    if any(k in joined for k in ["SALUD", "ENERGIA", "CUERPO", "MENTE", "CEREBRO"]):
-        return " (^_^)"
-    if any(k in joined for k in ["TIP", "HACK", "TRUCO", "SECRETO", "APRENDE"]):
-        return " (*)"
-    if any(k in joined for k in ["ALERTA", "ERROR", "CUIDADO", "PELIGRO"]):
-        return " (!)"
-    return ""
+def _clean_subtitle_artifacts(line: str) -> str:
+    """Remove synthetic suffix artifacts from generated subtitle lines."""
+    cleaned = str(line or "").strip()
+    cleaned = re.sub(r"\s*\((?:!|:\$|\^_\^|\*)\)\s*$", "", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()

@@ -2036,10 +2036,11 @@
             }
 
             jobs.slice(0, 6).forEach((job) => {
+                const displayTitle = job.publish_title || job.titulo || "-";
                 miniBody.innerHTML +=
                     '<tr onclick="showJobDetail(\'' + escapeHtml(job.job_id || "") + '\')">' +
                         '<td data-label="Nicho" style="text-transform:capitalize;font-weight:600;">' + escapeHtml(job.nicho || "-") + "</td>" +
-                        '<td data-label="Titulo">' + escapeHtml(job.titulo || "-") + "</td>" +
+                        '<td data-label="Titulo">' + escapeHtml(displayTitle) + "</td>" +
                         '<td data-label="Status">' + statusBadge(job.status) + "</td>" +
                         '<td data-label="Quality">' + scoreCell(job.quality_score) + "</td>" +
                         '<td data-label="Hora">' + escapeHtml(formatTime(job.timestamp)) + "</td>" +
@@ -2058,11 +2059,12 @@
                 const jobId = escapeHtml(job.job_id || "");
                 const encodedJobId = encodeURIComponent(job.job_id || "");
                 const canResume = job.status && !["success", "error"].includes(job.status);
+                const displayTitle = job.publish_title || job.titulo || "-";
                 fullBody.innerHTML +=
                     '<tr onclick="showJobDetail(\'' + jobId + '\')">' +
                         '<td data-label="Job ID" class="mono">' + escapeHtml((job.job_id || "").slice(0, 28)) + "</td>" +
                         '<td data-label="Nicho" style="text-transform:capitalize;">' + escapeHtml(job.nicho || "-") + "</td>" +
-                        '<td data-label="Titulo">' + escapeHtml(job.titulo || "-") + "</td>" +
+                        '<td data-label="Titulo">' + escapeHtml(displayTitle) + "</td>" +
                         '<td data-label="Status">' + statusBadge(job.status) + "</td>" +
                         '<td data-label="Quality">' + scoreCell(job.quality_score) + "</td>" +
                         '<td data-label="Duration">' + escapeHtml(formatDuration(job.duration)) + "</td>" +
@@ -2163,6 +2165,16 @@
         }
 
         function buildJobInfoPanel(detail, analysis, manifest, jobId) {
+            const publishTitle = detail.publish_title || detail.titulo || "-";
+            const publishDescription = detail.publish_description || [detail.gancho, detail.caption, detail.cta].filter(Boolean).join(" ") || "-";
+            const publishHashtagsText = detail.publish_hashtags_text || (
+                Array.isArray(detail.publish_hashtags)
+                    ? detail.publish_hashtags.join(" ")
+                    : ""
+            ) || "#viral #fyp #shorts";
+            const publishComment = detail.publish_comment || [publishTitle, detail.cta || "", publishHashtagsText].filter(Boolean).join("\n\n") || "-";
+            const publishCoverPath = detail.publish_cover_path || detail.thumbnail_path || "-";
+
             const infoRows = [
                 ["ID", detail.job_id || "-"],
                 ["Nicho", detail.nicho_slug || "-"],
@@ -2179,6 +2191,14 @@
                 ["Error Msg", detail.error_message ? String(detail.error_message).slice(0, 120) : "-"],
             ];
 
+            const publishRows = [
+                ["Publish Title", publishTitle],
+                ["Description", publishDescription],
+                ["Hashtags", publishHashtagsText],
+                ["Comment", publishComment],
+                ["Cover Path", publishCoverPath],
+            ];
+
             let rowsHtml = "";
             infoRows.forEach(([key, value]) => {
                 rowsHtml +=
@@ -2188,12 +2208,23 @@
                     "</div>";
             });
 
+            let publishRowsHtml = "";
+            publishRows.forEach(([key, value]) => {
+                publishRowsHtml +=
+                    '<div class="detail-row">' +
+                        '<span class="detail-key">' + escapeHtml(key) + "</span>" +
+                        '<span class="detail-val" style="text-align:left;max-width:68%;white-space:pre-wrap;">' + escapeHtml(value || "-") + "</span>" +
+                    "</div>";
+            });
+
             const encodedJobId = encodeURIComponent(jobId);
             const manifestText = escapeHtml(JSON.stringify(manifest || {}, null, 2)).slice(0, 3600);
             return (
                 '<div class="detail-panel">' +
                     "<h3>📌 Job Details</h3>" +
                     rowsHtml +
+                    "<h3 style=\"margin-top:14px;\">🧾 Publish Metadata</h3>" +
+                    publishRowsHtml +
                     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">' +
                         '<button class="btn btn-secondary" onclick="openManifestModal(\'' + escapeHtml(jobId) + '\')">Manifest modal</button>' +
                         '<a class="btn btn-ghost" href="/job/' + encodedJobId + '/manifest" target="_blank" rel="noopener">Legacy manifest</a>' +
@@ -2287,10 +2318,15 @@
                 ]);
 
                 if (metaNode) {
+                    const hashtagsPreview = detail.publish_hashtags_text
+                        ? String(detail.publish_hashtags_text).slice(0, 80)
+                        : (Array.isArray(detail.publish_hashtags) ? detail.publish_hashtags.join(" ").slice(0, 80) : "#viral #fyp #shorts");
                     metaNode.innerHTML =
                         "<strong>Status:</strong> " + escapeHtml(detail.status || "-") +
                         " &nbsp; | &nbsp; <strong>Nicho:</strong> " + escapeHtml(detail.nicho_slug || "-") +
                         " &nbsp; | &nbsp; <strong>Quality:</strong> " + escapeHtml(detail.quality_score != null ? Number(detail.quality_score).toFixed(1) : "-") +
+                        " &nbsp; | &nbsp; <strong>Title:</strong> " + escapeHtml(detail.publish_title || detail.titulo || "-") +
+                        " &nbsp; | &nbsp; <strong>#:</strong> " + escapeHtml(hashtagsPreview) +
                         " &nbsp; | &nbsp; <strong>Updated:</strong> " + escapeHtml(formatTime(detail.timestamp));
                 }
 

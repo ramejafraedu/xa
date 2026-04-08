@@ -901,6 +901,24 @@ async def list_jobs(limit: int = 30, offset: int = 0):
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
 
+    def _publish_fields(data: dict) -> dict:
+        hashtags = data.get("publish_hashtags", [])
+        if isinstance(hashtags, str):
+            hashtags = [tag.strip() for tag in hashtags.split() if tag.strip()]
+        if not isinstance(hashtags, list):
+            hashtags = []
+
+        return {
+            "publish_title": data.get("publish_title", data.get("titulo", "")),
+            "publish_description": data.get("publish_description", data.get("caption", "")),
+            "publish_hashtags": hashtags,
+            "publish_hashtags_text": data.get("publish_hashtags_text", " ".join(hashtags)),
+            "publish_comment": data.get("publish_comment", ""),
+            "publish_cover_path": data.get("publish_cover_path", data.get("thumbnail_path", "")),
+            "caption": data.get("caption", ""),
+            "titulo_full": data.get("titulo", ""),
+        }
+
     jobs = []
     # Check temp for in-progress
     state = StateManager(settings.temp_dir)
@@ -916,6 +934,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
             j["reference_hook_seconds"] = manifest.get("reference_hook_seconds", 0.0)
             j["reference_avg_cut_seconds"] = manifest.get("reference_avg_cut_seconds", 0.0)
             j["cost_actual_usd"] = manifest.get("cost_actual_usd", 0.0)
+            j.update(_publish_fields(manifest))
         jobs.append(j)
 
     # Check output for completed
@@ -945,6 +964,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
                     "timeline_json_path": data.get("timeline_json_path", ""),
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
+                    **_publish_fields(data),
                     "source": "output",
                 })
             except Exception:
@@ -971,6 +991,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
                     "timeline_json_path": data.get("timeline_json_path", ""),
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
+                    **_publish_fields(data),
                     "source": "review",
                 })
             except Exception:
@@ -1211,6 +1232,12 @@ async def review_detail(job_id: str):
         "status": manifest.get("status", ""),
         "nicho": manifest.get("nicho_slug", ""),
         "titulo": manifest.get("titulo", ""),
+        "publish_title": manifest.get("publish_title", manifest.get("titulo", "")),
+        "publish_description": manifest.get("publish_description", manifest.get("caption", "")),
+        "publish_hashtags": manifest.get("publish_hashtags", []),
+        "publish_hashtags_text": manifest.get("publish_hashtags_text", ""),
+        "publish_comment": manifest.get("publish_comment", ""),
+        "publish_cover_path": manifest.get("publish_cover_path", manifest.get("thumbnail_path", "")),
         "video_path": manifest.get("video_path", ""),
         "qa_issues": manifest.get("qa_issues", []),
         "timings": manifest.get("timings", {}),

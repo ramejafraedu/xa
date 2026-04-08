@@ -1,7 +1,7 @@
 """Post-Render QA — Validates final video after rendering.
 
 V16 upgrade: Added 3 new checks from OpenMontage-style self-review:
-  1. Audio/video stream duration sync (delta < 500ms)
+    1. Audio/video stream duration sync (delta < 120ms)
   2. Subtitle safe-zone validation (TikTok/Reels UI overlap detection)
   3. Frame sampling (3 keyframes sampled, all must be non-black/non-corrupt)
 
@@ -131,12 +131,17 @@ def post_render_qa(
     if frame_issue:
         issues.append(frame_issue)
 
-    # 10. V16: Subtitle safe-zone check
+    # 10. V16: Green-screen dominance detection
+    green_issue = _detect_excessive_green(video_path, duration)
+    if green_issue:
+        issues.append(green_issue)
+
+    # 11. V16: Subtitle safe-zone check
     if subs_path and subs_path.exists():
         sub_issues = check_subtitle_safe_zone(subs_path, expected_height, platform)
         issues.extend(sub_issues)
 
-    # 11. V16+: Promise/rhythm compliance for reference-driven jobs
+    # 12. V16+: Promise/rhythm compliance for reference-driven jobs
     rhythm_issue = _check_motion_rhythm(
         video_path=video_path,
         total_duration=duration,
@@ -146,7 +151,7 @@ def post_render_qa(
     if rhythm_issue:
         issues.append(rhythm_issue)
 
-    # 12. OpenMontage (optional): extra analysis checks via tool adapters
+    # 13. OpenMontage (optional): extra analysis checks via tool adapters
     if settings.enable_openmontage_free_tools and settings.openmontage_enable_analysis:
         om_probe = run_audio_probe(video_path)
         if om_probe:
@@ -289,7 +294,7 @@ def _detect_black_frames(video_path: Path) -> str | None:
 def _check_av_sync(probe: dict, video_duration: float) -> str | None:
     """V16: Check audio/video stream duration sync.
 
-    A delta > 500ms between the two streams usually indicates a mux error
+    A delta > 120ms between the two streams usually indicates a mux error
     that will cause the video to appear frozen or have desync on mobile.
     """
     try:
@@ -311,10 +316,10 @@ def _check_av_sync(probe: dict, video_duration: float) -> str | None:
             return None  # Can't check if streams missing
 
         delta = abs(video_dur - audio_dur)
-        if delta > 0.5:
+        if delta > 0.12:
             return (
                 f"A/V sync warning: video={video_dur:.2f}s vs audio={audio_dur:.2f}s "
-                f"(delta={delta:.2f}s > 500ms threshold)"
+                f"(delta={delta:.2f}s > 120ms threshold)"
             )
     except Exception as e:
         logger.debug(f"AV sync check error: {e}")
@@ -432,6 +437,71 @@ def _sample_frames(video_path: Path, duration: float, sample_count: int = 3) -> 
         logger.debug(f"Frame sampling error: {e}")
 
     return None
+
+
+def _detect_excessive_green(video_path: Path, duration: float, sample_count: int = 3) -> str | None:
+    """Detect likely unkeyed green-screen by sampling distributed frames."""
+    if duration < 4:
+        return None
+
+    points = [0.2, 0.5, 0.8][:sample_count]
+    flagged: list[float] = []
+
+    for p in points:
+        ts = max(0.0, duration * p)
+        ratio = _estimate_green_ratio_at_timestamp(video_path, ts)
+        if ratio >= 0.32:
+            flagged.append(ratio)
+
+    if len(flagged) >= 2:
+        peak = max(flagged)
+        return (
+            "Possible unkeyed green-screen detected: "
+            f"{len(flagged)}/{len(points)} sampled frames "
+            f"(peak {peak * 100:.1f}% green)"
+        )
+    return None
+
+
+def _estimate_green_ratio_at_timestamp(video_path: Path, seconds: float) -> float:
+    """Estimate green pixel ratio for one frame sampled at `seconds`."""
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-v", "error",
+                "-ss", str(seconds),
+                "-i", str(video_path),
+                "-frames:v", "1",
+                "-vf", "scale=192:-1,format=rgb24",
+                "-f", "rawvideo", "-",
+            ],
+            capture_output=True,
+            timeout=20,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return 0.0
+
+        raw = result.stdout
+        pixel_count = len(raw) // 3
+        if pixel_count <= 0:
+            return 0.0
+
+        green_pixels = 0
+        limit = pixel_count * 3
+        for idx in range(0, limit, 3):
+            r = raw[idx]
+            g = raw[idx + 1]
+            b = raw[idx + 2]
+
+            if g < 96:
+                continue
+            if g > int(r * 1.28) and g > int(b * 1.28) and (g - max(r, b)) > 20:
+                green_pixels += 1
+
+        return green_pixels / pixel_count
+    except Exception as exc:
+        logger.debug(f"Green-screen post-check skipped: {exc}")
+        return 0.0
 
 
 def check_subtitle_safe_zone(
