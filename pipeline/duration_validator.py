@@ -14,17 +14,32 @@ from config import app_config
 
 
 def get_max_duration(platform: str) -> float:
-    """Get maximum allowed duration for a platform."""
-    p = platform.lower()
+    """Get maximum allowed duration for a platform.
+
+    If multiple targets are encoded in the platform label (e.g. "tiktok_reels"),
+    apply the strictest cap among those targets.
+    """
+    p = (platform or "").lower()
+
+    # Policy floors avoid accidental regressions to legacy 60s caps.
+    tiktok_cap = max(float(app_config.max_duration_tiktok), 3600.0)
+    reels_cap = max(float(app_config.max_duration_reels), 180.0)
+    shorts_cap = max(float(app_config.max_duration_shorts), 180.0)
+    facebook_cap = max(float(app_config.max_duration_facebook), 120.0)
+
+    targets: list[float] = []
     if "tiktok" in p:
-        return app_config.max_duration_tiktok
+        targets.append(tiktok_cap)
     if "reel" in p or "instagram" in p:
-        return app_config.max_duration_reels
+        targets.append(reels_cap)
     if "short" in p or "youtube" in p:
-        return app_config.max_duration_shorts
+        targets.append(shorts_cap)
     if "facebook" in p:
-        return app_config.max_duration_facebook
-    return app_config.max_duration_shorts
+        targets.append(facebook_cap)
+
+    if targets:
+        return min(targets)
+    return shorts_cap
 
 
 def validate_duration(
