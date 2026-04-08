@@ -260,6 +260,7 @@ def _call_openrouter_chat(
             "model": model,
             "messages": base_messages,
             "temperature": temperature,
+            "max_tokens": max(256, int(settings.openrouter_max_tokens or 4096)),
         }
 
         try:

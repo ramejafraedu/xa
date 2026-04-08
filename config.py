@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     openrouter_api_url: str = "https://openrouter.ai/api/v1/chat/completions"
     openrouter_model: str = "openai/gpt-4.1-mini"
     openrouter_fallback_model: str = "openai/gpt-4o-mini"
+    openrouter_max_tokens: int = 4096
     openrouter_site_url: str = ""
     openrouter_app_name: str = "video_factory"
 
