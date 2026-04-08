@@ -100,6 +100,7 @@ def run_pipeline_v15(
     from pipeline.cleanup import cleanup_temp, cleanup_stale_temp
     from publishers.telegram import notify_success, notify_error, notify_review
     from publishers.drive_sheets import upload_to_drive, log_to_sheets
+    from services.publish_package import build_publish_package
     from services.supabase_client import save_result, save_performance
 
     nicho = NICHOS.get(nicho_slug)
@@ -536,6 +537,17 @@ def run_pipeline_v15(
                 manifest.guion = content.guion
                 manifest.cta = content.cta
                 manifest.caption = content.caption
+                publish_pkg = build_publish_package(
+                    title=manifest.titulo,
+                    hook=manifest.gancho,
+                    cta=manifest.cta,
+                    caption=manifest.caption,
+                )
+                manifest.publish_title = publish_pkg["title"]
+                manifest.publish_description = publish_pkg["description"]
+                manifest.publish_hashtags = publish_pkg["hashtags"]
+                manifest.publish_hashtags_text = publish_pkg["hashtags_text"]
+                manifest.publish_comment = publish_pkg["comment"]
                 manifest.quality_score = quality.quality_score
                 manifest.viral_score = content.viral_score
                 manifest.hook_score = quality.block_scores.hook
@@ -1063,6 +1075,8 @@ def run_pipeline_v15(
                         _add_decision("render", "OpenMontage video_trimmer applied", f"0-{trim_target:.2f}s")
 
             manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
+            if manifest.thumbnail_path:
+                manifest.publish_cover_path = manifest.thumbnail_path
             cost_governance.record_stage_actual("render", est_render)
             manifest.timings["render"] = round(time.time() - render_t0, 2)
             manifest.render_backend = render_backend or "ffmpeg"
@@ -1149,12 +1163,17 @@ def run_pipeline_v15(
                     "nicho": nicho_slug,
                     "titulo": manifest.titulo,
                     "gancho": manifest.gancho,
+                    "cta": manifest.cta,
+                    "caption": manifest.publish_description,
                     "quality_score": manifest.quality_score,
                     "viral_score": manifest.viral_score,
                     "ab_variant": manifest.ab_variant,
                     "tts_engine": tts_engine,
                     "plataforma": nicho.plataforma,
                     "drive_link": drive_link,
+                    "hashtags": manifest.publish_hashtags_text,
+                    "comment": manifest.publish_comment,
+                    "cover_path": manifest.publish_cover_path,
                     "version": "V15_PRO",
                     "feedback_iterations": story.feedback_iterations,
                     "scenes_count": len(story.scenes),

@@ -222,6 +222,7 @@ class AssetAgent:
                 ab_variant,
                 timestamp,
                 temp_dir,
+                count=max(4, min(10, int(settings.generated_images_count))),
                 provider_order=provider_order,
             )
             return images, stats

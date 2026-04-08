@@ -141,6 +141,8 @@ class Settings(BaseSettings):
     output_retention_days: int = 0
     min_disk_space_gb: float = 2.0
     niches_config_path: str = ""
+    media_cache_ttl_days: int = 7
+    generated_images_count: int = 6
 
     # Scheduler rollout
     scheduler_canary_mode: bool = False
@@ -382,6 +384,10 @@ class Settings(BaseSettings):
     def video_cache_dir(self) -> Path:
         return self.workspace / "video_cache"
 
+    @property
+    def image_cache_dir(self) -> Path:
+        return self.workspace / "image_cache"
+
     max_cache_size_gb: float = 50.0
 
     @property
@@ -403,7 +409,14 @@ class Settings(BaseSettings):
 
     def ensure_dirs(self) -> None:
         """Create all workspace directories."""
-        for d in [self.temp_dir, self.output_dir, self.review_dir, self.logs_dir]:
+        for d in [
+            self.temp_dir,
+            self.output_dir,
+            self.review_dir,
+            self.logs_dir,
+            self.video_cache_dir,
+            self.image_cache_dir,
+        ]:
             d.mkdir(parents=True, exist_ok=True)
 
     def check_disk_space(self) -> bool:

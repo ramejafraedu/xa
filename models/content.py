@@ -273,6 +273,12 @@ class JobManifest(BaseModel):
     guion: str = ""
     cta: str = ""
     caption: str = ""
+    publish_title: str = ""
+    publish_description: str = ""
+    publish_hashtags: list[str] = Field(default_factory=list)
+    publish_hashtags_text: str = ""
+    publish_comment: str = ""
+    publish_cover_path: str = ""
     reference_url: str = ""
     reference_notes: str = ""
     manual_ideas: list[str] = Field(default_factory=list)

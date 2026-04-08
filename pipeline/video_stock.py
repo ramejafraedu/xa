@@ -8,6 +8,7 @@ from __future__ import annotations
 import urllib.parse
 import json
 import hashlib
+import time
 from typing import Optional, Union
 from pathlib import Path
 
@@ -27,42 +28,72 @@ def fetch_stock_videos(
     Returns list of dicts: {"url": "http...", "cache_path": "C:/..."}
     If 'url' is empty, it means the file is already fully cached.
     """
-    settings.video_cache_dir.mkdir(parents=True, exist_ok=True)
+    settings.ensure_dirs()
     index_file = settings.video_cache_dir / "index.json"
-    
-    # Load index
-    try:
-        index_data = json.loads(index_file.read_text("utf-8")) if index_file.exists() else {}
-    except Exception:
-        index_data = {}
+    index_data = _load_cache_index(index_file)
+    ttl_seconds = max(0, int(settings.media_cache_ttl_days)) * 86400
+    now_ts = int(time.time())
 
     all_items: list[dict] = []
     seen_paths = set()
     pexels_keys = settings.pexels_keys
+    target_pool = max(num_needed, min(num_needed + 4, num_needed * 2))
 
     # 1. First, check cache for all requested keywords
     for kw in keywords:
         kw_clean = kw.strip().lower()
         if kw_clean in index_data:
-            for filename in index_data[kw_clean]:
+            fresh_entries: list[dict] = []
+            for entry in index_data[kw_clean]:
+                filename = str(entry.get("filename", "")).strip()
+                if not filename:
+                    continue
                 cached_path = settings.video_cache_dir / filename
-                if cached_path.exists() and cached_path.stat().st_size > 1000:
-                    str_path = cached_path.as_posix()
-                    if str_path not in seen_paths:
-                        seen_paths.add(str_path)
-                        all_items.append(
-                            {
-                                "url": "",
-                                "local_path": str_path,
-                                "provider": _infer_provider_from_filename(filename),
-                            }
-                        )
+                if not cached_path.exists() or cached_path.stat().st_size <= 1000:
+                    continue
+
+                entry_ts = int(entry.get("cached_at") or cached_path.stat().st_mtime)
+                if ttl_seconds and (now_ts - entry_ts) > ttl_seconds:
+                    try:
+                        cached_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+
+                provider = str(entry.get("provider") or _infer_provider_from_filename(filename))
+                fresh_entries.append({
+                    "filename": filename,
+                    "cached_at": entry_ts,
+                    "provider": provider,
+                })
+
+                str_path = cached_path.as_posix()
+                if str_path not in seen_paths:
+                    seen_paths.add(str_path)
+                    all_items.append(
+                        {
+                            "url": "",
+                            "local_path": str_path,
+                            "provider": provider,
+                        }
+                    )
+
+            if fresh_entries:
+                index_data[kw_clean] = fresh_entries
+            else:
+                index_data.pop(kw_clean, None)
+
+    # If cache already covers requested count, skip provider API calls.
+    if len(all_items) >= num_needed:
+        _save_cache_index(index_file, index_data)
+        logger.info(f"Stock videos found: {len(all_items)} (needed: {num_needed}) [cache-only]")
+        return all_items[:target_pool]
 
     # 2. Fetch more following selected provider order.
     provider_order = provider_order or ["pexels", "pixabay", "coverr"]
 
     for provider in provider_order:
-        if len(all_items) >= num_needed * 2:
+        if len(all_items) >= target_pool:
             break
 
         keyword_limit = len(keywords)
@@ -72,7 +103,7 @@ def fetch_stock_videos(
             keyword_limit = min(len(keywords), 3)
 
         for kw in keywords[:keyword_limit]:
-            if len(all_items) >= num_needed * 2:
+            if len(all_items) >= target_pool:
                 break
 
             if provider == "pexels":
@@ -102,18 +133,80 @@ def fetch_stock_videos(
                 kw_clean = kw.strip().lower()
                 if kw_clean not in index_data:
                     index_data[kw_clean] = []
-                if u["filename"] not in index_data[kw_clean]:
-                    index_data[kw_clean].append(u["filename"])
+                _upsert_cache_entry(index_data[kw_clean], u["filename"], now_ts, provider)
 
     # Save index
+    _save_cache_index(index_file, index_data)
+
+    logger.info(f"Stock videos found: {len(all_items)} (needed: {num_needed})")
+    # Return at most requested pool size
+    return all_items[:target_pool]
+
+
+def _load_cache_index(index_file: Path) -> dict[str, list[dict]]:
+    """Load/normalize index supporting legacy and structured formats."""
+    if not index_file.exists():
+        return {}
     try:
-        index_file.write_text(json.dumps(index_data, indent=2), "utf-8")
+        raw = json.loads(index_file.read_text("utf-8"))
+    except Exception:
+        return {}
+
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized: dict[str, list[dict]] = {}
+    for kw, entries in raw.items():
+        kw_clean = str(kw).strip().lower()
+        if not kw_clean or not isinstance(entries, list):
+            continue
+
+        out: list[dict] = []
+        for item in entries:
+            if isinstance(item, str):
+                filename = item.strip()
+                if filename:
+                    out.append({
+                        "filename": filename,
+                        "cached_at": 0,
+                        "provider": _infer_provider_from_filename(filename),
+                    })
+                continue
+
+            if isinstance(item, dict):
+                filename = str(item.get("filename", "")).strip()
+                if not filename:
+                    continue
+                out.append({
+                    "filename": filename,
+                    "cached_at": int(item.get("cached_at") or 0),
+                    "provider": str(item.get("provider") or _infer_provider_from_filename(filename)),
+                })
+
+        if out:
+            normalized[kw_clean] = out
+
+    return normalized
+
+
+def _save_cache_index(index_file: Path, index_data: dict[str, list[dict]]) -> None:
+    try:
+        index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), "utf-8")
     except Exception as e:
         logger.warning(f"Could not save video cache index: {e}")
 
-    logger.info(f"Stock videos found: {len(all_items)} (needed: {num_needed})")
-    # Return at most num_needed * 2
-    return all_items[:num_needed * 2]
+
+def _upsert_cache_entry(entries: list[dict], filename: str, cached_at: int, provider: str) -> None:
+    for item in entries:
+        if str(item.get("filename", "")) == filename:
+            item["cached_at"] = cached_at
+            item["provider"] = provider
+            return
+    entries.append({
+        "filename": filename,
+        "cached_at": cached_at,
+        "provider": provider,
+    })
 
 
 def _fetch_pexels(keyword: str, keys: list[str]) -> list[str]:

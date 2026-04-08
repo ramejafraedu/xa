@@ -94,11 +94,14 @@ def log_to_sheets(data: dict) -> bool:
             data.get("num_clips", ""),
             data.get("drive_link", ""),
             data.get("timestamp", ""),
+            data.get("hashtags", ""),
+            data.get("comment", ""),
+            data.get("cover_path", ""),
         ]]
 
         service.spreadsheets().values().append(
             spreadsheetId=settings.google_sheets_id,
-            range="Videos!A:S",
+            range="Videos!A:V",
             valueInputOption="RAW",
             body={"values": values},
         ).execute()

@@ -341,15 +341,22 @@ def _insert_mid_images(
     temp_dir: Path,
     num_clips: int,
 ) -> list[str]:
-    """Insert image segments at strategic positions (28%, 58%, 84%)."""
-    specs = [
-        (1.4, max(1, round(num_clips * 0.28))),
-        (1.5, max(2, round(num_clips * 0.58))),
-        (1.3, max(3, round(num_clips * 0.84))),
-    ]
+    """Insert image segments at strategic positions across the timeline."""
+    if not images:
+        return lista_lines
+
+    position_fractions = [0.18, 0.32, 0.46, 0.60, 0.74, 0.86, 0.94]
+    durations = [1.2, 1.3, 1.4, 1.4, 1.3, 1.2, 1.1]
+    use_count = min(len(images), len(position_fractions))
+
+    specs = []
+    for idx in range(use_count):
+        dur = durations[idx]
+        pos = max(1, round(max(1, num_clips) * position_fractions[idx]))
+        specs.append((dur, pos))
 
     created = []
-    for idx, (img, (dur, pos)) in enumerate(zip(images[:3], specs)):
+    for idx, (img, (dur, pos)) in enumerate(zip(images[:use_count], specs)):
         if not img.exists() or img.stat().st_size < 1000:
             continue
 

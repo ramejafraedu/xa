@@ -5,6 +5,9 @@ Generates 4 strategic images per video (intro, cliffhanger, peak, payoff).
 """
 from __future__ import annotations
 
+import hashlib
+import shutil
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Optional
@@ -75,6 +78,8 @@ def generate_images_with_stats(
     )
 
     provider_order = provider_order or ["leonardo", "pollinations"]
+    settings.ensure_dirs()
+    ttl_seconds = max(0, int(settings.media_cache_ttl_days)) * 86400
     stats = {
         "leonardo": {"ok": 0, "fail": 0},
         "pollinations": {"ok": 0, "fail": 0},
@@ -89,6 +94,18 @@ def generate_images_with_stats(
 
         output = temp_dir / f"imagen_{idx}_{timestamp}.jpg"
         generated = False
+        cache_key = hashlib.sha1(full_prompt.encode("utf-8", errors="ignore")).hexdigest()[:20]
+        cache_file = settings.image_cache_dir / f"img_{cache_key}.jpg"
+
+        # Reuse cached image when still fresh.
+        if _is_fresh_file(cache_file, ttl_seconds):
+            try:
+                shutil.copy2(cache_file, output)
+                results.append(output)
+                logger.info(f"Image {idx}/{count} CACHE HIT")
+                continue
+            except Exception as e:
+                logger.debug(f"Image cache copy failed, generating fresh: {e}")
 
         for provider in provider_order:
             if provider == "leonardo":
@@ -100,8 +117,9 @@ def generate_images_with_stats(
 
                 if _download_leonardo(full_prompt, output):
                     results.append(output)
+                    _save_image_cache(output, cache_file)
                     stats["leonardo"]["ok"] += 1
-                    logger.info(f"Image {idx}/4 OK (Leonardo)")
+                    logger.info(f"Image {idx}/{count} OK (Leonardo)")
                     generated = True
                     break
 
@@ -111,15 +129,16 @@ def generate_images_with_stats(
             if provider == "pollinations":
                 if _download_pollinations(full_prompt, output):
                     results.append(output)
+                    _save_image_cache(output, cache_file)
                     stats["pollinations"]["ok"] += 1
-                    logger.info(f"Image {idx}/4 OK (Pollinations Fallback)")
+                    logger.info(f"Image {idx}/{count} OK (Pollinations Fallback)")
                     generated = True
                     break
 
                 stats["pollinations"]["fail"] += 1
 
         if not generated:
-            logger.warning(f"Image {idx}/4 FAILED")
+            logger.warning(f"Image {idx}/{count} FAILED")
 
     # Copy image 1 as legacy filename (safe — fixes WinError 2)
     if results:
@@ -133,6 +152,23 @@ def generate_images_with_stats(
 
     logger.info(f"Images generated: {len(results)}/{count}")
     return results, stats
+
+
+def _is_fresh_file(path: Path, ttl_seconds: int) -> bool:
+    if not path.exists() or path.stat().st_size <= 1000:
+        return False
+    if ttl_seconds <= 0:
+        return True
+    age = time.time() - path.stat().st_mtime
+    return age <= ttl_seconds
+
+
+def _save_image_cache(source: Path, cache_file: Path) -> None:
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, cache_file)
+    except Exception as e:
+        logger.debug(f"Image cache save skipped: {e}")
 
 
 def _download_pollinations(prompt: str, output: Path) -> bool:

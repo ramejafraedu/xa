@@ -215,6 +215,7 @@ def run_pipeline(
     from pipeline.cleanup import cleanup_temp, cleanup_stale_temp
     from publishers.telegram import notify_success, notify_error, notify_review
     from publishers.drive_sheets import upload_to_drive, log_to_sheets
+    from services.publish_package import build_publish_package
     from services.supabase_client import read_memory, save_result, save_performance
     from services.niche_memory import (
         build_niche_memory_context,
@@ -387,6 +388,17 @@ def run_pipeline(
             manifest.guion = content.guion
             manifest.cta = content.cta
             manifest.caption = content.caption
+            publish_pkg = build_publish_package(
+                title=manifest.titulo,
+                hook=manifest.gancho,
+                cta=manifest.cta,
+                caption=manifest.caption,
+            )
+            manifest.publish_title = publish_pkg["title"]
+            manifest.publish_description = publish_pkg["description"]
+            manifest.publish_hashtags = publish_pkg["hashtags"]
+            manifest.publish_hashtags_text = publish_pkg["hashtags_text"]
+            manifest.publish_comment = publish_pkg["comment"]
             manifest.quality_score = quality.quality_score
             manifest.viral_score = content.viral_score
             manifest.hook_score = quality.block_scores.hook
@@ -521,6 +533,7 @@ def run_pipeline(
                 manifest.ab_variant,
                 timestamp,
                 settings.temp_dir,
+                count=max(4, min(10, int(settings.generated_images_count))),
             )
 
             # --- Lyria 3 AI music (NEW — with Pixabay/Jamendo fallback) ---
@@ -661,6 +674,8 @@ def run_pipeline(
 
             manifest.video_path = str(video_path)
             manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
+            if manifest.thumbnail_path:
+                manifest.publish_cover_path = manifest.thumbnail_path
             state.mark_stage(manifest, "render", _elapsed(timer))
             progress.advance(main_task)
 
@@ -711,7 +726,7 @@ def run_pipeline(
                     "titulo": content.titulo,
                     "gancho": content.gancho,
                     "cta": content.cta,
-                    "caption": content.caption,
+                    "caption": manifest.publish_description,
                     "hook_score": quality.block_scores.hook,
                     "score_desarrollo": quality.block_scores.desarrollo,
                     "score_cierre": quality.block_scores.cierre,
@@ -723,6 +738,9 @@ def run_pipeline(
                     "tts_engine": tts_engine,
                     "plataforma": nicho.plataforma,
                     "num_clips": content.num_clips,
+                    "hashtags": manifest.publish_hashtags_text,
+                    "comment": manifest.publish_comment,
+                    "cover_path": manifest.publish_cover_path,
                     "drive_link": drive_link,
                     "timestamp": timestamp,
                 })
