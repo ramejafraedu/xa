@@ -9,11 +9,15 @@ num_clips: 8
 keywords_count: 8
 tipo_cortes: "ultra dinamicos y variados"
 estilo_narrativo: >
-  Narrativa curiosa y explicativa: gancho de alto impacto, explicacion de por que ocurre, ejemplo cotidiano y cierre con insight memorable.
-  Para tiktok_reels apunta a 50-90 segundos con ritmo dinamico, transiciones claras y mini-recompensas cada 8-10 segundos.
-  Incluye neuromarketing, psicologia del comportamiento y efectos cognitivos con lenguaje facil de entender.
-  Mantiene polemica controlada y climax de descubrimiento antes del CTA.
-  Cada dato debe desafiar lo que el usuario cree saber y dejar una conclusion util.
+  Estructura obligatoria: introduccion (8-12s) + explicacion profunda (45-55s) + cierre aplicable (8-12s).
+  Objetivo de script: 180-220 palabras para pieza de alrededor de 65 segundos con descubrimiento real.
+  Introduccion: presentar una pregunta o dato contraintuitivo en lenguaje simple.
+  Desarrollo: responder que es, por que ocurre y como afecta decisiones cotidianas con al menos 2 ejemplos reales.
+  Incluir minimo 3 datos concretos (porcentaje, experimento, sesgo o resultado medible) explicados sin tecnicismos.
+  Cierre: insight memorable + consejo practico inmediato + CTA natural.
+  Temas preferentes: psicologia del comportamiento, sesgos cognitivos, neuromarketing, curiosidades cientificas verificables.
+  Prohibido: listas de datos sueltos sin explicacion, frases vagas o afirmaciones imposibles de respaldar.
+  Ritmo: dinamico, transiciones claras y mini-recompensas narrativas cada 8-10 segundos.
 voz_gemini: "Kore"
 voz_edge: "es-MX-JorgeNeural"
 rate_tts: "+5%"

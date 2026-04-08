@@ -268,15 +268,15 @@ class ResearchAgent:
                 "Fenómeno científico que desafía la lógica",
                 "Truco mental que usan las marcas contra ti",
             ],
-            "salud": [
-                "Hábito 'saludable' que en realidad te daña",
-                "Señal del cuerpo que todos ignoran",
-                "Alimento común con efectos ocultos",
+            "historias_reddit": [
+                "Confesión de Reddit que terminó destruyendo una familia",
+                "Historia de trabajo tóxico con un giro imposible de prever",
+                "AITA viral donde todos estaban equivocados",
             ],
-            "recetas": [
-                "Error de cocina que arruina el sabor sin que lo notes",
-                "Ingrediente secreto de chefs profesionales",
-                "Receta viral con solo 3 ingredientes",
+            "ia_herramientas": [
+                "Flujo con IA que ahorra horas y se vende como servicio",
+                "Herramienta gratis que automatiza tareas de freelancers",
+                "Error con prompts que te hace perder clientes",
             ],
         }
         return fallbacks.get(nicho.slug, [

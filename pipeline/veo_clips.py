@@ -173,8 +173,8 @@ def generate_scene_prompts(
         "finanzas": "modern office lighting, corporate atmosphere, clean composition",
         "historia": "cinematic historical recreation, dramatic lighting, period-accurate details",
         "curiosidades": "vibrant colors, macro close-ups, amazing natural phenomena",
-        "salud": "clean medical environment, warm natural lighting, wellness atmosphere",
-        "recetas": "overhead food photography, steam rising, appetizing presentation, wooden table",
+        "historias_reddit": "neo-noir storytelling, phone UI overlays, moody interiors, emotional close-ups",
+        "ia_herramientas": "futuristic workspace, software dashboards, keyboard macros, neon tech lighting",
     }
 
     style = base_styles.get(nicho_nombre.lower(), "professional cinematic lighting, 4K quality")

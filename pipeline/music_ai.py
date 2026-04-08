@@ -262,8 +262,8 @@ def _build_music_prompt(mood: str, duration: float, nicho: str) -> str:
         "finanzas": "modern electronic, corporate, upbeat, confident",
         "historia": "epic orchestral, cinematic, dramatic, historical",
         "curiosidades": "quirky electronic, playful, wonder, upbeat tempo",
-        "salud": "calm ambient, wellness, peaceful, nature sounds",
-        "recetas": "light acoustic, kitchen vibes, happy, warm",
+        "historias_reddit": "dark cinematic tension, suspense pulses, emotional builds, subtle impacts",
+        "ia_herramientas": "modern tech groove, clean electronic, optimistic momentum, startup energy",
     }
 
     style = nicho_styles.get(nicho.lower(), mood)

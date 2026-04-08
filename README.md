@@ -19,8 +19,8 @@ Genera contenido, valida calidad, produce audio/subtitulos, construye el video f
 - finanzas
 - historia
 - curiosidades
-- salud
-- recetas
+- historias_reddit
+- ia_herramientas
 
 ## Stack tecnico
 

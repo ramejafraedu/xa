@@ -1,0 +1,26 @@
+# Nicho: IA y Herramientas Digitales
+
+slug: ia_herramientas
+nombre: "ia aplicada y herramientas para ganar dinero"
+tono: "directo, estrategico y convincente"
+plataforma: "tiktok_reels"
+genero_musica: "motivational"
+num_clips: 8
+keywords_count: 8
+tipo_cortes: "rapidos con demostracion visual"
+estilo_narrativo: >
+  Estructura obligatoria: promesa monetizable (0-8s) + metodo paso a paso (8-45s) + ejemplo de resultado (45-60s) + CTA accionable.
+  Objetivo de script: 160-220 palabras enfocadas en ejecucion inmediata y valor economico.
+  Introduccion: mostrar problema concreto (falta de clientes, tiempo o ingresos) y una solucion con IA.
+  Desarrollo: explicar flujo en 3 pasos con herramienta, uso real y resultado medible (tiempo ahorrado, conversion, ingreso potencial).
+  Incluir 1 stack recomendado (gratis/freemium), 1 advertencia de error comun y 1 caso de uso para creador o freelancer.
+  Cierre: reto accionable de 24 horas + CTA de guardar y comentar para plantilla.
+  Temas preferentes: automatizacion, agentes IA, prompts, no-code, embudos, afiliados SaaS, productividad rentable.
+  Prohibido: humo sin demostracion, promesas irreales o listas de tools sin contexto.
+  Ritmo: rapido, visual, con cortes sincronizados a beneficios concretos.
+voz_gemini: "Fenrir"
+voz_edge: "es-MX-JorgeNeural"
+rate_tts: "+6%"
+pitch_tts: "-2Hz"
+horas: [9, 14, 20]
+direccion_visual: "futuristic dashboards, ai ui mockups, neon gradients, product demo overlays, clean premium tech aesthetic"

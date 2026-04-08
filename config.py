@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     # Image Gen
     pollinations_base: str = "https://image.pollinations.ai"
     leonardo_api_key: str = ""
+    prefer_stock_images: bool = True
 
     # Telegram
     telegram_bot_token: str = ""
@@ -120,12 +121,17 @@ class Settings(BaseSettings):
     # WhisperX (local word-level subtitles)
     use_whisperx: bool = True
 
+    # Keep narration/subtitles locked to the canonical script text.
+    tts_use_script_text: bool = True
+    subtitles_use_script_text: bool = True
+
     # Piper (offline TTS fallback)
     use_piper_tts: bool = False
     piper_model_path: str = ""
 
     # Remotion (premium renderer)
-    use_remotion: bool = False  # False by default — needs npx remotion setup first
+    use_remotion: bool = True
+    force_ffmpeg_renderer: bool = False
 
     # --- V16 rollout feature flags ---
     free_mode: bool = False
@@ -264,7 +270,11 @@ class Settings(BaseSettings):
             "free_mode": self.free_mode,
             "allow_freemium_in_free_mode": self.allow_freemium_in_free_mode,
             "use_remotion": self.use_remotion,
+            "force_ffmpeg_renderer": self.force_ffmpeg_renderer,
             "use_piper_tts": self.use_piper_tts,
+            "prefer_stock_images": self.prefer_stock_images,
+            "tts_use_script_text": self.tts_use_script_text,
+            "subtitles_use_script_text": self.subtitles_use_script_text,
             "enable_web_research_plus": self.enable_web_research_plus,
             "enable_reference_driven": self.enable_reference_driven,
             "enable_cost_governance": self.enable_cost_governance,
@@ -560,7 +570,7 @@ class Settings(BaseSettings):
 
 
 # ---------------------------------------------------------------------------
-# 5 Nichos — exact match with MASTER V13 Config nodes
+# 5 Nichos — default hardcoded fallback
 # ---------------------------------------------------------------------------
 NICHOS: dict[str, NichoConfig] = {
     "finanzas": NichoConfig(
@@ -611,37 +621,37 @@ NICHOS: dict[str, NichoConfig] = {
         pitch_tts="+0Hz",
         horas=[9, 17, 1],
     ),
-    "salud": NichoConfig(
-        slug="salud",
-        nombre="habitos saludables y nutricion",
-        tono="calido y directo",
-        plataforma="facebook",
-        genero_musica="ambient",
-        num_clips=6,
-        keywords_count=6,
-        tipo_cortes="suaves y fluidos",
-        estilo_narrativo="calido y directo con consejos practicos, apertura potente, contraste de habitos comunes y climax accionable sobre longevidad, biohacking y medicina preventiva.",
-        voz_gemini="Aoede",
-        voz_edge="es-MX-DaliaNeural",
-        rate_tts="+0%",
-        pitch_tts="+0Hz",
-        horas=[10, 18, 2],
+    "historias_reddit": NichoConfig(
+        slug="historias_reddit",
+        nombre="historias de reddit impactantes",
+        tono="narrativo intenso y adictivo",
+        plataforma="tiktok_reels",
+        genero_musica="dark",
+        num_clips=10,
+        keywords_count=10,
+        tipo_cortes="ritmo progresivo con picos de tension",
+        estilo_narrativo="narracion inmersiva con hook extremo, escalada emocional, plot twist y cierre abierto para comentarios, priorizando retencion y continuidad.",
+        voz_gemini="Charon",
+        voz_edge="es-ES-AlvaroNeural",
+        rate_tts="+4%",
+        pitch_tts="-8Hz",
+        horas=[12, 18, 22],
     ),
-    "recetas": NichoConfig(
-        slug="recetas",
-        nombre="recetas de cocina faciles",
-        tono="calido y cercano",
-        plataforma="facebook",
-        genero_musica="ambient",
-        num_clips=6,
-        keywords_count=6,
-        tipo_cortes="rapidos y energicos",
-        estilo_narrativo="cercano y entusiasta como compartir con un amigo, gancho apetitoso, punto de debate culinario y climax de resultado final sobre tendencias plant-based y recetas virales.",
-        voz_gemini="Aoede",
-        voz_edge="es-MX-DaliaNeural",
-        rate_tts="+5%",
-        pitch_tts="+3Hz",
-        horas=[11, 19, 3],
+    "ia_herramientas": NichoConfig(
+        slug="ia_herramientas",
+        nombre="ia aplicada y herramientas para ganar dinero",
+        tono="directo, estrategico y convincente",
+        plataforma="tiktok_reels",
+        genero_musica="motivational",
+        num_clips=8,
+        keywords_count=8,
+        tipo_cortes="rapidos con demostracion visual",
+        estilo_narrativo="promesa monetizable, metodo en 3 pasos y resultado medible con CTA accionable para emprendedores y creadores.",
+        voz_gemini="Fenrir",
+        voz_edge="es-MX-JorgeNeural",
+        rate_tts="+6%",
+        pitch_tts="-2Hz",
+        horas=[9, 14, 20],
     ),
 }
 

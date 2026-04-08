@@ -34,9 +34,9 @@ El ScriptAgent DEBE devolver exactamente este schema JSON:
 - NUNCA incluyas el gancho en el guion, ya está separado
 
 ### velocidad_cortes
-- `lento` → finanzas old money, salud, reflexión
+- `lento` → finanzas old money, reflexión, narración pausada
 - `medio` → historia, curiosidades sin urgencia
-- `rapido` → curiosidades con datos, recetas paso a paso
+- `rapido` → curiosidades con datos, ia_herramientas con demos
 - `ultra_rapido` → trending topics, datos en cadena
 
 ### viral_score

@@ -94,7 +94,12 @@ class AssetAgent:
             selector.mark_result("stock_video", stock_order[0], False, "no clips returned")
 
         # --- 2. Images (with visual direction from StoryState) ---
-        image_candidates = strict_free_candidates(["leonardo", "pollinations"], usage="media")
+        image_candidates = strict_free_candidates(
+            ["pexels", "pixabay", "leonardo", "pollinations"],
+            usage="media",
+        )
+        if not image_candidates:
+            image_candidates = ["pixabay", "pollinations"]
         image_order = selector.get_provider_order("image_generation", image_candidates)
         results["provider_orders"]["image_generation"] = image_order
 
@@ -304,6 +309,8 @@ class AssetAgent:
         except Exception as e:
             logger.warning(f"Image generation failed: {e}")
             return [], {
+                "pexels": {"ok": 0, "fail": 0},
+                "pixabay": {"ok": 0, "fail": 0},
                 "leonardo": {"ok": 0, "fail": 0},
                 "pollinations": {"ok": 0, "fail": 0},
             }

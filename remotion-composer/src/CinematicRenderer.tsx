@@ -17,22 +17,37 @@ function resolveAsset(src: string): string {
   if (!src) {
     return src;
   }
-  if (src.startsWith("http://") || src.startsWith("https://") || src.startsWith("data:")) {
+  if (
+    src.startsWith("http://") ||
+    src.startsWith("https://") ||
+    src.startsWith("data:")
+  ) {
     return src;
   }
+
+  const normalized = src.replace(/\\/g, "/");
+
+  // If it's a relative path starting with workspace/, use staticFile
+  if (normalized.startsWith("workspace/")) {
+    return staticFile(normalized);
+  }
+
+  // Handle file:/// URIs
   if (src.startsWith("file://")) {
-    return src.replace(/\\/g, "/");
+    let clean = src.replace(/\\/g, "/");
+    // Decode URI component to handle spaces (%20)
+    try {
+      clean = decodeURI(clean);
+    } catch (e) {
+      // ignore
+    }
+    return clean;
   }
 
-  const clean = src.replace(/^file:\/\/\/?/, "");
-  const normalized = clean.replace(/\\/g, "/");
-
-  if (/^[A-Za-z]:\//.test(normalized)) {
-    return `file:///${normalized}`;
-  }
-
-  if (normalized.startsWith("/")) {
-    return `file://${normalized}`;
+  // Handle absolute paths (C:/... or /...)
+  if (/^[A-Za-z]:\//.test(normalized) || normalized.startsWith("/")) {
+    const path = normalized.startsWith("/") ? normalized : `/${normalized}`;
+    return `file://${encodeURI(path)}`;
   }
 
   return staticFile(normalized);
@@ -335,6 +350,7 @@ const Soundtrack: React.FC<{
 
 export const calculateCinematicMetadata: CalculateMetadataFunction<CinematicRendererProps> =
   async ({ props }) => {
+    console.log("CALCULATING METADATA WITH PROPS:", JSON.stringify(props).slice(0, 200));
     const totalSeconds =
       props.scenes.length === 0
         ? 30

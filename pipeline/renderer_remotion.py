@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,8 @@ REMOTION_DIR = Path(__file__).resolve().parent.parent / "remotion-composer"
 
 def is_remotion_available() -> bool:
     """Check if Remotion runtime is available."""
+    if settings.force_ffmpeg_renderer:
+        return False
     if not settings.use_remotion:
         return False
     if not REMOTION_DIR.exists():
@@ -33,6 +36,10 @@ def is_remotion_available() -> bool:
         return False
 
     try:
+        npx_bin = shutil.which("npx") or shutil.which("npx.cmd")
+        if not npx_bin:
+            logger.warning("npx not found in PATH")
+            return False
         result = subprocess.run(
             ["node", "--version"],
             capture_output=True,
@@ -85,8 +92,13 @@ def render_with_remotion(
         composition_id = str(metadata.get("composition_id", "CinematicRenderer"))
         logger.info(f"🎥 Remotion: Rendering {len(props.get('scenes', []))} scenes ({composition_id})...")
 
+        npx_bin = shutil.which("npx") or shutil.which("npx.cmd")
+        if not npx_bin:
+            logger.warning("Remotion render aborted: npx executable not found")
+            return False
+
         cmd = [
-            "npx", "remotion", "render",
+            npx_bin, "remotion", "render",
             "src/index.tsx",
             composition_id,
             str(output_path.resolve()),
@@ -101,11 +113,21 @@ def render_with_remotion(
             capture_output=True,
             text=True,
             timeout=600,
+            shell=settings.is_windows,
         )
 
-        props_file.unlink(missing_ok=True)
+        # props_file.unlink(missing_ok=True)
 
-        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1024:
+        if result.stdout:
+            logger.debug(f"Remotion stdout: {result.stdout[:2000]}")
+        if result.stderr:
+            logger.debug(f"Remotion stderr: {result.stderr[:2000]}")
+
+        if result.returncode != 0:
+            logger.warning(f"Remotion render failed (exit {result.returncode})")
+            return False
+
+        if output_path.exists() and output_path.stat().st_size > 1024:
             suspicious_reason = _remotion_output_quality_issue(output_path)
             if suspicious_reason:
                 logger.warning(
@@ -122,16 +144,19 @@ def render_with_remotion(
             logger.info(f"✅ Remotion render complete: {output_path.name} ({size_mb:.1f}MB)")
             return True
 
-        logger.warning(f"Remotion render failed (exit {result.returncode})")
-        if result.stderr:
-            logger.debug(f"Remotion stderr: {result.stderr[:500]}")
+        logger.warning(f"Remotion render finished but output file missing or tiny.")
         return False
 
     except subprocess.TimeoutExpired:
         logger.error("Remotion render timed out (10 min)")
         return False
+    except FileNotFoundError:
+        logger.error(f"Remotion executable not found (npx={npx_bin})")
+        return False
     except Exception as exc:
         logger.warning(f"Remotion render error: {exc}")
+        if hasattr(exc, 'stderr') and exc.stderr:
+            logger.debug(f"Remotion error detail: {exc.stderr}")
         return False
 
 
@@ -155,10 +180,12 @@ def render_video_with_fallback(
     timeline_payload: Optional[dict] = None,
     render_fixes: Optional[dict] = None,
 ) -> tuple[Optional[Path], Optional[Path], str, str]:
-    """Try Remotion first, then fallback to FFmpeg renderer."""
+    """Try Remotion first (when enabled), then fallback to FFmpeg renderer."""
     from pipeline.renderer import render_video
 
-    if settings.use_remotion:
+    if settings.force_ffmpeg_renderer and settings.use_remotion:
+        logger.info("Remotion renderer forced OFF by config; using FFmpeg renderer")
+    elif settings.use_remotion:
         if not clips:
             logger.info("Remotion skipped: no video clips detected, using FFmpeg image pipeline")
         else:
@@ -494,7 +521,11 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
 
 
 def _to_file_uri(value: str) -> str:
-    """Convert absolute local paths to file:/// URIs for Remotion assets."""
+    """Convert absolute local paths to URIs for Remotion assets.
+    
+    If the file is inside the workspace, we return a relative path
+    starting with 'workspace/' so Remotion can use it via staticFile().
+    """
     src = (value or "").strip()
     if not src:
         return src
@@ -502,16 +533,17 @@ def _to_file_uri(value: str) -> str:
     lowered = src.lower()
     if lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("data:"):
         return src
-    if lowered.startswith("file://"):
+    
+    # Resolve to absolute path
+    try:
+        path = Path(src).resolve()
+        workspace_dir = settings.workspace.resolve()
+        if path.is_relative_to(workspace_dir):
+            rel = path.relative_to(workspace_dir.parent)
+            return str(rel).replace("\\", "/")
+        return str(path)
+    except Exception:
         return src
-
-    if re.match(r"^[a-zA-Z]:[\\/]", src) or src.startswith("/"):
-        try:
-            return Path(src).resolve().as_uri()
-        except Exception:
-            return "file:///" + src.replace("\\", "/")
-
-    return src
 
 
 def _parse_ass_words(subtitles_path: Optional[Path]) -> list[dict]:

@@ -51,7 +51,6 @@ from core.openmontage_free import (
     apply_color_grade,
     apply_playbook_to_story,
     apply_video_trim,
-    generate_vtt_from_audio,
 )
 from core.reference_context import load_reference_context
 from core.state import StoryState, get_style_for_platform
@@ -130,7 +129,7 @@ def run_pipeline_v15(
         JobManifest with full audit trail.
     """
     from pipeline.tts_engine import generate_tts, get_audio_duration
-    from pipeline.subtitles import vtt_to_ass, generate_timed_ass_from_text
+    from pipeline.subtitles import generate_timed_ass_from_text
     from pipeline.quality_gate import validate_and_score
     from pipeline.self_healer import attempt_healing
     from pipeline.renderer import download_clips
@@ -798,10 +797,12 @@ def run_pipeline_v15(
                 notify_error(manifest)
                 return manifest
 
-            # Use scene-joined text or V14 style
-            guion_tts = story.scene_texts_joined() or " ".join(
-                filter(None, [manifest.gancho, manifest.guion, manifest.cta])
-            )
+            # Keep narration on canonical script text to avoid scene-level paraphrasing.
+            script_tts_text = " ".join(filter(None, [manifest.gancho, manifest.guion, manifest.cta]))
+            if settings.tts_use_script_text:
+                guion_tts = script_tts_text or story.scene_texts_joined()
+            else:
+                guion_tts = story.scene_texts_joined() or script_tts_text
             guion_tts = _clean_tts_text(guion_tts)
 
             audio_path = settings.temp_dir / f"audio_{timestamp}.mp3"
@@ -895,84 +896,20 @@ def run_pipeline_v15(
             _stage_start("subtitles", "Subtitle Generation")
 
             ass_path = settings.temp_dir / f"subs_{timestamp}.ass"
-            subtitles_ready = False
-
-            # Primary subtitles provider: AssemblyAI (when API key is configured).
-            if settings.assemblyai_api_key:
-                try:
-                    from pipeline.subtitles_assemblyai import generate_ass_assemblyai
-
-                    ass_events = generate_ass_assemblyai(
-                        audio_path=audio_path,
-                        ass_path=ass_path,
-                        api_key=settings.assemblyai_api_key,
-                        language_code="es",
-                    )
-                    if ass_events > 0:
-                        subtitles_ready = True
-                        _add_decision(
-                            "subtitles",
-                            "AssemblyAI subtitles applied (primary)",
-                            f"events={ass_events}",
-                        )
-                except Exception as assembly_exc:
-                    logger.warning(
-                        "AssemblyAI subtitles failed, falling back to WhisperX/OpenMontage: "
-                        f"{assembly_exc}"
-                    )
-
-            if not subtitles_ready:
-                try:
-                    from pipeline.subtitles_whisperx import generate_ass_whisperx
-
-                    events = generate_ass_whisperx(audio_path, ass_path)
-                    if events <= 0:
-                        raise Exception("WhisperX produced no events")
-                    subtitles_ready = True
-                    _add_decision(
-                        "subtitles",
-                        "WhisperX subtitle fallback applied",
-                        f"events={events}",
-                    )
-                except Exception as whisper_exc:
-                    logger.warning(
-                        "⚠️ WhisperX fallback failed, using secondary fallback: "
-                        f"{whisper_exc}"
-                    )
-
-            if not subtitles_ready:
-                om_vtt_path = generate_vtt_from_audio(audio_path, settings.temp_dir)
-                if om_vtt_path and om_vtt_path.exists() and om_vtt_path.stat().st_size > 20:
-                    events = vtt_to_ass(om_vtt_path, ass_path)
-                    subtitles_ready = events > 0
-                    _add_decision(
-                        "subtitles",
-                        "OpenMontage subtitle_gen applied",
-                        om_vtt_path.name,
-                    )
-                elif vtt_path.exists() and vtt_path.stat().st_size > 20:
-                    events = vtt_to_ass(vtt_path, ass_path)
-                    subtitles_ready = events > 0
-                    if subtitles_ready:
-                        _add_decision(
-                            "subtitles",
-                            "Edge VTT subtitle fallback applied",
-                            vtt_path.name,
-                        )
-                else:
-                    events = generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
-                    subtitles_ready = events > 0
-                    _add_decision(
-                        "subtitles",
-                        "Timed text subtitle fallback applied",
-                        f"events={events}",
-                    )
+            subtitles_text = guion_tts if settings.subtitles_use_script_text else (story.scene_texts_joined() or guion_tts)
+            events = generate_timed_ass_from_text(subtitles_text, audio_duration, ass_path)
+            _add_decision(
+                "subtitles",
+                "Script-locked subtitles applied" if settings.subtitles_use_script_text else "Timed text subtitles applied",
+                f"events={events}",
+            )
 
             manifest.subs_path = str(ass_path)
 
             # Duration validation
             audio_duration, was_trimmed = validate_duration(
                 audio_duration, nicho.plataforma, audio_path,
+                niche_slug=nicho.slug,
             )
             if was_trimmed:
                 manifest.duration_seconds = audio_duration
@@ -1425,8 +1362,8 @@ def _audience_for_nicho(slug: str) -> str:
         "finanzas": "hombres 18-35, interesados en dinero y libertad financiera",
         "historia": "curiosos 20-45, fascinados por misterios y hechos oscuros",
         "curiosidades": "audiencia general 16-35, amantes de datos sorprendentes",
-        "salud": "mujeres 25-50, interesadas en bienestar y longevidad",
-        "recetas": "mujeres 20-45, buscando recetas fáciles y deliciosas",
+        "historias_reddit": "audiencia general 16-40, enganchada a drama, conflictos y plot twists",
+        "ia_herramientas": "creadores y freelancers 18-40, interesados en automatizar y monetizar con IA",
     }
     return audiences.get(slug, "audiencia general interesada en contenido viral")
 

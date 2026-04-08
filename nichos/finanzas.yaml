@@ -10,11 +10,14 @@ num_clips: 8
 keywords_count: 8
 tipo_cortes: "lentos y cinematograficos"
 estilo_narrativo: >
-  Narrativa explicativa y viral en capas: gancho fuerte, contexto breve, explicacion clara con ejemplo real y cierre accionable.
-  Para tiktok_reels prioriza retencion de 50-90 segundos con lenguaje simple, ritmo alto y micro-cliffhangers cada 8-10 segundos.
-  Usa inflacion, cripto, libertad financiera y errores comunes con enfoque polemico controlado y accion de 1 paso aplicable hoy.
-  Refuerza climax narrativo antes del CTA: tension, giro y payoff claro.
-  Referencia visual: edificios de lujo, coches, oficinas minimalistas y contraste antes vs despues.
+  Estructura obligatoria: introduccion (8-12s) + desarrollo (45-55s) + cierre accionable (8-12s).
+  Objetivo de script: 180-220 palabras para pieza de alrededor de 65 segundos con contenido real y aplicable.
+  Introduccion: romper una creencia financiera popular con un dato concreto (porcentaje, monto o comparacion).
+  Desarrollo: explicar 2 causas reales del problema, incluir 1 ejemplo numerico completo y 1 mini caso practico.
+  Cierre: plan de accion de 1 paso para hoy + advertencia del costo de no actuar.
+  Temas preferentes: inflacion, deuda, flujo de caja, inversion basica, libertad financiera, errores comunes.
+  Prohibido: frases vacias tipo motivacion sin datos, promesas irreales o consejos sin contexto.
+  Ritmo: micro-cliffhangers cada 8-10 segundos y payoff claro antes del CTA.
 voz_gemini: "Fenrir"
 voz_edge: "es-MX-JorgeNeural"
 rate_tts: "-10%"

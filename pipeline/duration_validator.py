@@ -31,11 +31,17 @@ def validate_duration(
     audio_duration: float,
     platform: str,
     audio_path: Path,
+    niche_slug: str = "",
 ) -> tuple[float, bool]:
     """Validate and potentially trim audio to platform max.
 
     Returns (final_duration, was_trimmed).
     """
+    # Some story-first niches intentionally allow long-form narration.
+    if (niche_slug or "").strip().lower() == "historias_reddit":
+        logger.info("Skipping duration cap for niche historias_reddit")
+        return audio_duration, False
+
     max_dur = get_max_duration(platform)
 
     if audio_duration <= max_dur:

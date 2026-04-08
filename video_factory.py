@@ -193,7 +193,9 @@ def _preflight_checks() -> bool:
     else:
         checks.append(("Piper TTS (offline)", "⬜ Disabled", "dim"))
 
-    if settings.use_remotion:
+    if settings.force_ffmpeg_renderer:
+        checks.append(("Remotion (render)", "⬜ Forced OFF (FFmpeg only)", "dim"))
+    elif settings.use_remotion:
         from pipeline.renderer_remotion import is_remotion_available
         if is_remotion_available():
             checks.append(("Remotion (render)", "✅ Ready", "green"))
@@ -243,7 +245,7 @@ def run_pipeline(
     from pipeline.quality_gate import validate_and_score
     from pipeline.self_healer import attempt_healing
     from pipeline.tts_engine import generate_tts, get_audio_duration
-    from pipeline.subtitles import vtt_to_ass, generate_timed_ass_from_text
+    from pipeline.subtitles import generate_timed_ass_from_text
     from pipeline.image_gen import generate_images
     from pipeline.video_stock import fetch_stock_videos
     from pipeline.music import fetch_music
@@ -514,30 +516,15 @@ def run_pipeline(
             state.mark_stage(manifest, "tts", _elapsed(timer))
             progress.advance(main_task)
 
-            # ── Stage 5: Subtitles (WhisperX → VTT → estimation) ────
+            # ── Stage 5: Subtitles (script-locked timing) ────
             timer = _stage_timer()
             progress.update(main_task, description="[cyan]📝 Creating subtitles...")
             ass_path = settings.temp_dir / f"subs_{timestamp}.ass"
             audio_duration = get_audio_duration(audio_path)
 
             if not state.should_skip_stage(manifest, "subtitles", ass_path):
-                # Try WhisperX first (precise word-level timing)
-                whisperx_done = False
-                try:
-                    from pipeline.subtitles_whisperx import generate_ass_whisperx
-                    whisperx_events = generate_ass_whisperx(audio_path, ass_path)
-                    whisperx_done = whisperx_events > 0
-                    if whisperx_done:
-                        logger.info(f"WhisperX: {whisperx_events} events with precise timing")
-                except Exception as e:
-                    logger.debug(f"WhisperX not available: {e}")
-
-                # Fallback chain: VTT → character estimation
-                if not whisperx_done:
-                    if vtt_path.exists() and vtt_path.stat().st_size > 20:
-                        vtt_to_ass(vtt_path, ass_path)
-                    else:
-                        generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
+                subtitle_events = generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
+                logger.info(f"Script-locked subtitles: {subtitle_events} events")
 
             manifest.subs_path = str(ass_path)
             manifest.duration_seconds = audio_duration
@@ -545,6 +532,7 @@ def run_pipeline(
             # Duration validation
             audio_duration, was_trimmed = validate_duration(
                 audio_duration, nicho.plataforma, audio_path,
+                niche_slug=nicho.slug,
             )
             if was_trimmed:
                 manifest.duration_seconds = audio_duration
@@ -870,7 +858,7 @@ def _print_summary(manifest: JobManifest):
 
 @app.command()
 def run(
-    niche: str = typer.Argument(None, help="Niche: finanzas, historia, curiosidades, salud, recetas"),
+    niche: str = typer.Argument(None, help="Niche: finanzas, historia, curiosidades, historias_reddit, ia_herramientas"),
     test: bool = typer.Option(False, "--test", help="Quick test with finanzas (V15)"),
     all_now: bool = typer.Option(False, "--all-now", help="Run all 5 nichos immediately (V15)"),
     schedule: bool = typer.Option(False, "--schedule", help="Start 24/7 scheduler"),
