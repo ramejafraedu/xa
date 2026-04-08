@@ -868,18 +868,41 @@ def run_pipeline_v15(
                     raise Exception("WhisperX produced no events")
             except Exception as e:
                 logger.warning(f"⚠️ WhisperX falló o no está instalado, usando método de respaldo: {e}")
-                om_vtt_path = generate_vtt_from_audio(audio_path, settings.temp_dir)
-                if om_vtt_path and om_vtt_path.exists() and om_vtt_path.stat().st_size > 20:
-                    vtt_to_ass(om_vtt_path, ass_path)
-                    _add_decision(
-                        "subtitles",
-                        "OpenMontage subtitle_gen applied",
-                        om_vtt_path.name,
-                    )
-                elif vtt_path.exists() and vtt_path.stat().st_size > 20:
-                    vtt_to_ass(vtt_path, ass_path)
-                else:
-                    generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
+                used_subtitle_fallback = False
+
+                if settings.assemblyai_api_key:
+                    try:
+                        from pipeline.subtitles_assemblyai import generate_ass_assemblyai
+
+                        ass_events = generate_ass_assemblyai(
+                            audio_path=audio_path,
+                            ass_path=ass_path,
+                            api_key=settings.assemblyai_api_key,
+                            language_code="es",
+                        )
+                        if ass_events > 0:
+                            used_subtitle_fallback = True
+                            _add_decision(
+                                "subtitles",
+                                "AssemblyAI subtitle fallback applied",
+                                f"events={ass_events}",
+                            )
+                    except Exception as assembly_exc:
+                        logger.warning(f"AssemblyAI subtitle fallback failed: {assembly_exc}")
+
+                if not used_subtitle_fallback:
+                    om_vtt_path = generate_vtt_from_audio(audio_path, settings.temp_dir)
+                    if om_vtt_path and om_vtt_path.exists() and om_vtt_path.stat().st_size > 20:
+                        vtt_to_ass(om_vtt_path, ass_path)
+                        _add_decision(
+                            "subtitles",
+                            "OpenMontage subtitle_gen applied",
+                            om_vtt_path.name,
+                        )
+                    elif vtt_path.exists() and vtt_path.stat().st_size > 20:
+                        vtt_to_ass(vtt_path, ass_path)
+                    else:
+                        generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
 
             manifest.subs_path = str(ass_path)
 
