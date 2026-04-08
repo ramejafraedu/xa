@@ -501,6 +501,8 @@ def _mix_audio(
 ) -> str:
     """Mix voice + music with ducking. Returns error string or empty."""
     bg_fade_out = max(0, duracion - 3)
+    # Hard cap final mux duration near narration length to avoid long-video/short-audio outputs.
+    target_mux_duration = max(0.8, float(duracion or 0.0) + 0.12)
 
     if music and music.exists() and music.stat().st_size > 1000:
         # Full mix with sidechain compression
@@ -511,7 +513,7 @@ def _mix_audio(
             f"[1:a]volume=0.12,"
             f"afade=t=in:st=0:d=2,afade=t=out:st={bg_fade_out}:d=2[bg];"
             f"[bg][vozduck]sidechaincompress=threshold=-25dB:ratio=4:attack=0.01:release=0.5:makeup=1[ducked];"
-            f"[ducked][vozmain]amix=inputs=2:weights='1 1':duration=first:dropout_transition=2,"
+            f"[ducked][vozmain]amix=inputs=2:weights='1 1':duration=second:dropout_transition=2,"
             f"loudnorm=I=-14:TP=-1.5:LRA=7[audio_final]"
         )
         cmd = [
@@ -535,6 +537,7 @@ def _mix_audio(
             "-i", mixed_audio.as_posix(),
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-t", f"{target_mux_duration:.3f}",
             "-shortest",
             "-movflags", "+faststart",
             *_privacy_ffmpeg_args(),
@@ -552,6 +555,7 @@ def _mix_audio(
             "-i", audio.as_posix(),
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-t", f"{target_mux_duration:.3f}",
             "-shortest",
             "-movflags", "+faststart",
             *_privacy_ffmpeg_args(),

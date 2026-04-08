@@ -77,11 +77,25 @@ def notify_review(result: PipelineResult) -> bool:
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         return False
 
+    qa_issues = list(getattr(result, "qa_issues", []) or [])
+    if qa_issues:
+        reason_lines = "\n".join(f"• {issue[:180]}" for issue in qa_issues[:3])
+        reason_block = (
+            "\n"
+            "🔍 Motivo QA:\n"
+            f"{reason_lines}\n"
+        )
+        quality_line = f"📊 Calidad narrativa: {result.quality_score} (threshold: 7.5)"
+    else:
+        reason_block = ""
+        quality_line = f"📊 Calidad: {result.quality_score} (threshold: 7.5)"
+
     text = (
         f"⚠️ VIDEO FACTORY {_pipeline_label(result)} — Requiere revisión\n\n"
         f"📁 Nicho: {result.nicho_slug}\n"
         f"📝 Titulo: {result.titulo}\n"
-        f"📊 Calidad: {result.quality_score} (threshold: 7.5)\n"
+        f"{quality_line}\n"
+        f"{reason_block}"
         f"🔄 Healing attempts: {len(result.healing_attempts)}\n"
         f"📂 Guardado en: review_manual/\n"
         f"TS: {result.timestamp}"
