@@ -10,9 +10,77 @@ No raw dicts cross module boundaries.
 from __future__ import annotations
 
 import hashlib
+import re
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+_SPANISH_STOPWORDS = {
+    "de", "la", "el", "los", "las", "un", "una", "unos", "unas", "y", "o", "u",
+    "que", "en", "por", "para", "con", "sin", "del", "al", "se", "lo", "le", "les",
+    "su", "sus", "tu", "tus", "mi", "mis", "es", "son", "fue", "fueron", "como", "mas",
+}
+
+
+def _clamp_score(value: object, default: float = 7.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(10.0, number))
+
+
+def _derive_keywords_from_text(text: str, limit: int = 8) -> list[str]:
+    words = re.findall(r"[a-zA-ZáéíóúñÁÉÍÓÚÑ]{4,}", str(text or "").lower())
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for word in words:
+        if word in _SPANISH_STOPWORDS or word in seen:
+            continue
+        seen.add(word)
+        deduped.append(word)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _normalize_keywords(value: object, source_text: str) -> list[str]:
+    if isinstance(value, str):
+        items = [x.strip().lower() for x in re.split(r"[,|#\n]+", value) if x.strip()]
+    elif isinstance(value, list):
+        items = [str(x).strip().lower() for x in value if str(x).strip()]
+    else:
+        items = []
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        token = re.sub(r"[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ_-]", "", item)
+        if len(token) < 3:
+            continue
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(token)
+
+    if len(cleaned) < 2:
+        for token in _derive_keywords_from_text(source_text, limit=10):
+            if token.lower() in seen:
+                continue
+            seen.add(token.lower())
+            cleaned.append(token)
+            if len(cleaned) >= 8:
+                break
+
+    if len(cleaned) < 2:
+        for token in ("historia", "viral"):
+            if token not in seen:
+                cleaned.append(token)
+                seen.add(token)
+
+    return cleaned[:15]
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +204,33 @@ class VideoContent(BaseModel):
     guion: str = Field(min_length=30)
     cta: str = Field(default="")
     caption: str = Field(default="", max_length=300)
-    palabras_clave: list[str] = Field(min_length=2, max_length=15)
+    palabras_clave: list[str] = Field(default_factory=list, min_length=2, max_length=15)
     mood_musica: str = Field(default="motivational")
     velocidad_cortes: CutSpeed = Field(default=CutSpeed.RAPIDO)
     prompt_imagen: str = Field(default="")
     duraciones_clips: list[float] = Field(default_factory=list)
     viral_score: float = Field(ge=0, le=10, default=7)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_payload(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        normalized["viral_score"] = _clamp_score(normalized.get("viral_score"), default=7.0)
+        normalized["hook_score"] = _clamp_score(normalized.get("hook_score"), default=7.0)
+
+        source_text = " ".join(
+            str(normalized.get(k, "") or "")
+            for k in ("titulo", "gancho", "guion", "caption")
+        )
+        normalized["palabras_clave"] = _normalize_keywords(
+            normalized.get("palabras_clave"),
+            source_text,
+        )
+
+        return normalized
 
     @field_validator("guion")
     @classmethod
@@ -163,6 +252,27 @@ class VideoContent(BaseModel):
         text = re.sub(r'[\"\\\\]', " ", text)
         text = re.sub(r"\s{2,}", " ", text)
         return text.strip()
+
+    @field_validator("velocidad_cortes", mode="before")
+    @classmethod
+    def normalize_cut_speed(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+
+        clean = v.strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "ultrarrapido": "ultra_rapido",
+            "ultra_rapido": "ultra_rapido",
+            "ultra_rapido_": "ultra_rapido",
+            "rapidisimo": "rapido",
+            "rápido": "rapido",
+            "rapido": "rapido",
+            "mixto": "mixto",
+            "cinematico": "cinematografico",
+            "cinematic": "cinematografico",
+            "cinematografico": "cinematografico",
+        }
+        return aliases.get(clean, "rapido")
 
     @property
     def input_hash(self) -> str:
