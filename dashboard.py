@@ -368,7 +368,7 @@ def _generate_thumbnail(video_path: str) -> Optional[str]:
 def _get_system_resources() -> dict:
     """Get system resource usage using psutil (free, local)."""
     try:
-        import psutil
+        import psutil  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
 
         cpu_pct = psutil.cpu_percent(interval=0.5)
         cpu_freq = psutil.cpu_freq()
