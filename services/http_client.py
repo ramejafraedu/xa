@@ -128,6 +128,8 @@ def request_with_retry(
     Handles 429 (rate limit), 5xx (server error), connection errors,
     and checks circuit breaker before each attempt.
     """
+    max_retry_after_seconds = 20
+
     # Circuit breaker check
     if _breaker.is_open(url):
         raise httpx.ConnectError(
@@ -156,10 +158,24 @@ def request_with_retry(
 
             # Rate limited — wait and retry
             if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", backoff_base ** attempt))
-                logger.warning(f"Rate limited (429). Waiting {retry_after}s. [{attempt}/{max_retries}]")
+                header_value = str(response.headers.get("Retry-After", "")).strip()
+                try:
+                    retry_after = int(float(header_value)) if header_value else int(backoff_base ** attempt)
+                except ValueError:
+                    retry_after = int(backoff_base ** attempt)
+
+                wait_seconds = max(1, min(retry_after, max_retry_after_seconds))
+                if retry_after > wait_seconds:
+                    logger.warning(
+                        f"Rate limited (429). Retry-After={retry_after}s capped to {wait_seconds}s. "
+                        f"[{attempt}/{max_retries}]"
+                    )
+                else:
+                    logger.warning(
+                        f"Rate limited (429). Waiting {wait_seconds}s. [{attempt}/{max_retries}]"
+                    )
                 _breaker.record_failure(url)
-                time.sleep(retry_after)
+                time.sleep(wait_seconds)
                 continue
 
             # Server error — retry with backoff

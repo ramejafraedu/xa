@@ -26,10 +26,12 @@ MODULE CONTRACT:
 """
 from __future__ import annotations
 
+import os
 import json
 import shutil
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -63,6 +65,43 @@ app = typer.Typer(
     help="🎬 Video Factory V15 PRO — Director-Based Multi-Agent Video Production",
     add_completion=False,
 )
+
+
+class _NoopProgress:
+    """Fallback progress object for non-interactive environments."""
+
+    def add_task(self, *_args, **_kwargs) -> int:
+        return 1
+
+    def update(self, *_args, **_kwargs) -> None:
+        return None
+
+    def advance(self, *_args, **_kwargs) -> None:
+        return None
+
+
+def _should_use_live_progress() -> bool:
+    """Enable rich live progress only when attached to an interactive TTY."""
+    if os.getenv("VIDEO_FACTORY_DISABLE_PROGRESS", "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    return bool(sys.stdout and sys.stdout.isatty())
+
+
+@contextmanager
+def _progress_scope():
+    """Return a rich Progress context on TTY, else a no-op progress facade."""
+    if _should_use_live_progress():
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            yield progress
+        return
+
+    yield _NoopProgress()
 
 
 def _setup_logging():
@@ -268,13 +307,7 @@ def run_pipeline(
     settings.ensure_dirs()
     cleanup_stale_temp()
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
+    with _progress_scope() as progress:
         total_stages = 5 if dry_run else 10
         main_task = progress.add_task(
             f"[cyan]🎬 {nicho_slug.upper()} Pipeline", total=total_stages

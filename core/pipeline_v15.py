@@ -22,9 +22,12 @@ MODULE CONTRACT:
 """
 from __future__ import annotations
 
+import os
 import json
 import shutil
+import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -64,6 +67,43 @@ from services.niche_memory import get_niche_memory_lines, normalize_manual_ideas
 from state_manager import StateManager
 
 console = Console()
+
+
+class _NoopProgress:
+    """Fallback progress object for non-interactive environments."""
+
+    def add_task(self, *_args, **_kwargs) -> int:
+        return 1
+
+    def update(self, *_args, **_kwargs) -> None:
+        return None
+
+    def advance(self, *_args, **_kwargs) -> None:
+        return None
+
+
+def _should_use_live_progress() -> bool:
+    """Enable rich live progress only for interactive terminals."""
+    if os.getenv("VIDEO_FACTORY_DISABLE_PROGRESS", "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    return bool(sys.stdout and sys.stdout.isatty())
+
+
+@contextmanager
+def _progress_scope():
+    """Use Rich Progress on TTY; otherwise no-op progress to avoid LiveError."""
+    if _should_use_live_progress():
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            yield progress
+        return
+
+    yield _NoopProgress()
 
 
 def run_pipeline_v15(
@@ -356,13 +396,7 @@ def run_pipeline_v15(
     asset_agent = AssetAgent()
     editor_agent = EditorAgent()
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
+    with _progress_scope() as progress:
         total_stages = 5 if dry_run else 12
         main_task = progress.add_task(
             f"[cyan]🎬 V15 {nicho_slug.upper()} Pipeline", total=total_stages,
