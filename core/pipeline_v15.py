@@ -861,48 +861,78 @@ def run_pipeline_v15(
             _stage_start("subtitles", "Subtitle Generation")
 
             ass_path = settings.temp_dir / f"subs_{timestamp}.ass"
-            try:
-                from pipeline.subtitles_whisperx import generate_ass_whisperx
-                events = generate_ass_whisperx(audio_path, ass_path)
-                if events <= 0:
-                    raise Exception("WhisperX produced no events")
-            except Exception as e:
-                logger.warning(f"⚠️ WhisperX falló o no está instalado, usando método de respaldo: {e}")
-                used_subtitle_fallback = False
+            subtitles_ready = False
 
-                if settings.assemblyai_api_key:
-                    try:
-                        from pipeline.subtitles_assemblyai import generate_ass_assemblyai
+            # Primary subtitles provider: AssemblyAI (when API key is configured).
+            if settings.assemblyai_api_key:
+                try:
+                    from pipeline.subtitles_assemblyai import generate_ass_assemblyai
 
-                        ass_events = generate_ass_assemblyai(
-                            audio_path=audio_path,
-                            ass_path=ass_path,
-                            api_key=settings.assemblyai_api_key,
-                            language_code="es",
-                        )
-                        if ass_events > 0:
-                            used_subtitle_fallback = True
-                            _add_decision(
-                                "subtitles",
-                                "AssemblyAI subtitle fallback applied",
-                                f"events={ass_events}",
-                            )
-                    except Exception as assembly_exc:
-                        logger.warning(f"AssemblyAI subtitle fallback failed: {assembly_exc}")
-
-                if not used_subtitle_fallback:
-                    om_vtt_path = generate_vtt_from_audio(audio_path, settings.temp_dir)
-                    if om_vtt_path and om_vtt_path.exists() and om_vtt_path.stat().st_size > 20:
-                        vtt_to_ass(om_vtt_path, ass_path)
+                    ass_events = generate_ass_assemblyai(
+                        audio_path=audio_path,
+                        ass_path=ass_path,
+                        api_key=settings.assemblyai_api_key,
+                        language_code="es",
+                    )
+                    if ass_events > 0:
+                        subtitles_ready = True
                         _add_decision(
                             "subtitles",
-                            "OpenMontage subtitle_gen applied",
-                            om_vtt_path.name,
+                            "AssemblyAI subtitles applied (primary)",
+                            f"events={ass_events}",
                         )
-                    elif vtt_path.exists() and vtt_path.stat().st_size > 20:
-                        vtt_to_ass(vtt_path, ass_path)
-                    else:
-                        generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
+                except Exception as assembly_exc:
+                    logger.warning(
+                        "AssemblyAI subtitles failed, falling back to WhisperX/OpenMontage: "
+                        f"{assembly_exc}"
+                    )
+
+            if not subtitles_ready:
+                try:
+                    from pipeline.subtitles_whisperx import generate_ass_whisperx
+
+                    events = generate_ass_whisperx(audio_path, ass_path)
+                    if events <= 0:
+                        raise Exception("WhisperX produced no events")
+                    subtitles_ready = True
+                    _add_decision(
+                        "subtitles",
+                        "WhisperX subtitle fallback applied",
+                        f"events={events}",
+                    )
+                except Exception as whisper_exc:
+                    logger.warning(
+                        "⚠️ WhisperX fallback failed, using secondary fallback: "
+                        f"{whisper_exc}"
+                    )
+
+            if not subtitles_ready:
+                om_vtt_path = generate_vtt_from_audio(audio_path, settings.temp_dir)
+                if om_vtt_path and om_vtt_path.exists() and om_vtt_path.stat().st_size > 20:
+                    events = vtt_to_ass(om_vtt_path, ass_path)
+                    subtitles_ready = events > 0
+                    _add_decision(
+                        "subtitles",
+                        "OpenMontage subtitle_gen applied",
+                        om_vtt_path.name,
+                    )
+                elif vtt_path.exists() and vtt_path.stat().st_size > 20:
+                    events = vtt_to_ass(vtt_path, ass_path)
+                    subtitles_ready = events > 0
+                    if subtitles_ready:
+                        _add_decision(
+                            "subtitles",
+                            "Edge VTT subtitle fallback applied",
+                            vtt_path.name,
+                        )
+                else:
+                    events = generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
+                    subtitles_ready = events > 0
+                    _add_decision(
+                        "subtitles",
+                        "Timed text subtitle fallback applied",
+                        f"events={events}",
+                    )
 
             manifest.subs_path = str(ass_path)
 
