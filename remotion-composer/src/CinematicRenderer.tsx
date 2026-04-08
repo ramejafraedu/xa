@@ -14,14 +14,28 @@ import {
 } from "remotion";
 
 function resolveAsset(src: string): string {
+  if (!src) {
+    return src;
+  }
   if (src.startsWith("http://") || src.startsWith("https://") || src.startsWith("data:")) {
     return src;
   }
-  const clean = src.replace(/^file:\/\/\/?/, "");
-  if (clean.startsWith("/") || /^[A-Za-z]:[/\\]/.test(clean)) {
-    return `file:///${clean.replace(/\\/g, "/")}`;
+  if (src.startsWith("file://")) {
+    return src.replace(/\\/g, "/");
   }
-  return staticFile(clean);
+
+  const clean = src.replace(/^file:\/\/\/?/, "");
+  const normalized = clean.replace(/\\/g, "/");
+
+  if (/^[A-Za-z]:\//.test(normalized)) {
+    return `file:///${normalized}`;
+  }
+
+  if (normalized.startsWith("/")) {
+    return `file://${normalized}`;
+  }
+
+  return staticFile(normalized);
 }
 import { CinematicRendererProps, CinematicTone, CinematicVideoScene } from "./cinematic/types";
 import { CaptionOverlay } from "./components/CaptionOverlay";

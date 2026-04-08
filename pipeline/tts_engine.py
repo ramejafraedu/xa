@@ -10,6 +10,7 @@ import json
 import shutil
 import struct
 import subprocess
+import time
 import wave
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,23 @@ from loguru import logger
 
 from config import settings
 from services.http_client import request_with_retry
+
+
+_EDGE_DISABLED_UNTIL = 0.0
+_EDGE_DISABLE_SECONDS = 15 * 60
+
+
+def _edge_is_temporarily_disabled() -> bool:
+    return time.time() < _EDGE_DISABLED_UNTIL
+
+
+def _mark_edge_temporarily_disabled(reason: str) -> None:
+    global _EDGE_DISABLED_UNTIL
+    _EDGE_DISABLED_UNTIL = max(_EDGE_DISABLED_UNTIL, time.time() + _EDGE_DISABLE_SECONDS)
+    logger.warning(
+        "Edge-TTS temporarily disabled for "
+        f"{_EDGE_DISABLE_SECONDS}s after auth/rate error: {reason[:120]}"
+    )
 
 
 def generate_tts(
@@ -69,7 +87,11 @@ def generate_tts(
         logger.info("Gemini TTS skipped by provider policy")
 
     # Fallback: Edge-TTS
-    success = _edge_tts(text, output_mp3, voz_edge, rate_tts, pitch_tts, subs_vtt_path)
+    if _edge_is_temporarily_disabled():
+        logger.warning("Edge-TTS fallback skipped (cooldown active after previous 403/auth failure)")
+        success = False
+    else:
+        success = _edge_tts(text, output_mp3, voz_edge, rate_tts, pitch_tts, subs_vtt_path)
     if success:
         return True, "edge-tts"
 
@@ -262,6 +284,12 @@ def _edge_tts(
 
             if vtt_path:
                 try:
+                    # WhisperX is the primary subtitle path in this pipeline.
+                    # Skip a second websocket request to Edge when WhisperX is enabled.
+                    if settings.use_whisperx:
+                        vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+                        return tmp_wav
+
                     submaker = edge_tts.SubMaker()
                     async for chunk in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).stream():
                         if chunk["type"] == "WordBoundary":
@@ -316,6 +344,9 @@ def _edge_tts(
         logger.error("edge-tts not installed. Run: pip install edge-tts")
         return False
     except Exception as e:
+        msg = str(e)
+        if "403" in msg or "Invalid response status" in msg:
+            _mark_edge_temporarily_disabled(msg)
         logger.error(f"Edge-TTS error: {e}")
         return False
 

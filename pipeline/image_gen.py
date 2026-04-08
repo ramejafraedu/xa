@@ -85,6 +85,7 @@ def generate_images_with_stats(
         "pollinations": {"ok": 0, "fail": 0},
     }
     results: list[Path] = []
+    failed_indices: list[int] = []
 
     for idx in range(1, count + 1):
         extra = POSITION_EXTRAS.get(idx, "")
@@ -139,6 +140,20 @@ def generate_images_with_stats(
 
         if not generated:
             logger.warning(f"Image {idx}/{count} FAILED")
+            failed_indices.append(idx)
+
+    # Keep scene/image coverage stable even when some providers fail.
+    if failed_indices and results:
+        seed_pool = list(results)
+        for offset, failed_idx in enumerate(failed_indices):
+            source = seed_pool[offset % len(seed_pool)]
+            target = temp_dir / f"imagen_{failed_idx}_{timestamp}.jpg"
+            try:
+                shutil.copy2(source, target)
+                results.append(target)
+                logger.info(f"Image {failed_idx}/{count} FILLED from successful fallback")
+            except Exception as e:
+                logger.debug(f"Image fallback fill skipped ({failed_idx}): {e}")
 
     # Copy image 1 as legacy filename (safe — fixes WinError 2)
     if results:
