@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     inference_api_url: str = "https://models.inference.ai.azure.com/chat/completions"
     inference_model: str = "gpt-4.1"
     inference_fallback_model: str = "gpt-4.1"
+    openrouter_api_key: str = ""
+    openrouter_api_url: str = "https://openrouter.ai/api/v1/chat/completions"
+    openrouter_model: str = "openai/gpt-4.1-mini"
+    openrouter_fallback_model: str = "openai/gpt-4o-mini"
+    openrouter_site_url: str = ""
+    openrouter_app_name: str = "video_factory"
 
     # Gemini (up to 4 keys for rotation)
     gemini_api_key: str = ""
@@ -222,6 +228,7 @@ class Settings(BaseSettings):
             "enable_web_research_plus": self.enable_web_research_plus,
             "enable_reference_driven": self.enable_reference_driven,
             "enable_cost_governance": self.enable_cost_governance,
+            "openrouter_enabled": bool(self.openrouter_api_key),
             "scheduler_canary_mode": self.scheduler_canary_mode,
             "scheduler_use_v15": self.scheduler_use_v15,
             "enable_tiktok_trending_api": self.enable_tiktok_trending_api,
@@ -297,6 +304,7 @@ class Settings(BaseSettings):
         premium_providers = {
             "azure_inference",
             "azure_openai",
+            "openrouter",
             "veo",
         }
 

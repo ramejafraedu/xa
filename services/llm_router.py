@@ -34,7 +34,7 @@ def call_llm_primary_gemini(
     max_retries: int = 1,
     purpose: str = "general",
 ) -> tuple[str, str]:
-    """Call LLM with policy: Gemini first, Azure GPT fallback.
+    """Call LLM with policy: Gemini first, Azure fallback, OpenRouter fallback.
 
     Returns:
         (text, model_used)
@@ -59,6 +59,19 @@ def call_llm_primary_gemini(
 
     if azure_error:
         logger.error(f"LLM router ({purpose}): Azure fallback failed. {azure_error}")
+
+    text, model_used, openrouter_error = _call_openrouter_chat(
+        system_prompt,
+        user_prompt,
+        temperature=temperature,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
+    if text:
+        return text, model_used
+
+    if openrouter_error:
+        logger.error(f"LLM router ({purpose}): OpenRouter fallback failed. {openrouter_error}")
 
     return "", ""
 
@@ -203,3 +216,107 @@ def _call_azure_chat(
         last_error = f"Empty response from Azure model {model}"
 
     return "", "", last_error or "Azure fallback failed"
+
+
+def _call_openrouter_chat(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float,
+    timeout: int,
+    max_retries: int,
+) -> tuple[str, str, str]:
+    """Fallback call to OpenRouter chat completion API."""
+    api_key = (settings.openrouter_api_key or "").strip()
+    if not api_key:
+        return "", "", "Missing OPENROUTER_API_KEY"
+
+    models: list[str] = []
+    for model in [settings.openrouter_model, settings.openrouter_fallback_model]:
+        m = (model or "").strip()
+        if m and m not in models:
+            models.append(m)
+
+    if not models:
+        return "", "", "No OpenRouter models configured"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if settings.openrouter_site_url:
+        headers["HTTP-Referer"] = settings.openrouter_site_url
+    if settings.openrouter_app_name:
+        headers["X-Title"] = settings.openrouter_app_name
+
+    base_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    last_error = ""
+
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": base_messages,
+            "temperature": temperature,
+        }
+
+        try:
+            response = request_with_retry(
+                "POST",
+                settings.openrouter_api_url,
+                json_data=payload,
+                headers=headers,
+                max_retries=max_retries,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            last_error = str(exc)
+            logger.warning(f"OpenRouter model {model} call exception: {exc}")
+            continue
+
+        # Some models reject explicit temperature; retry once without it.
+        if response.status_code == 400 and "temperature" in (response.text or "").lower():
+            payload.pop("temperature", None)
+            try:
+                response = request_with_retry(
+                    "POST",
+                    settings.openrouter_api_url,
+                    json_data=payload,
+                    headers=headers,
+                    max_retries=max_retries,
+                    timeout=timeout,
+                )
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning(f"OpenRouter model {model} retry without temperature failed: {exc}")
+                continue
+
+        if response.status_code >= 400:
+            last_error = f"HTTP {response.status_code}: {(response.text or '')[:200]}"
+            logger.warning(f"OpenRouter model {model} failed: {last_error}")
+            continue
+
+        try:
+            data = response.json()
+            message = data.get("choices", [{}])[0].get("message", {})
+            content = message.get("content", "")
+            if isinstance(content, list):
+                text_parts: list[str] = []
+                for item in content:
+                    if isinstance(item, dict):
+                        text = item.get("text")
+                        if text:
+                            text_parts.append(str(text))
+                content = "\n".join(text_parts).strip()
+        except Exception as exc:
+            last_error = f"Invalid JSON response: {exc}"
+            continue
+
+        if content:
+            return str(content), f"openrouter:{model}", ""
+
+        last_error = f"Empty response from OpenRouter model {model}"
+
+    return "", "", last_error or "OpenRouter fallback failed"
