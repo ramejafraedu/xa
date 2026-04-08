@@ -38,6 +38,43 @@ T = TypeVar("T")
 class AssetAgent:
     """Generate coherent assets based on the approved scene plan."""
 
+    _AMBIGUOUS_STOCK_TOKENS = {
+        "algo", "caso", "cosa", "cosas", "dato", "datos", "historia", "local",
+        "lugar", "mundo", "tema", "viral", "video", "red", "redes", "casa",
+        "hogar", "llave", "llaves", "trato", "acuerdo", "grupo", "gente",
+        "something", "case", "thing", "things", "data", "history", "local",
+        "place", "world", "topic", "viral", "video", "network", "networks",
+        "house", "home", "key", "keys", "deal", "agreement", "group", "people",
+    }
+
+    _HISTORICAL_MARKERS = {
+        "historia", "historico", "historical", "archive", "archival", "vintage",
+        "tribu", "tribal", "tribe", "fbi", "asesinato", "murder", "crimen",
+        "crime", "conspiracion", "conspiracy", "justicia", "justice",
+        "investigacion", "investigation", "osage",
+    }
+
+    _DARK_MARKERS = {
+        "oscuro", "dark", "misterio", "mystery", "true crime", "asesinato",
+        "crimen", "vigilancia", "surveillance", "secret", "secreto",
+        "conspiracion", "fbi", "investigacion", "detective", "spy", "espia",
+    }
+
+    _MODERN_BLOCKLIST = {
+        "modern", "corporate", "office", "startup", "business meeting",
+        "real estate", "property", "keys handover", "apartment", "skyscraper",
+        "glass building", "city skyline", "luxury home", "construction worker",
+        "sunny park", "playground", "happy family", "smiling police",
+        "laptop", "smartphone", "iphone", "computer", "digital", "technology",
+        "modern car", "highway", "internet", "social media", "wifi",
+    }
+
+    _CARTOON_BLOCKLIST = {
+        "cartoon", "animation", "animated", "3d", "3d render", "cgi",
+        "illustration", "mascot", "comic", "cute", "kawaii",
+        "anime", "manga", "pixar", "disney", "character design",
+    }
+
     def run(
         self,
         state: StoryState,
@@ -181,21 +218,47 @@ class AssetAgent:
         try:
             from pipeline.video_stock import fetch_stock_videos
 
-            keywords = self._build_stock_keywords(state, nicho, count)
+            query_plan = self._build_stock_query_plan(state, nicho, count)
+            keywords = query_plan["queries"]
             if not keywords:
                 logger.warning("Stock keyword builder returned empty list; using niche slug fallback")
                 keywords = [nicho.slug]
 
-            urls = fetch_stock_videos(keywords, count, provider_order=provider_order)
-            logger.info(f"📦 Stock: fetching {count} clips with keywords={', '.join(keywords[:6])}")
+            urls = fetch_stock_videos(
+                keywords,
+                count,
+                provider_order=provider_order,
+                require_realistic=bool(query_plan.get("require_realistic")),
+            )
+            logger.info(
+                f"📦 Stock: fetching {count} clips "
+                f"[profile={query_plan.get('profile', 'default')}] "
+                f"with keywords={', '.join(keywords[:6])}"
+            )
             return urls
 
         except Exception as e:
             logger.debug(f"Stock fetch failed: {e}")
             return []
 
-    def _build_stock_keywords(self, state: StoryState, nicho: NichoConfig, count: int) -> list[str]:
+    def _build_stock_query_plan(self, state: StoryState, nicho: NichoConfig, count: int) -> dict:
+        profile = self._detect_visual_context(state, nicho)
+        queries = self._build_stock_keywords(state, nicho, count, profile)
+        return {
+            "profile": profile["label"],
+            "require_realistic": profile["require_realistic"],
+            "queries": queries,
+        }
+
+    def _build_stock_keywords(
+        self,
+        state: StoryState,
+        nicho: NichoConfig,
+        count: int,
+        profile: Optional[dict] = None,
+    ) -> list[str]:
         """Build high-signal stock keywords and filter cross-domain mismatches."""
+        profile = profile or self._detect_visual_context(state, nicho)
         raw_content = getattr(state, "_raw_content", {}) or {}
         seeds: list[str] = []
 
@@ -205,21 +268,49 @@ class AssetAgent:
 
         seeds.extend(state.key_points[:6])
         seeds.extend([state.hook, state.topic])
+        
+        # Identify high-tension scenes to prioritize mood over literal keywords
+        high_tension_scenes = [s for s in state.scenes if s.mood in {"shock", "tense", "revelatory", "suspense"}]
+        is_climax_active = any(s.mood in {"shock", "revelatory"} for s in state.scenes[:count])
+
         for scene in state.scenes[: max(4, count)]:
+            if scene.mood in {"shock", "tense", "revelatory"}:
+                # For high tension, use the mood itself as a seed to avoid literal "peaceful" visuals
+                seeds.append(f"{scene.mood} atmosphere")
             seeds.append(scene.text)
 
-        candidates: list[str] = []
+        # Detect scientific/academic context to avoid celebration mismatches
+        is_scientific_context = self._detect_scientific_context(seeds)
+        is_historical = profile.get("historical", False)
+        decade_suffix = profile.get("decade_suffix", "")
+
+        candidates: list[str] = list(profile.get("anchors", []))
         for seed in seeds:
             normalized = self._normalize_keyword(seed)
             if not normalized:
                 continue
 
-            # Keep compact multi-word cues and single high-signal terms.
+            translated = self._translate_stock_phrase(normalized)
+            if translated and self._is_allowed_stock_candidate(translated, profile, nicho.slug):
+                if is_historical and decade_suffix and not any(x in translated for x in ["vintage", "historical", "19"]):
+                    translated = f"{decade_suffix} {translated}"
+                candidates.append(translated)
+
             if " " in normalized and len(normalized.split()) <= 4 and len(normalized) <= 40:
-                candidates.append(normalized)
+                phrase_candidate = self._translate_stock_phrase(normalized)
+                if self._is_allowed_stock_candidate(phrase_candidate, profile, nicho.slug):
+                    if is_historical and decade_suffix and not any(x in phrase_candidate for x in ["vintage", "historical", "19"]):
+                        phrase_candidate = f"{decade_suffix} {phrase_candidate}"
+                    candidates.append(phrase_candidate)
             for token in normalized.split():
                 if len(token) >= 4:
-                    candidates.append(token)
+                    if is_scientific_context and self._is_family_related_keyword(token):
+                        continue
+                    token_candidate = self._translate_stock_phrase(token)
+                    if self._is_allowed_stock_candidate(token_candidate, profile, nicho.slug):
+                        if is_historical and decade_suffix and not any(x in token_candidate for x in ["vintage", "historical", "19"]):
+                            token_candidate = f"{decade_suffix} {token_candidate}"
+                        candidates.append(token_candidate)
 
         seen: set[str] = set()
         filtered: list[str] = []
@@ -227,7 +318,9 @@ class AssetAgent:
             if kw in seen:
                 continue
             seen.add(kw)
-            if self._is_blocked_keyword(kw, nicho.slug):
+            if not self._is_allowed_stock_candidate(kw, profile, nicho.slug):
+                continue
+            if is_scientific_context and self._is_celebration_keyword(kw):
                 continue
             filtered.append(kw)
 
@@ -246,8 +339,187 @@ class AssetAgent:
         limit = max(nicho.keywords_count, 8)
         return filtered[:limit]
 
+    def _detect_scientific_context(self, seeds: list[str]) -> bool:
+        """Detect if the content is scientific/academic to avoid celebration mismatches."""
+        scientific_markers = {
+            "estudio", "universidad", "cientifico", "investigacion", "datos",
+            "neurociencia", "psicologia", "comportamiento", "experimento",
+            "ciencia", "analisis", "estadistica", "hipotesis", "research",
+            "university", "scientific", "neuroscience", "psychology",
+        }
+        all_text = " ".join(seeds).lower()
+        return any(marker in all_text for marker in scientific_markers)
+
+    def _detect_visual_context(self, state: StoryState, nicho: NichoConfig) -> dict:
+        blob = " ".join(
+            filter(
+                None,
+                [
+                    state.topic,
+                    state.hook,
+                    state.script_full,
+                    state.reference_summary,
+                    " ".join(state.reference_key_points[:4]),
+                    " ".join(state.key_points[:6]),
+                    " ".join(scene.text for scene in state.scenes[:6]),
+                    nicho.tono,
+                    nicho.estilo_narrativo,
+                ],
+            )
+        ).lower()
+        years = re.findall(r"\b(18\d{2}|19\d{2})\b", blob)
+        historical = bool(years) or any(marker in blob for marker in self._HISTORICAL_MARKERS)
+        dark = any(marker in blob for marker in self._DARK_MARKERS) or any(
+            scene.mood in {"shock", "tense", "revelatory"} for scene in state.scenes[:6]
+        )
+        label = "general"
+        anchors: list[str] = []
+        decade_suffix = ""
+        if historical and dark:
+            label = "historical_dark"
+            decade_suffix = f"{years[0][:3]}0s" if years else "vintage"
+            anchors.extend([
+                f"{decade_suffix} investigation",
+                "vintage documents",
+                "archival newspaper",
+                "detective files",
+                "shadowy hallway",
+            ])
+        elif historical:
+            label = "historical"
+            decade_suffix = f"{years[0][:3]}0s" if years else "vintage"
+            anchors.extend([
+                f"{decade_suffix} archive",
+                "vintage documents",
+                "period street",
+                "old newspaper",
+                "courtroom history",
+            ])
+        elif dark:
+            label = "dark_investigation"
+            anchors.extend([
+                "surveillance shadows",
+                "detective board",
+                "secret files",
+                "crime evidence",
+                "moody corridor",
+            ])
+        else:
+            label = "default"
+            topic_seed = self._translate_stock_phrase(self._normalize_keyword(state.topic))
+            hook_seed = self._translate_stock_phrase(self._normalize_keyword(state.hook))
+            anchors.extend([topic_seed, hook_seed])
+
+        return {
+            "label": label,
+            "historical": historical,
+            "dark": dark,
+            "decade_suffix": decade_suffix,
+            "require_realistic": historical or dark or nicho.slug in {"historia", "historias_reddit"},
+            "anchors": [a for a in anchors if a],
+        }
+
+    def _translate_stock_phrase(self, value: str) -> str:
+        mapping = {
+            "asesinato": "murder",
+            "asesinatos": "murders",
+            "crimen": "crime",
+            "crimenes": "crimes",
+            "conspiracion": "conspiracy",
+            "conspiraciones": "conspiracy",
+            "vigilancia": "surveillance",
+            "escuchas": "wiretap",
+            "justicia": "justice",
+            "tribu": "tribal",
+            "tribal": "tribal",
+            "investigacion": "investigation",
+            "investigaciones": "investigation",
+            "policia": "police",
+            "documentos": "documents",
+            "documento": "document",
+            "archivo": "archive",
+            "periodico": "newspaper",
+            "periodicos": "newspaper",
+            "secreto": "secret",
+            "secretos": "secret",
+            "oscuro": "dark",
+            "sombras": "shadows",
+            "shock": "shocking",
+            "tense": "tense",
+            "revelatory": "revelation",
+            "suspense": "suspense",
+            "misterio": "mystery",
+        }
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        translated = " ".join(mapping.get(token, token) for token in text.split()).strip()
+        translated = re.sub(r"\b(18\d)\d\b", r"\1s", translated)
+        translated = re.sub(r"\b(19\d)\d\b", r"\1s", translated)
+        return translated
+
+    def _is_allowed_stock_candidate(self, keyword: str, profile: dict, nicho_slug: str) -> bool:
+        normalized = self._normalize_keyword(keyword)
+        if not normalized:
+            return False
+        
+        # Block if ANY token in the keyword is ambiguous
+        for token in normalized.split():
+            if token in self._AMBIGUOUS_STOCK_TOKENS:
+                return False
+                
+        if any(token in normalized for token in self._CARTOON_BLOCKLIST):
+            return False
+        if profile.get("historical") and any(token in normalized for token in self._MODERN_BLOCKLIST):
+            return False
+        if profile.get("dark") and any(token in normalized for token in {"sunny", "park", "happy", "smile", "playful"}):
+            return False
+        return not self._is_blocked_keyword(normalized, nicho_slug)
+
+    def _is_family_related_keyword(self, token: str) -> bool:
+        """Check if a token is family-related and could trigger celebration clips."""
+        family_tokens = {
+            "hijos", "padres", "madre", "padre", "papa", "mama",
+            "children", "parents", "mother", "father", "dad", "mom",
+            "familia", "family", "unico", "only", "hijo", "hija",
+        }
+        return token.lower() in family_tokens
+
+    def _is_celebration_keyword(self, kw: str) -> bool:
+        """Check if keyword is celebration/holiday related."""
+        normalized = kw.lower().strip()
+        return normalized in self._CELEBRATION_KEYWORDS
+
+    # Context-aware keyword blocking: prevents mismatches like Father's Day
+    # clips appearing when discussing psychology studies about "hijos" or "padres"
+    _BLOCKED_KEYWORDS_BY_CONTEXT: dict[str, set[str]] = {
+        # Scientific/academic contexts should not match with holiday/celebration footage
+        "estudio", "universidad", "cientifico", "investigacion", "datos",
+        "neurociencia", "psicologia", "comportamiento", "experimento",
+        # These keywords alone can trigger wrong visuals
+    }
+
+    _CELEBRATION_KEYWORDS: set[str] = {
+        "dad", "father", "happy father's day", "fathers day", "papa", "papá",
+        "dia del padre", "celebracion", "celebration", "holiday", "fiesta",
+        "fireworks", "bengala", "sparkler", "confetti", "party",
+        "mom", "mother", "mama", "mamá", "dia de la madre", "navidad",
+        "christmas", "birthday", "cumpleaños", "aniversario", "anniversary",
+    }
+
     def _is_blocked_keyword(self, keyword: str, nicho_slug: str) -> bool:
         """Prevent obvious cross-domain stock matches for each niche."""
+        normalized = keyword.lower().strip()
+
+        # Block celebration/holiday keywords when they appear out of context
+        if normalized in self._CELEBRATION_KEYWORDS:
+            return True
+
+        # Check for celebration-related substrings in longer phrases
+        for celeb_kw in self._CELEBRATION_KEYWORDS:
+            if celeb_kw in normalized and len(celeb_kw) >= 4:
+                return True
+
         if nicho_slug != "finanzas":
             return False
 
@@ -284,12 +556,17 @@ class AssetAgent:
 
             raw_content = getattr(state, "_raw_content", {})
 
-            # Build enhanced prompt using scene context
             prompt_base = raw_content.get("prompt_imagen", "")
             if not prompt_base:
                 prompt_base = state.visual_direction or nicho.nombre
 
-            # Add StoryState visual coherence
+            scene_visuals = [s.visual_prompt for s in state.scenes[:3] if s.visual_prompt]
+            if scene_visuals:
+                prompt_base = f"{prompt_base}. {' '.join(scene_visuals[:2])[:420]}"
+
+            if state.reference_summary:
+                prompt_base = f"{prompt_base}. {state.reference_summary[:180]}"
+
             if state.color_palette:
                 prompt_base += f", {state.color_palette}"
 

@@ -55,6 +55,28 @@ def is_remotion_available() -> bool:
         return False
 
 
+def _ensure_public_workspace_link() -> None:
+    public_dir = REMOTION_DIR / "public"
+    link_path = public_dir / "workspace"
+    target = settings.workspace.resolve()
+    try:
+        public_dir.mkdir(parents=True, exist_ok=True)
+        if link_path.exists():
+            return
+        if settings.is_windows:
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link_path), str(target)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                shell=False,
+            )
+        else:
+            link_path.symlink_to(target, target_is_directory=True)
+    except Exception as exc:
+        logger.debug(f"Public workspace link skipped: {exc}")
+
+
 def render_with_remotion(
     clips: list[Path],
     audio_path: Path,
@@ -71,6 +93,7 @@ def render_with_remotion(
         return False
 
     try:
+        _ensure_public_workspace_link()
         props: dict
         if timeline_payload:
             props = _normalize_timeline_props(timeline_payload, metadata)
@@ -97,12 +120,15 @@ def render_with_remotion(
             logger.warning("Remotion render aborted: npx executable not found")
             return False
 
+        output_path_str = str(output_path.resolve().as_posix())
+        props_json = json.dumps(props, ensure_ascii=False)
+
         cmd = [
             npx_bin, "remotion", "render",
             "src/index.tsx",
             composition_id,
-            str(output_path.resolve()),
-            "--props-file", str(props_file.resolve()),
+            output_path_str,
+            "--props", props_json,
             "--codec", "h264",
             "--concurrency", "2",
         ]
@@ -113,10 +139,10 @@ def render_with_remotion(
             capture_output=True,
             text=True,
             timeout=600,
-            shell=settings.is_windows,
+            shell=False,
         )
 
-        # props_file.unlink(missing_ok=True)
+        props_file.unlink(missing_ok=True)
 
         if result.stdout:
             logger.debug(f"Remotion stdout: {result.stdout[:2000]}")

@@ -501,8 +501,6 @@ def _mix_audio(
 ) -> str:
     """Mix voice + music with ducking. Returns error string or empty."""
     bg_fade_out = max(0, duracion - 3)
-    # Hard cap final mux duration near narration length to avoid long-video/short-audio outputs.
-    target_mux_duration = max(0.8, float(duracion or 0.0) + 0.12)
 
     def _mux_with_track(track: Path, stage: str) -> str:
         mux_cmd = [
@@ -511,7 +509,7 @@ def _mix_audio(
             "-i", track.as_posix(),
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-t", f"{target_mux_duration:.3f}",
+            "-af", "apad",
             "-shortest",
             "-movflags", "+faststart",
             *_privacy_ffmpeg_args(),

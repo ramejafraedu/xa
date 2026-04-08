@@ -143,16 +143,11 @@ export const Root: React.FC = () => {
       <Composition
         id="CinematicRenderer"
         component={CinematicRenderer}
-        durationInFrames={30 * 30}
+        durationInFrames={30 * 60}
         fps={30}
         width={1080}
         height={1920}
-        defaultProps={{
-          scenes: [],
-          titleFontSize: 78,
-          titleWidth: 860,
-          signalLineCount: 18,
-        }}
+        schema={null as any}
         calculateMetadata={calculateCinematicMetadata}
       />
       <Composition

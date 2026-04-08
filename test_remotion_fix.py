@@ -10,7 +10,7 @@ from pipeline.renderer_remotion import render_with_remotion
 
 def test():
     clips = [] # No clips needed for title scene
-    audio_path = Path("workspace/temp/test_audio.mp3")
+    audio_path = Path("workspace/temp/test_tone.mp3")
     subtitles_path = None
     music_path = None
     output_path = Path("workspace/temp/test_remotion_final.mp4")

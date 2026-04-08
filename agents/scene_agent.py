@@ -182,6 +182,27 @@ Divide en escenas cinematográficas. Incluye el hook como escena 1 y el CTA como
                 promise_hint = f" Delivery promise {state.reference_delivery_promise}."
             reference_hint = f" Reference anchor: {key_anchor}.{promise_hint}{cadence_hint}"
 
+        context_blob = " ".join(
+            filter(
+                None,
+                [
+                    state.topic,
+                    state.hook,
+                    state.script_full,
+                    state.reference_summary,
+                    " ".join(state.key_points[:4]),
+                ],
+            )
+        ).lower()
+        guardrails = "No text overlays, no watermarks, cinematic quality."
+        if re.search(r"\b(18\d{2}|19\d{2})\b", context_blob) or any(
+            token in context_blob for token in {"historia", "historical", "vintage", "tribu", "fbi", "osage"}
+        ):
+            guardrails += " Period-accurate wardrobe and locations, no modern skyscrapers, no corporate offices."
+        if any(token in context_blob for token in {"misterio", "oscuro", "asesinato", "crimen", "conspiracion", "surveillance"}):
+            guardrails += " No cheerful sunshine, no family celebration mood, no peaceful park ending."
+        guardrails += " No cartoon, no animation, no 3D characters."
+
         for scene in scenes:
             mood_extra = mood_visuals.get(scene.mood, "")
             cam_extra = camera_visuals.get(scene.camera_notes.lower(), "")
@@ -194,7 +215,7 @@ Divide en escenas cinematográficas. Incluye el hook como escena 1 y el CTA como
                 f"{cam_extra}. "
                 f"{char_desc}. "
                 f"{reference_hint} "
-                f"No text overlays, no watermarks, cinematic quality."
+                f"{guardrails}"
             ).strip()
 
         return scenes

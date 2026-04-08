@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -263,6 +264,9 @@ REGLAS MAESTRAS:
 - Evita tono enciclopédico; usa conflicto, fricción y consecuencia directa.
 - Incluir 2 a 4 muletillas humanas naturales (mira, o sea, te digo algo, ...).
 - PROHIBIDO: No uses comillas dobles en los textos generados.
+- El CTA debe existir SOLO en el campo cta. No lo repitas dentro del campo guion.
+- NO incluyas frases de despedida ni de "guarda este video" al final del campo guion. El guion debe terminar en el clímax narrativo. El campo cta se encargará del cierre.
+- Si el guion termina con un "comenta..." o "sígueme...", SERÁ CONSIDERADO UN ERROR.
 - Mantener coherencia total con el OUTLINE y el CONTEXTO NARRATIVO.
 - Si hay conflicto de fuentes, respeta estrictamente: {state.precedence_rule}.
 
@@ -335,6 +339,7 @@ Devuelve EXACTAMENTE este JSON:
                     parsed = rewritten
 
         if parsed:
+            parsed = self._sanitize_script_payload(parsed)
             parsed["_ab_variant"] = ab_variant
             parsed["_platform"] = platform
             parsed["_model_used"] = getattr(self, "_last_model_used", settings.inference_model)
@@ -392,6 +397,85 @@ Devuelve EXACTAMENTE este JSON:
 
         logger.error("ScriptAgent: Gemini+GPT fallback failed")
         return ""
+
+    def _sanitize_script_payload(self, payload: dict) -> dict:
+        cleaned = dict(payload or {})
+        cta = self._clean_sentence(str(cleaned.get("cta", "") or ""))
+        script = str(cleaned.get("guion", "") or "").strip()
+        script = self._remove_duplicate_cta(script, cta)
+        cleaned["cta"] = cta
+        cleaned["guion"] = script
+        return cleaned
+
+    def _remove_duplicate_cta(self, script: str, cta: str) -> str:
+        sentences = self._split_sentences(script)
+        if not sentences:
+            return script.strip()
+
+        # Common CTA phrases to block at the end of script field
+        cta_keywords = {
+            "comenta", "guarda", "sigueme", "suscribete", "comparte", "follow", "comment", "share", "save",
+            "dale like", "toca el boton", "mira el link", "enlace", "biografia", "bio", "perfil",
+        }
+
+        def _is_cta_like(text: str) -> bool:
+            norm = self._normalize_compare_text(text)
+            tokens = set(norm.split())
+            if tokens & cta_keywords:
+                # If it has a keyword and is short, it's likely a CTA
+                if len(tokens) < 15:
+                    return True
+            return False
+
+        deduped: list[str] = []
+        for sentence in sentences:
+            if deduped and self._sentences_similar(deduped[-1], sentence):
+                continue
+            deduped.append(sentence)
+
+        # Iteratively remove similar to CTA or CTA-like sentences from the end
+        while deduped:
+            last = deduped[-1]
+            is_similar = cta and self._sentences_similar(last, cta)
+            is_cta_like = _is_cta_like(last)
+            
+            if is_similar or is_cta_like:
+                logger.debug(f"Removing duplicate/extra CTA from script end: '{last}'")
+                deduped.pop()
+            else:
+                break
+
+        return " ".join(deduped).strip()
+
+    def _clean_sentence(self, text: str) -> str:
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+        normalized = re.sub(r"\s+([,.!?;:])", r"\1", normalized)
+        return normalized
+
+    def _split_sentences(self, text: str) -> list[str]:
+        parts = re.split(r"(?<=[.!?])\s+|\n+", str(text or "").strip())
+        return [self._clean_sentence(p) for p in parts if self._clean_sentence(p)]
+
+    def _sentences_similar(self, left: str, right: str) -> bool:
+        norm_left = self._normalize_compare_text(left)
+        norm_right = self._normalize_compare_text(right)
+        if not norm_left or not norm_right:
+            return False
+        if norm_left == norm_right:
+            return True
+        left_tokens = set(norm_left.split())
+        right_tokens = set(norm_right.split())
+        if not left_tokens or not right_tokens:
+            return False
+        overlap = len(left_tokens & right_tokens) / max(1, min(len(left_tokens), len(right_tokens)))
+        return overlap >= 0.72
+
+    def _normalize_compare_text(self, text: str) -> str:
+        normalized = unicodedata.normalize("NFKD", str(text or "").lower())
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
 
     def _parse_json(self, raw: str) -> Optional[dict]:
         """Parse JSON from LLM response (reuses V14 logic)."""

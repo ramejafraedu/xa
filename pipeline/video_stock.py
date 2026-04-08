@@ -28,6 +28,25 @@ _GREENSCREEN_HINTS = {
     "isolated on green",
     "alpha matte",
 }
+
+# Celebration/holiday tags to exclude when searching for scientific/academic content
+_CELEBRATION_TAGS = {
+    "father's day", "fathers day", "dad", "papa", "papá", "dia del padre",
+    "mother's day", "mothers day", "mom", "mama", "mamá", "dia de la madre",
+    "birthday", "cumpleaños", "celebration", "celebracion", "holiday", "fiesta",
+    "christmas", "navidad", "anniversary", "aniversario", "fireworks",
+    "sparkler", "bengala", "confetti", "party", "festival", "vacation",
+    "beach", "travel", "sunny", "fun", "happy", "smile", "smiling",
+}
+
+# Cartoon/animation tags to exclude for serious/scientific content
+_CARTOON_ANIMATION_TAGS = {
+    "cartoon", "animation", "animated", "3d render", "cartoon character",
+    "superhero", "super hero", "funny", "comic", "cute", "kawaii",
+    "character", "mascot", "doodle", "sketch", "sticker", "emoji",
+    "caricatura", "animacion", "dibujo", "gracioso", "divertido",
+    "3d", "render", "cgi", "vfx", "unreal engine", "blender",
+}
 _pexels_rotation_counter: list[int] = [0]
 
 
@@ -35,8 +54,15 @@ def fetch_stock_videos(
     keywords: list[str],
     num_needed: int = 8,
     provider_order: Optional[list[str]] = None,
+    require_realistic: bool = False,
 ) -> list[dict]:
     """Fetch stock video URLs and manage local cache via index.json.
+
+    Args:
+        keywords: Search terms for stock videos
+        num_needed: Target number of videos to fetch
+        provider_order: Priority order for stock providers
+        require_realistic: If True, filter out cartoon/animated clips
 
     Returns list of dicts: {"url": "http...", "cache_path": "C:/..."}
     If 'url' is empty, it means the file is already fully cached.
@@ -136,11 +162,11 @@ def fetch_stock_videos(
                 break
 
             if provider == "pexels":
-                urls = _fetch_pexels(kw, pexels_keys)
+                urls = _fetch_pexels(kw, pexels_keys, require_realistic=require_realistic)
             elif provider == "pixabay":
-                urls = _fetch_pixabay_video(kw)
+                urls = _fetch_pixabay_video(kw, require_realistic=require_realistic)
             elif provider == "coverr":
-                urls = _fetch_coverr(kw)
+                urls = _fetch_coverr(kw, require_realistic=require_realistic)
             else:
                 urls = []
 
@@ -251,13 +277,13 @@ def _upsert_cache_entry(entries: list[dict], filename: str, cached_at: int, prov
     })
 
 
-def _fetch_pexels(keyword: str, keys: list[str]) -> list[str]:
+def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False) -> list[str]:
     """Try each Pexels key until we get videos."""
     if not keyword or not keyword.strip():
         return []
 
     q = urllib.parse.quote(keyword.strip())
-    url = f"https://api.pexels.com/videos/search?query={q}&orientation=portrait&size=large&per_page=8"
+    url = f"https://api.pexels.com/videos/search?query={q}&orientation=portrait&size=large&per_page=12"
 
     for i, key in enumerate(_rotated_pexels_keys(keys)):
         try:
@@ -279,7 +305,20 @@ def _fetch_pexels(keyword: str, keys: list[str]) -> list[str]:
             videos = data.get("videos", [])
             urls = []
 
-            for v in videos[:3]:
+            for v in videos:
+                # Pexels doesn't always provide tags in the search response, 
+                # but we can check the URL slug and some metadata
+                video_url_slug = str(v.get("url", "")).lower()
+                
+                # Filter out obvious non-realistic content from slug if required
+                if require_realistic and _has_cartoon_tags(video_url_slug):
+                    logger.debug(f"Skipping Pexels video (cartoon slug): {video_url_slug}")
+                    continue
+                
+                if _has_celebration_tags(video_url_slug):
+                    logger.debug(f"Skipping Pexels celebration video: {video_url_slug}")
+                    continue
+
                 files = v.get("video_files", [])
                 best = (
                     next((f for f in files if f.get("quality") == "hd" and f.get("height", 0) > f.get("width", 0)), None)
@@ -292,6 +331,9 @@ def _fetch_pexels(keyword: str, keys: list[str]) -> list[str]:
                     if not vid_id:
                         vid_id = hashlib.md5(best["link"].encode()).hexdigest()[:8]
                     urls.append({"url": best["link"], "filename": f"pexels_{vid_id}.mp4"})
+                
+                if len(urls) >= 3:
+                    break
 
             if urls:
                 logger.debug(f"Pexels key{i+1} '{keyword}' → {len(urls)} videos")
@@ -303,7 +345,7 @@ def _fetch_pexels(keyword: str, keys: list[str]) -> list[str]:
     return []
 
 
-def _fetch_pixabay_video(keyword: str) -> list[str]:
+def _fetch_pixabay_video(keyword: str, require_realistic: bool = False) -> list[str]:
     """Fetch vertical videos from Pixabay."""
     if not settings.pixabay_api_key:
         return []
@@ -322,6 +364,14 @@ def _fetch_pixabay_video(keyword: str) -> list[str]:
             tags = str(h.get("tags", "") or "")
             page_url = str(h.get("pageURL", "") or "")
             if _looks_like_greenscreen_meta(tags, page_url):
+                continue
+            # Skip celebration/holiday videos to avoid context mismatches
+            if _has_celebration_tags(tags, page_url):
+                logger.debug(f"Skipping celebration-tagged video: {page_url}")
+                continue
+            # Skip cartoon/animated videos when realistic content is required
+            if require_realistic and _has_cartoon_tags(tags, page_url):
+                logger.debug(f"Skipping cartoon-tagged video (realistic mode): {page_url}")
                 continue
 
             vids = h.get("videos", {})
@@ -345,7 +395,19 @@ def _looks_like_greenscreen_meta(*fields: str) -> bool:
     return any(hint in blob for hint in _GREENSCREEN_HINTS)
 
 
-def _fetch_coverr(keyword: str) -> list[str]:
+def _has_celebration_tags(*fields: str) -> bool:
+    """Check if video tags/metadata contain celebration/holiday keywords."""
+    blob = " ".join(str(x or "") for x in fields).lower()
+    return any(tag in blob for tag in _CELEBRATION_TAGS)
+
+
+def _has_cartoon_tags(*fields: str) -> bool:
+    """Check if video tags/metadata contain cartoon/animation keywords."""
+    blob = " ".join(str(x or "") for x in fields).lower()
+    return any(tag in blob for tag in _CARTOON_ANIMATION_TAGS)
+
+
+def _fetch_coverr(keyword: str, require_realistic: bool = False) -> list[str]:
     """Fetch videos from Coverr."""
     try:
         q = urllib.parse.quote(keyword)
@@ -363,6 +425,14 @@ def _fetch_coverr(keyword: str) -> list[str]:
         items = data.get("hits", data.get("videos", []))
         urls = []
         for item in items[:3]:
+            meta_blob = " ".join(
+                str(item.get(key, "") or "")
+                for key in ("title", "name", "description", "tags", "slug")
+            )
+            if _has_celebration_tags(meta_blob):
+                continue
+            if require_realistic and _has_cartoon_tags(meta_blob):
+                continue
             src = item.get("sources", [{}])
             if isinstance(src, list) and src:
                 mp4 = src[0].get("src") or src[0].get("url")

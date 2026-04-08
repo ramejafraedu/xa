@@ -351,11 +351,12 @@ const Soundtrack: React.FC<{
 export const calculateCinematicMetadata: CalculateMetadataFunction<CinematicRendererProps> =
   async ({ props }) => {
     console.log("CALCULATING METADATA WITH PROPS:", JSON.stringify(props).slice(0, 200));
+    const scenes = props.scenes || [];
     const totalSeconds =
-      props.scenes.length === 0
-        ? 30
+      scenes.length === 0
+        ? 30 // Fallback to 30s if no scenes in props
         : Math.max(
-            ...props.scenes.map((scene) => scene.startSeconds + scene.durationSeconds),
+            ...scenes.map((scene) => scene.startSeconds + scene.durationSeconds),
           );
 
     return {
@@ -367,7 +368,7 @@ export const calculateCinematicMetadata: CalculateMetadataFunction<CinematicRend
   };
 
 export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
-  scenes,
+  scenes = [],
   titleFontSize = 78,
   titleWidth = 1320,
   signalLineCount = 18,
@@ -375,6 +376,7 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
   music,
   captions,
 }) => {
+  const safeScenes = scenes || [];
   return (
     <AbsoluteFill style={{ backgroundColor: "#000000" }}>
       {/* Layer 1: Narration audio */}
@@ -400,7 +402,7 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
         />
       ) : null}
       {/* Layer 3: Video scenes */}
-      {scenes.map((scene) => (
+      {safeScenes.map((scene) => (
         <Sequence
           key={scene.id}
           from={Math.round(scene.startSeconds * FPS)}
