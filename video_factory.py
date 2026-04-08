@@ -6,7 +6,7 @@ Usage:
     python video_factory.py --v15 finanzas      # V15 autonomous (multi-agent + coherence)
     python video_factory.py finanzas            # V14 classic mode (backward compat)
     python video_factory.py --all-now           # Run all 5 nichos (V15)
-    python video_factory.py --schedule          # Start scheduler (24/7, V14)
+    python video_factory.py --schedule          # Start scheduler (V15 if SCHEDULER_USE_V15=true)
     python video_factory.py --dry-run finanzas  # Content gen + QA only, no render
     python video_factory.py --resume JOB_ID     # Resume a crashed job
     python video_factory.py --render-only JOB_ID # Re-render from existing assets
@@ -856,7 +856,7 @@ def run(
     _setup_logging()
 
     # Determine version & mode
-    use_v15 = director or v15 or test or all_now  # V15 is default for new modes
+    use_v15 = director or v15 or test or all_now or (schedule and settings.scheduler_use_v15)
     if v14:
         use_v15 = False  # Explicit V14 override
 

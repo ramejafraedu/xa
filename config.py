@@ -147,6 +147,7 @@ class Settings(BaseSettings):
     # Scheduler rollout
     scheduler_canary_mode: bool = False
     scheduler_canary_nichos: str = ""
+    scheduler_use_v15: bool = True
 
     # Hashtags
     default_hashtags: str = "#viral #fyp #faceless"
@@ -222,6 +223,7 @@ class Settings(BaseSettings):
             "enable_reference_driven": self.enable_reference_driven,
             "enable_cost_governance": self.enable_cost_governance,
             "scheduler_canary_mode": self.scheduler_canary_mode,
+            "scheduler_use_v15": self.scheduler_use_v15,
             "enable_tiktok_trending_api": self.enable_tiktok_trending_api,
             "enable_openmontage_free_tools": self.enable_openmontage_free_tools,
             "openmontage_enable_styles": self.openmontage_enable_styles,

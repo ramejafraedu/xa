@@ -26,12 +26,26 @@ console = Console()
 
 def _run_niche(nicho_slug: str):
     """Wrapper to run pipeline for a niche (called by scheduler)."""
-    from video_factory import run_pipeline
     logger.info(f"⏰ Scheduled run: {nicho_slug}")
     try:
-        run_pipeline(nicho_slug)
+        if settings.scheduler_use_v15:
+            from core.director import DirectorMode
+            from core.pipeline_v15 import run_pipeline_v15
+            run_pipeline_v15(nicho_slug, mode=DirectorMode.AUTO)
+        else:
+            from video_factory import run_pipeline
+            run_pipeline(nicho_slug)
     except Exception as e:
-        logger.exception(f"Scheduled run failed for {nicho_slug}: {e}")
+        if settings.scheduler_use_v15:
+            logger.exception(f"Scheduled V15 run failed for {nicho_slug}, trying V14 fallback: {e}")
+            try:
+                from video_factory import run_pipeline
+                run_pipeline(nicho_slug)
+                return
+            except Exception as v14_error:
+                logger.exception(f"Scheduled V14 fallback also failed for {nicho_slug}: {v14_error}")
+        else:
+            logger.exception(f"Scheduled run failed for {nicho_slug}: {e}")
 
 
 def start_scheduler():
