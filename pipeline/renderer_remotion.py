@@ -106,6 +106,15 @@ def render_with_remotion(
         props_file.unlink(missing_ok=True)
 
         if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1024:
+            suspicious_reason = _remotion_output_quality_issue(output_path)
+            if suspicious_reason:
+                logger.warning(
+                    "Remotion output failed sanity checks "
+                    f"({suspicious_reason}). Falling back to FFmpeg."
+                )
+                output_path.unlink(missing_ok=True)
+                return False
+
             md_error = _sanitize_video_metadata(output_path)
             if md_error:
                 logger.warning(f"Remotion metadata cleanup failed (non-fatal): {md_error}")
@@ -560,6 +569,89 @@ def _ass_time_to_seconds(value: str) -> float:
         return int(hh) * 3600 + int(mm) * 60 + int(ss) + (int(centis) / 100.0)
     except Exception:
         return 0.0
+
+
+def _remotion_output_quality_issue(video_path: Path) -> str:
+    """Return a short reason when rendered output is clearly broken.
+
+    This is intentionally lightweight and conservative so Remotion keeps being
+    used when healthy, while obviously bad outputs trigger FFmpeg fallback.
+    """
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-print_format", "json",
+                "-show_format", "-show_streams",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if probe.returncode != 0:
+            return "ffprobe failed"
+
+        data = json.loads(probe.stdout or "{}")
+        streams = data.get("streams", []) if isinstance(data, dict) else []
+        video_dur = None
+        audio_dur = None
+        has_audio_stream = False
+
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            ctype = stream.get("codec_type")
+            dur = stream.get("duration")
+            if ctype == "audio":
+                has_audio_stream = True
+            if dur is None:
+                continue
+            try:
+                dur_f = float(dur)
+            except Exception:
+                continue
+            if ctype == "video" and video_dur is None:
+                video_dur = dur_f
+            elif ctype == "audio" and audio_dur is None:
+                audio_dur = dur_f
+
+        if not has_audio_stream:
+            return "missing audio stream"
+
+        if video_dur and audio_dur and abs(video_dur - audio_dur) > 0.8:
+            return f"av_desync video={video_dur:.2f}s audio={audio_dur:.2f}s"
+
+        total_duration = None
+        try:
+            total_duration = float((data.get("format") or {}).get("duration", 0) or 0)
+        except Exception:
+            total_duration = None
+
+        if total_duration and total_duration >= 5:
+            silence = subprocess.run(
+                [
+                    "ffmpeg", "-i", str(video_path),
+                    "-af", "silencedetect=noise=-40dB:d=2",
+                    "-f", "null", "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=35,
+            )
+            stderr = silence.stderr or ""
+            durations = re.findall(r"silence_duration: ([\d.]+)", stderr)
+            total_silence = sum(float(d) for d in durations)
+            if total_silence > total_duration * 0.3:
+                return (
+                    f"excessive_silence {total_silence:.1f}s/"
+                    f"{total_duration:.1f}s"
+                )
+
+    except Exception as exc:
+        logger.debug(f"Remotion output sanity check skipped: {exc}")
+
+    return ""
 
 
 def setup_remotion_project() -> bool:
