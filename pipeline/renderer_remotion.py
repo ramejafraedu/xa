@@ -106,6 +106,9 @@ def render_with_remotion(
         props_file.unlink(missing_ok=True)
 
         if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1024:
+            md_error = _sanitize_video_metadata(output_path)
+            if md_error:
+                logger.warning(f"Remotion metadata cleanup failed (non-fatal): {md_error}")
             size_mb = output_path.stat().st_size / (1024 * 1024)
             logger.info(f"✅ Remotion render complete: {output_path.name} ({size_mb:.1f}MB)")
             return True
@@ -238,6 +241,52 @@ def _slugify(text: str, max_len: int = 32) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", slug)
     slug = slug.strip("_")
     return slug[:max_len] or "video"
+
+
+def _privacy_ffmpeg_args() -> list[str]:
+    """Common FFmpeg args to strip container metadata from outputs."""
+    return [
+        "-map_metadata", "-1",
+        "-metadata", "title=",
+        "-metadata", "comment=",
+        "-metadata", "description=",
+        "-metadata", "artist=",
+        "-metadata", "copyright=",
+        "-metadata", "encoder=",
+    ]
+
+
+def _sanitize_video_metadata(video_path: Path) -> str:
+    """Final metadata-strip pass with stream copy to preserve quality."""
+    clean_path = video_path.with_name(f"{video_path.stem}_cleanmeta{video_path.suffix}")
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-threads", "2",
+                "-i", str(video_path.as_posix()),
+                "-map", "0:v:0", "-map", "0:a?",
+                "-c", "copy",
+                "-movflags", "+faststart",
+                *_privacy_ffmpeg_args(),
+                str(clean_path.as_posix()),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            return (result.stderr or "ffmpeg metadata strip failed")[-240:]
+
+        if not clean_path.exists() or clean_path.stat().st_size <= 1024:
+            clean_path.unlink(missing_ok=True)
+            return "metadata strip produced invalid file"
+
+        video_path.unlink(missing_ok=True)
+        clean_path.rename(video_path)
+        return ""
+    except Exception as exc:
+        clean_path.unlink(missing_ok=True)
+        return str(exc)
 
 
 def _build_legacy_props(

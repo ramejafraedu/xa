@@ -190,6 +190,7 @@ def render_video(
         "-c:v", "libx264", "-preset", preset, "-crf", crf,
         "-pix_fmt", "yuv420p", "-an",
         "-movflags", "+faststart",
+        *_privacy_ffmpeg_args(),
         *extra_flags,
         video_no_audio.as_posix(),
     ]
@@ -231,6 +232,11 @@ def render_video(
     except Exception as e:
         return None, None, f"Failed to move video to output: {e}"
 
+    # Extra safety pass: strip container metadata from final published file.
+    md_error = _sanitize_output_metadata(final_path, temp_dir, timestamp)
+    if md_error:
+        logger.warning(f"Final metadata cleanup failed (non-fatal): {md_error}")
+
     logger.info(f"✅ Video rendered: {final_path.name} ({final_path.stat().st_size // 1024 // 1024}MB)")
     return final_path, thumb_path, ""
 
@@ -249,6 +255,7 @@ def _create_intro(image: Path, timestamp: int, temp_dir: Path) -> Optional[Path]
         "-vf", vf,
         "-t", "2", "-r", "30",
         "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "fast",
+        *_privacy_ffmpeg_args(),
         intro.as_posix(),
     ]
     error = _run_ffmpeg(cmd, "intro")
@@ -321,6 +328,7 @@ def _process_clips(
             "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
             "-max_muxing_queue_size", "1024",
+            *_privacy_ffmpeg_args(),
             out.as_posix(),
         ]
 
@@ -373,6 +381,7 @@ def _insert_mid_images(
             "-vf", vf,
             "-an", "-c:v", "libx264", "-preset", "veryfast",
             "-crf", "23", "-pix_fmt", "yuv420p",
+            *_privacy_ffmpeg_args(),
             seg.as_posix(),
         ]
         error = _run_ffmpeg(cmd, f"imgseg{idx+2}")
@@ -452,6 +461,7 @@ def _build_image_fallback_timeline(
             "-vf", vf,
             "-an", "-c:v", "libx264", "-preset", "veryfast",
             "-crf", "23", "-pix_fmt", "yuv420p",
+            *_privacy_ffmpeg_args(),
             seg.as_posix(),
         ]
 
@@ -507,6 +517,7 @@ def _mix_audio(
             "-filter_complex", af,
             "-map", "[audio_final]",
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            *_privacy_ffmpeg_args(),
             (output.with_suffix(".m4a")).as_posix(),
         ]
         error = _run_ffmpeg(cmd, "audio_mix")
@@ -521,7 +532,8 @@ def _mix_audio(
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             "-t", str(duracion),
-            "-movflags", "+faststart", "-map_metadata", "-1",
+            "-movflags", "+faststart",
+            *_privacy_ffmpeg_args(),
             *extra_flags,
             output.as_posix(),
         ]
@@ -537,7 +549,8 @@ def _mix_audio(
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             "-t", str(duracion),
-            "-movflags", "+faststart", "-map_metadata", "-1",
+            "-movflags", "+faststart",
+            *_privacy_ffmpeg_args(),
             *extra_flags,
             output.as_posix(),
         ]
@@ -566,6 +579,7 @@ def _burn_subtitles(
         "-c:v", "libx264", "-preset", preset, "-crf", "22",
         "-pix_fmt", "yuv420p", "-c:a", "copy",
         "-movflags", "+faststart",
+        *_privacy_ffmpeg_args(),
         *extra_flags,
         output.as_posix(),
     ]
@@ -662,3 +676,45 @@ def _slugify(text: str, max_len: int = 32) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", slug)
     slug = slug.strip("_")
     return slug[:max_len] or "video"
+
+
+def _privacy_ffmpeg_args() -> list[str]:
+    """Common FFmpeg args to strip container metadata from outputs."""
+    return [
+        "-map_metadata", "-1",
+        "-metadata", "title=",
+        "-metadata", "comment=",
+        "-metadata", "description=",
+        "-metadata", "artist=",
+        "-metadata", "copyright=",
+        "-metadata", "encoder=",
+    ]
+
+
+def _sanitize_output_metadata(video_path: Path, temp_dir: Path, timestamp: int) -> str:
+    """Final metadata strip pass using stream copy to keep quality untouched."""
+    sanitized = temp_dir / f"video_cleanmeta_{timestamp}.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-threads", "2",
+        "-i", video_path.as_posix(),
+        "-map", "0:v:0", "-map", "0:a?",
+        "-c", "copy",
+        "-movflags", "+faststart",
+        *_privacy_ffmpeg_args(),
+        sanitized.as_posix(),
+    ]
+    error = _run_ffmpeg(cmd, "strip_metadata")
+    if error:
+        sanitized.unlink(missing_ok=True)
+        return error
+    if not sanitized.exists() or sanitized.stat().st_size <= 1000:
+        sanitized.unlink(missing_ok=True)
+        return "strip_metadata produced invalid output"
+
+    try:
+        video_path.unlink(missing_ok=True)
+        sanitized.rename(video_path)
+        return ""
+    except Exception as e:
+        sanitized.unlink(missing_ok=True)
+        return str(e)

@@ -22,6 +22,11 @@ def _pipeline_label(result: PipelineResult) -> str:
     return label if label else "V14"
 
 
+def _public_url_line() -> str:
+    url = (settings.public_app_url or "").strip()
+    return f"\n🌐 Panel: {url}" if url else ""
+
+
 def notify_success(result: PipelineResult, drive_link: str = "N/A") -> bool:
     """Send success notification to Telegram."""
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
@@ -38,6 +43,7 @@ def notify_success(result: PipelineResult, drive_link: str = "N/A") -> bool:
         f"⏱️ Duración: {result.duration_seconds:.1f}s\n"
         f"🔄 Healing attempts: {len(result.healing_attempts)}\n\n"
         f"📂 [Drive]({drive_link})"
+        f"{_public_url_line()}"
     )
 
     return _send_message(text)
@@ -60,6 +66,7 @@ def notify_error(result: PipelineResult) -> bool:
         f"Global: {result.quality_score}\n"
         f"🔄 Healing attempts: {len(result.healing_attempts)}\n"
         f"TS: {result.timestamp}"
+        f"{_public_url_line()}"
     )
 
     return _send_message(text)
@@ -78,6 +85,7 @@ def notify_review(result: PipelineResult) -> bool:
         f"🔄 Healing attempts: {len(result.healing_attempts)}\n"
         f"📂 Guardado en: review_manual/\n"
         f"TS: {result.timestamp}"
+        f"{_public_url_line()}"
     )
 
     return _send_message(text)

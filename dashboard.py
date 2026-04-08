@@ -1602,7 +1602,8 @@ def main():
                rotation="10 MB", retention="7 days", compression="zip")
     logger.add(_log_sink, level="DEBUG")
 
-    logger.info(f"🎬 Video Factory Dashboard starting on http://{args.host}:{args.port}")
+    public_url = (settings.public_app_url or "").strip() or f"http://{args.host}:{args.port}"
+    logger.info(f"🎬 Video Factory Dashboard starting on {public_url}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

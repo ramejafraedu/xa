@@ -141,12 +141,16 @@ def _whisperx_to_ass(result: dict, ass_path: Path) -> int:
             end_time = chunk[-1][2]
 
             # Build ASS line with karaoke timing
-            base = r"{\an2\bord4\blur3\1c&H00FFFFFF&\3c&H000000&\fs90\fad(120,120)}"
+            base = _subtitle_base_tag()
             line = base
+            chunk_words: list[str] = []
             for word_text, w_start, w_end in chunk:
                 word_dur = max(0.08, w_end - w_start)
                 wdur_cs = max(6, int(round(word_dur * 100)))
                 line += r"{\k" + str(wdur_cs) + "}" + word_text + " "
+                chunk_words.append(word_text)
+
+            line += _line_emoticon(chunk_words)
 
             events.append(
                 f"Dialogue: 1,{_to_ass_time(start_time)},{_to_ass_time(end_time)},"
@@ -253,3 +257,25 @@ def _as_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _subtitle_base_tag() -> str:
+    """Animated subtitle style tag used across generators."""
+    return (
+        r"{\an2\bord4\blur3\1c&H00FFFFFF&\3c&H000000&\fs90"
+        r"\fad(100,120)\t(0,180,\fscx108\fscy108)\t(180,420,\fscx100\fscy100)}"
+    )
+
+
+def _line_emoticon(words: list[str]) -> str:
+    """Attach lightweight emoticons based on subtitle context."""
+    joined = " ".join(words).upper()
+    if any(k in joined for k in ["DINERO", "NEGOCIO", "RICO", "CRIPTO", "VENTA"]):
+        return " (:$)"
+    if any(k in joined for k in ["SALUD", "ENERGIA", "CUERPO", "MENTE", "CEREBRO"]):
+        return " (^_^)"
+    if any(k in joined for k in ["TIP", "HACK", "TRUCO", "SECRETO", "APRENDE"]):
+        return " (*)"
+    if any(k in joined for k in ["ALERTA", "ERROR", "CUIDADO", "PELIGRO"]):
+        return " (!)"
+    return ""

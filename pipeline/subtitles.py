@@ -87,10 +87,14 @@ def vtt_to_ass(vtt_path: Path, ass_path: Path) -> int:
             c_start = start_s + (i * (dur / len(words)))
             c_end = c_start + (len(chunk) * (dur / len(words)))
 
-            base = r"{\an2\bord4\blur3\1c&H00FFFFFF&\3c&H000000&\fs90\fad(120,120)}"
+            base = _subtitle_base_tag()
             line = base
+            chunk_words: list[str] = []
             for w in chunk:
                 line += r"{\k" + str(wdur_cs) + "}" + w + " "
+                chunk_words.append(w)
+
+            line += _line_emoticon(chunk_words)
 
             events.append(
                 f"Dialogue: 1,{_to_ass_time(c_start)},{_to_ass_time(c_end)},Default,,0,0,0,,{line.strip()}"
@@ -146,10 +150,12 @@ def generate_timed_ass_from_text(
         c_start = i * time_per_word
         c_end = min((i + len(chunk)) * time_per_word, audio_duration)
 
-        base = r"{\an2\bord4\blur3\1c&H00FFFFFF&\3c&H000000&\fs90\fad(120,120)}"
+        base = _subtitle_base_tag()
         line = base
         for w in chunk:
             line += r"{\k" + str(wdur_cs) + "}" + w + " "
+
+        line += _line_emoticon(chunk)
 
         events.append(
             f"Dialogue: 1,{_to_ass_time(c_start)},{_to_ass_time(c_end)},Default,,0,0,0,,{line.strip()}"
@@ -176,3 +182,25 @@ def _to_ass_time(sec: float) -> str:
     s = sec % 60
     cs = int(round((s - int(s)) * 100))
     return f"{h}:{m:02d}:{int(s):02d}.{cs:02d}"
+
+
+def _subtitle_base_tag() -> str:
+    """Animated subtitle style tag used across generators."""
+    return (
+        r"{\an2\bord4\blur3\1c&H00FFFFFF&\3c&H000000&\fs90"
+        r"\fad(100,120)\t(0,180,\fscx108\fscy108)\t(180,420,\fscx100\fscy100)}"
+    )
+
+
+def _line_emoticon(words: list[str]) -> str:
+    """Attach lightweight emoticons based on subtitle context."""
+    joined = " ".join(words).upper()
+    if any(k in joined for k in ["DINERO", "NEGOCIO", "RICO", "CRIPTO", "VENTA"]):
+        return " (:$)"
+    if any(k in joined for k in ["SALUD", "ENERGIA", "CUERPO", "MENTE", "CEREBRO"]):
+        return " (^_^)"
+    if any(k in joined for k in ["TIP", "HACK", "TRUCO", "SECRETO", "APRENDE"]):
+        return " (*)"
+    if any(k in joined for k in ["ALERTA", "ERROR", "CUIDADO", "PELIGRO"]):
+        return " (!)"
+    return ""

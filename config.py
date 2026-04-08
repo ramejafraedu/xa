@@ -151,6 +151,9 @@ class Settings(BaseSettings):
     # Hashtags
     default_hashtags: str = "#viral #fyp #faceless"
 
+    # Public URL (domain) used in logs/notifications instead of raw IPs.
+    public_app_url: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
