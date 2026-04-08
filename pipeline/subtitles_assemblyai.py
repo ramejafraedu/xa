@@ -60,6 +60,7 @@ def generate_ass_assemblyai(
         json_data={
             "audio_url": upload_url,
             "language_code": language_code or "es",
+            "speech_models": ["universal-2"],
             "punctuate": True,
             "format_text": True,
         },
