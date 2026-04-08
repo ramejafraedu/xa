@@ -504,65 +504,80 @@ def _mix_audio(
     # Hard cap final mux duration near narration length to avoid long-video/short-audio outputs.
     target_mux_duration = max(0.8, float(duracion or 0.0) + 0.12)
 
+    def _mux_with_track(track: Path, stage: str) -> str:
+        mux_cmd = [
+            "ffmpeg", "-y", "-threads", "2",
+            "-i", video.as_posix(),
+            "-i", track.as_posix(),
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-t", f"{target_mux_duration:.3f}",
+            "-shortest",
+            "-movflags", "+faststart",
+            *_privacy_ffmpeg_args(),
+            *extra_flags,
+            output.as_posix(),
+        ]
+        return _run_ffmpeg(mux_cmd, stage)
+
     if music and music.exists() and music.stat().st_size > 1000:
         # Full mix with sidechain compression
-        af = (
+        af_primary = (
             f"[0:a]highpass=f=80,lowpass=f=15000,"
             f"alimiter=level_in=1:level_out=0.95:limit=0.98:attack=5:release=100,"
             f"asplit=2[vozduck][vozmain];"
             f"[1:a]volume=0.12,"
             f"afade=t=in:st=0:d=2,afade=t=out:st={bg_fade_out}:d=2[bg];"
             f"[bg][vozduck]sidechaincompress=threshold=-25dB:ratio=4:attack=0.01:release=0.5:makeup=1[ducked];"
-            f"[ducked][vozmain]amix=inputs=2:weights='1 1':duration=second:dropout_transition=2,"
+            f"[ducked][vozmain]amix=inputs=2:duration=second:dropout_transition=2:normalize=0,"
             f"loudnorm=I=-14:TP=-1.5:LRA=7[audio_final]"
         )
+        af_fallback = (
+            f"[0:a]highpass=f=80,lowpass=f=15000,"
+            f"alimiter=level_in=1:level_out=0.95:limit=0.98:attack=5:release=100[voz];"
+            f"[1:a]volume=0.10,"
+            f"afade=t=in:st=0:d=2,afade=t=out:st={bg_fade_out}:d=2[bg];"
+            f"[voz][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
+            f"loudnorm=I=-14:TP=-1.5:LRA=7[audio_final]"
+        )
+
+        mixed_audio = output.with_suffix(".m4a")
         cmd = [
             "ffmpeg", "-y",
             "-i", audio.as_posix(),
             "-i", music.as_posix(),
-            "-filter_complex", af,
+            "-filter_complex", af_primary,
             "-map", "[audio_final]",
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             *_privacy_ffmpeg_args(),
-            (output.with_suffix(".m4a")).as_posix(),
+            mixed_audio.as_posix(),
         ]
         error = _run_ffmpeg(cmd, "audio_mix")
         if error:
-            return error
+            logger.warning("audio_mix primary failed; retrying simplified mix graph")
+            cmd_fb = [
+                "ffmpeg", "-y",
+                "-i", audio.as_posix(),
+                "-i", music.as_posix(),
+                "-filter_complex", af_fallback,
+                "-map", "[audio_final]",
+                "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                *_privacy_ffmpeg_args(),
+                mixed_audio.as_posix(),
+            ]
+            error = _run_ffmpeg(cmd_fb, "audio_mix_fallback")
 
-        mixed_audio = output.with_suffix(".m4a")
-        cmd2 = [
-            "ffmpeg", "-y", "-threads", "2",
-            "-i", video.as_posix(),
-            "-i", mixed_audio.as_posix(),
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-t", f"{target_mux_duration:.3f}",
-            "-shortest",
-            "-movflags", "+faststart",
-            *_privacy_ffmpeg_args(),
-            *extra_flags,
-            output.as_posix(),
-        ]
-        error = _run_ffmpeg(cmd2, "mux_final")
+        if error:
+            logger.warning("audio mix with music failed after fallback; continuing with voice-only mux")
+            mixed_audio.unlink(missing_ok=True)
+            return _mux_with_track(audio, "mux_voice_fallback")
+
+        error = _mux_with_track(mixed_audio, "mux_final")
         mixed_audio.unlink(missing_ok=True)
         return error
     else:
         # Voice only
-        cmd = [
-            "ffmpeg", "-y", "-threads", "2",
-            "-i", video.as_posix(),
-            "-i", audio.as_posix(),
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-t", f"{target_mux_duration:.3f}",
-            "-shortest",
-            "-movflags", "+faststart",
-            *_privacy_ffmpeg_args(),
-            *extra_flags,
-            output.as_posix(),
-        ]
-        return _run_ffmpeg(cmd, "mux_voice")
+        return _mux_with_track(audio, "mux_voice")
 
 
 def _burn_subtitles(
