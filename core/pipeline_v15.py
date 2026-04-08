@@ -744,7 +744,12 @@ def run_pipeline_v15(
             progress.update(main_task, description="[cyan]🗣️ TTS...")
             _stage_start("tts", "Narration TTS")
 
-            preferred_tts_provider = "gemini" if settings.provider_allowed("gemini", usage="media") else "edge_tts"
+            if settings.elevenlabs_api_key and settings.provider_allowed("elevenlabs", usage="media"):
+                preferred_tts_provider = "elevenlabs"
+            elif settings.provider_allowed("gemini", usage="media"):
+                preferred_tts_provider = "gemini"
+            else:
+                preferred_tts_provider = "edge_tts"
             allowed_tts, reason_tts, _ = cost_governance.reserve_stage(
                 "tts",
                 provider=preferred_tts_provider,
@@ -842,7 +847,7 @@ def run_pipeline_v15(
             audio_duration = get_audio_duration(audio_path)
             manifest.duration_seconds = audio_duration
 
-            tts_actual = settings.est_cost_tts_usd if tts_engine == "gemini" else 0.0
+            tts_actual = settings.est_cost_tts_usd if tts_engine in {"gemini", "elevenlabs"} else 0.0
             cost_governance.record_stage_actual("tts", tts_actual)
 
             manifest.timings["tts"] = round(time.time() - t, 2)

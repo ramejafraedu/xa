@@ -68,6 +68,22 @@ def generate_tts(
                 subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "piper"
 
+    # Try ElevenLabs TTS (unless blocked by provider policy)
+    eleven_allowed = (
+        settings.provider_allowed("elevenlabs", usage="media")
+        if enforce_provider_policy
+        else True
+    )
+    if settings.elevenlabs_api_key and eleven_allowed:
+        success = _elevenlabs_tts(text, output_mp3)
+        if success:
+            if subs_vtt_path:
+                subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+            return True, "elevenlabs"
+        logger.warning("ElevenLabs TTS failed, trying Gemini TTS")
+    elif settings.elevenlabs_api_key and enforce_provider_policy and not eleven_allowed:
+        logger.info("ElevenLabs TTS skipped by provider policy")
+
     # Try Gemini TTS (unless blocked by provider policy)
     gemini_allowed = (
         settings.provider_allowed("gemini", usage="media")
@@ -157,6 +173,67 @@ def _piper_tts(text: str, output_mp3: Path) -> bool:
     except Exception as exc:
         logger.warning(f"Piper TTS error: {exc}")
         raw_wav.unlink(missing_ok=True)
+        return False
+
+
+def _elevenlabs_tts(text: str, output_mp3: Path) -> bool:
+    """Generate TTS via ElevenLabs API and normalize audio with ffmpeg."""
+    api_key = (settings.elevenlabs_api_key or "").strip()
+    if not api_key:
+        return False
+
+    voice_id = (settings.elevenlabs_voice_id or "").strip()
+    if not voice_id:
+        logger.warning("ElevenLabs TTS skipped: ELEVENLABS_VOICE_ID is empty")
+        return False
+
+    base_url = (settings.elevenlabs_api_url or "https://api.elevenlabs.io/v1/text-to-speech").rstrip("/")
+    url = f"{base_url}/{voice_id}"
+    raw_mp3 = output_mp3.with_name(f"eleven_raw_{output_mp3.stem}.mp3")
+
+    try:
+        payload = {
+            "text": text,
+            "model_id": settings.elevenlabs_model_id or "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": max(0.0, min(1.0, float(settings.elevenlabs_stability))),
+                "similarity_boost": max(0.0, min(1.0, float(settings.elevenlabs_similarity_boost))),
+            },
+        }
+
+        response = request_with_retry(
+            "POST",
+            url,
+            headers={
+                "xi-api-key": api_key,
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json",
+            },
+            json_data=payload,
+            max_retries=2,
+            timeout=90,
+        )
+
+        if response.status_code != 200:
+            logger.warning(
+                f"ElevenLabs TTS HTTP {response.status_code}: {(response.text or '')[:180]}"
+            )
+            return False
+
+        raw_mp3.write_bytes(response.content)
+        if not raw_mp3.exists() or raw_mp3.stat().st_size < 1000:
+            logger.warning("ElevenLabs TTS: empty audio")
+            raw_mp3.unlink(missing_ok=True)
+            return False
+
+        success = _apply_audio_filters(raw_mp3, output_mp3)
+        raw_mp3.unlink(missing_ok=True)
+        if success:
+            logger.info("✅ ElevenLabs TTS generated")
+        return success
+    except Exception as exc:
+        logger.warning(f"ElevenLabs TTS error: {exc}")
+        raw_mp3.unlink(missing_ok=True)
         return False
 
 

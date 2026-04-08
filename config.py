@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     gemini_api_key3: str = ""
     gemini_api_key4: str = ""
 
+    # ElevenLabs TTS
+    elevenlabs_api_key: str = ""
+    elevenlabs_api_url: str = "https://api.elevenlabs.io/v1/text-to-speech"
+    elevenlabs_voice_id: str = "EXAVITQu4vr4xnSDxMaL"
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    elevenlabs_stability: float = 0.45
+    elevenlabs_similarity_boost: float = 0.75
+
     # Pexels (up to 4 keys)
     pexels_api_key: str = ""
     pexels_api_key2v: str = ""
@@ -230,6 +238,7 @@ class Settings(BaseSettings):
             "enable_reference_driven": self.enable_reference_driven,
             "enable_cost_governance": self.enable_cost_governance,
             "openrouter_enabled": bool(self.openrouter_api_key),
+            "elevenlabs_enabled": bool(self.elevenlabs_api_key),
             "scheduler_canary_mode": self.scheduler_canary_mode,
             "scheduler_use_v15": self.scheduler_use_v15,
             "enable_tiktok_trending_api": self.enable_tiktok_trending_api,
@@ -306,6 +315,7 @@ class Settings(BaseSettings):
             "azure_inference",
             "azure_openai",
             "openrouter",
+            "elevenlabs",
             "veo",
         }
 
@@ -465,8 +475,8 @@ class Settings(BaseSettings):
         missing = []
         if not self.github_token:
             missing.append("GITHUB_TOKEN")
-        if not self.gemini_api_key and not self.piper_ready():
-            missing.append("GEMINI_API_KEY")
+        if not self.gemini_api_key and not self.elevenlabs_api_key and not self.piper_ready():
+            missing.append("GEMINI_API_KEY or ELEVENLABS_API_KEY")
         if not self.pexels_keys:
             missing.append("PEXELS_API_KEY (at least one)")
         if not self.telegram_bot_token:
@@ -484,9 +494,9 @@ class Settings(BaseSettings):
             critical_missing.append("GITHUB_TOKEN (needed for AI content generation via Azure)")
         if not self.pexels_keys:
             critical_missing.append("PEXELS_API_KEY (needed for stock videos — at least 1 of 4)")
-        if not self.get_gemini_keys() and not self.piper_ready():
+        if not self.get_gemini_keys() and not self.elevenlabs_api_key and not self.piper_ready():
             critical_missing.append(
-                "GEMINI_API_KEY (needed for TTS + ScriptAgent — at least 1 of 4) "
+                "GEMINI_API_KEY (at least 1 of 4) or ELEVENLABS_API_KEY (TTS) "
                 "or enable USE_PIPER_TTS with a valid PIPER_MODEL_PATH"
             )
 
