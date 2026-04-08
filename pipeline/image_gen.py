@@ -160,7 +160,6 @@ def generate_images_with_stats(
         legacy = temp_dir / f"imagen_{timestamp}.jpg"
         if not legacy.exists() and results[0].exists():
             try:
-                import shutil
                 shutil.copy2(results[0], legacy)
             except (FileNotFoundError, OSError) as e:
                 logger.debug(f"Legacy image copy skipped: {e}")
