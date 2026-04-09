@@ -296,6 +296,22 @@ def fetch_music_with_fallback(
     return success
 
 
+from services.provider_cascade import ProviderCascade
+
+_music_cascade = None
+
+def _get_music_cascade() -> ProviderCascade:
+    global _music_cascade
+    if _music_cascade is None:
+        _music_cascade = ProviderCascade(
+            name="music",
+            state_dir=settings.temp_dir,
+            cooldown_seconds=settings.provider_cascade_cooldown_seconds,
+            max_consecutive_failures=settings.provider_cascade_max_failures,
+        )
+    return _music_cascade
+
+
 def fetch_music_with_fallback_source(
     mood: str,
     output_path: Path,
@@ -303,7 +319,56 @@ def fetch_music_with_fallback_source(
     nicho: str = "",
     provider_order: list[str] | None = None,
 ) -> tuple[bool, str]:
-    """Try providers in order and return (success, source)."""
+    """Try providers via Cascade and return (success, source)."""
+    if not settings.enable_provider_cascade:
+        return _fetch_music_with_fallback_source_legacy(
+            mood, output_path, duration_seconds, nicho, provider_order
+        )
+        
+    cascade = _get_music_cascade()
+    
+    def wrap_suno():
+        return generate_music_suno(mood, output_path, duration_seconds, nicho)
+        
+    def wrap_lyria():
+        return generate_music_ai(mood, output_path, duration_seconds, nicho)
+        
+    def wrap_pixabay():
+        from pipeline.music import fetch_music_by_order
+        ok, _ = fetch_music_by_order(mood, output_path, provider_order=["pixabay"])
+        return ok
+        
+    def wrap_jamendo():
+        from pipeline.music import fetch_music_by_order
+        ok, _ = fetch_music_by_order(mood, output_path, provider_order=["jamendo"])
+        return ok
+
+    # Register providers
+    suno_allowed = bool(settings.suno_api_key) and settings.use_suno_music and settings.provider_allowed("suno")
+    cascade.register("suno", wrap_suno, tier="premium", base_score=90.0, enabled=suno_allowed)
+    
+    lyria_allowed = bool(settings.get_gemini_keys()) and settings.use_lyria_music and settings.provider_allowed("lyria")
+    cascade.register("lyria", wrap_lyria, tier="freemium", base_score=80.0, enabled=lyria_allowed)
+    
+    cascade.register("pixabay", wrap_pixabay, tier="free", base_score=60.0, enabled=True)
+    cascade.register("jamendo", wrap_jamendo, tier="free", base_score=50.0, enabled=True)
+    
+    res = cascade.execute()
+    if res.success:
+        return True, res.provider_name
+        
+    logger.warning(f"Music generation failed for all providers: {res.error}")
+    return False, "none"
+
+
+def _fetch_music_with_fallback_source_legacy(
+    mood: str,
+    output_path: Path,
+    duration_seconds: float = 60,
+    nicho: str = "",
+    provider_order: list[str] | None = None,
+) -> tuple[bool, str]:
+    """Original legacy sequence."""
     if provider_order is None:
         provider_order = ["suno", "lyria", "pixabay", "jamendo"] if settings.suno_api_key else ["lyria", "pixabay", "jamendo"]
 

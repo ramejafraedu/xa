@@ -54,6 +54,7 @@ function resolveAsset(src: string): string {
 }
 import { CinematicRendererProps, CinematicTone, CinematicVideoScene } from "./cinematic/types";
 import { CaptionOverlay } from "./components/CaptionOverlay";
+import { ImageScene } from "./components/ImageScene";
 
 const FPS = 30;
 
@@ -410,6 +411,8 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
         >
           {scene.kind === "video" ? (
             <SceneVideo scene={scene} />
+          ) : scene.kind === "image" ? (
+            <ImageScene scene={scene} />
           ) : (
             <TitleCard
               text={scene.text}

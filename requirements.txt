@@ -57,3 +57,10 @@ google-genai>=1.14
 
 # Supabase (optional — enable when ready)
 # supabase>=2.8
+
+# Crew AI (V16 PRO Enterprise Quality Gate)
+crewai>=0.80,<1
+
+# Manim (Optional — V16 PRO Financial Data Viz)
+# Requires apt-get install ffmpeg libcairo2-dev libpango1.0-dev texlive
+# manim>=0.19

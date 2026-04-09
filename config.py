@@ -140,6 +140,21 @@ class Settings(BaseSettings):
     enable_reference_driven: bool = False
     enable_cost_governance: bool = False
     
+    # Provider Cascade (V16 PRO)
+    enable_provider_cascade: bool = True
+    provider_cascade_cooldown_seconds: int = 1800
+    provider_cascade_max_failures: int = 5
+    
+    # CrewAI Quality Gate (V16 PRO)
+    enable_crew_quality_gate: bool = True
+    crew_max_debate_rounds: int = 3
+    
+    # Manim Animations (V16 PRO)
+    enable_manim_animations: bool = True
+    manim_enabled_nichos: str = "finanzas"
+    manim_render_quality: str = "medium_quality"
+    manim_timeout_seconds: int = 120
+    
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True
     fact_verification_mode: str = "blocking"  # "blocking" | "warning" | "info"
@@ -290,6 +305,9 @@ class Settings(BaseSettings):
             "enable_web_research_plus": self.enable_web_research_plus,
             "enable_reference_driven": self.enable_reference_driven,
             "enable_cost_governance": self.enable_cost_governance,
+            "enable_provider_cascade": self.enable_provider_cascade,
+            "enable_crew_quality_gate": self.enable_crew_quality_gate,
+            "enable_manim_animations": self.enable_manim_animations,
             "gemini_usage_stats": self.gemini_enable_usage_stats,
             "openrouter_enabled": bool(self.openrouter_api_key),
             "elevenlabs_enabled": bool(self.elevenlabs_api_key),

@@ -449,6 +449,12 @@ class JobManifest(BaseModel):
     post_render_report: dict = Field(default_factory=dict)
     render_backend: str = ""
 
+    # Optional V16 enrichments
+    crew_fact_report: str = ""
+    crew_quality_status: str = ""
+    crew_debate_log: list[str] = Field(default_factory=list)
+    manim_overlay_path: str = ""
+
     class Config:
         use_enum_values = True
 

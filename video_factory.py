@@ -325,7 +325,29 @@ def _stage_quality_gate(ctx: dict) -> dict:
     state = ctx["state"]
     nicho = ctx["nicho"]
     raw_content = ctx["raw_content"]
+    
+    if settings.enable_crew_quality_gate:
+        try:
+            from agents.crew_quality_gate import CrewQualityGate
+            ctx["progress"].update(ctx["task_id"], description="[cyan]🕵️‍♂️ CrewAI Quality debate...")
+            gate = CrewQualityGate(max_debate_rounds=settings.crew_max_debate_rounds)
+            
+            # Build context for CrewAI Editor 
+            context_str = f"PRECEDENCIA: {getattr(state, 'precedence_rule', '')} | NICHO: {nicho.estilo_narrativo}"
+            crew_result = gate.run(raw_content, nicho.slug, context=context_str)
+            
+            # Update raw_content with CrewAI's polished version
+            raw_content = crew_result.verified_script_data
 
+            # Persist debate metadata for audit and manual review context.
+            manifest.crew_fact_report = crew_result.fact_report
+            manifest.crew_quality_status = crew_result.quality_status
+            manifest.crew_debate_log = crew_result.debate_log
+            logger.info("CrewAI discussion applied successfully.")
+        except Exception as e:
+            logger.warning(f"CrewAI quality gate bypassed due to error: {e}")
+
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🔎 Quality check...")
     content, quality, errors = validate_and_score(raw_content, nicho)
 
     # Self-healing loop
@@ -695,6 +717,7 @@ def _stage_render(ctx: dict) -> dict:
         velocidad=content.velocidad_cortes.value if hasattr(content.velocidad_cortes, 'value') else str(content.velocidad_cortes),
         num_clips=content.num_clips,
         duraciones_clips=[float(d) for d in content.duraciones_clips] if content.duraciones_clips else None,
+        manim_path=ctx.get("manim_overlay", getattr(manifest, "manim_overlay_path", None)),
     )
 
     if render_error:
@@ -728,6 +751,7 @@ def _stage_render(ctx: dict) -> dict:
                     velocidad=content.velocidad_cortes.value if hasattr(content.velocidad_cortes, 'value') else str(content.velocidad_cortes),
                     num_clips=content.num_clips,
                     render_fixes=render_fixes,
+                    manim_path=ctx.get("manim_overlay", getattr(manifest, "manim_overlay_path", None)),
                 )
                 if render_error2:
                     render_error = render_error2
@@ -877,6 +901,37 @@ def _stage_publish(ctx: dict) -> dict:
     return ctx
 
 
+def _stage_manim(ctx: dict) -> dict:
+    """Stage X: Optional Manim Financial Animation."""
+    from pipeline.manim_gen import generate_manim_overlay
+    timer = _stage_timer()
+    
+    manifest = ctx["manifest"]
+    nicho = ctx["nicho"]
+    content = ctx["content"]
+    timestamp = ctx["timestamp"]
+    state = ctx["state"]
+    manifest.manim_overlay_path = manifest.manim_overlay_path or ""
+    
+    if settings.enable_manim_animations and nicho.slug == settings.manim_enabled_nichos:
+        # Keep this optional: failures should never break core rendering.
+        ctx["progress"].update(ctx["task_id"], description="[cyan]📊 Generating Manim visuals...")
+        manim_vid = generate_manim_overlay(
+            content.gancho, 
+            nicho.slug, 
+            settings.temp_dir, 
+            timestamp,
+        )
+        if manim_vid:
+            manifest.manim_overlay_path = str(manim_vid)
+            ctx["manim_overlay"] = manim_vid
+            logger.info(f"Attached Manim overlay: {manim_vid.name}")
+
+    state.mark_stage(manifest, "manim", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
+    return ctx
+
+
 def _stage_cleanup(ctx: dict) -> dict:
     """Stage 10: Cleanup temp files and archive manifest."""
     from pipeline.cleanup import cleanup_temp
@@ -977,7 +1032,7 @@ def run_pipeline(
     }
 
     with _progress_scope() as progress:
-        total_stages = 5 if dry_run else 10
+        total_stages = 5 if dry_run else 11
         main_task = progress.add_task(
             f"[cyan]🎬 {nicho_slug.upper()} Pipeline", total=total_stages
         )
@@ -1017,6 +1072,7 @@ def run_pipeline(
                 _stage_subtitles,
                 _stage_media,
                 _stage_download,
+                _stage_manim,
                 _stage_render,
                 _stage_publish,
                 _stage_cleanup,

@@ -19,6 +19,7 @@ from loguru import logger
 
 from config import settings
 from services.http_client import request_with_retry
+from services.provider_cascade import ProviderCascade
 
 
 _EDGE_DISABLED_UNTIL = 0.0
@@ -38,6 +39,20 @@ def _mark_edge_temporarily_disabled(reason: str) -> None:
     )
 
 
+_tts_cascade = None
+
+def _get_tts_cascade() -> ProviderCascade:
+    global _tts_cascade
+    if _tts_cascade is None:
+        _tts_cascade = ProviderCascade(
+            name="tts",
+            state_dir=settings.temp_dir,
+            cooldown_seconds=settings.provider_cascade_cooldown_seconds,
+            max_consecutive_failures=settings.provider_cascade_max_failures,
+        )
+    return _tts_cascade
+
+
 def generate_tts(
     text: str,
     output_mp3: Path,
@@ -51,7 +66,7 @@ def generate_tts(
 ) -> tuple[bool, str]:
     """Generate TTS audio. Returns (success, engine_used).
 
-    Tries Gemini TTS first, falls back to Edge-TTS.
+    Uses ProviderCascade for scored fallback (ElevenLabs > Gemini > Edge-TTS > Piper).
     If sync_subtitles is True and TTS doesn't provide timing,
     uses AudioSubtitleSynchronizer to force-align text with audio.
     """
@@ -67,6 +82,104 @@ def generate_tts(
         or (settings.free_mode and not settings.allow_freemium_in_free_mode)
     )
 
+    if not settings.enable_provider_cascade:
+        return _generate_tts_legacy(
+            text, output_mp3, voz_gemini, voz_edge, rate_tts, pitch_tts,
+            subs_vtt_path, enforce_provider_policy, sync_subtitles
+        )
+
+    cascade = _get_tts_cascade()
+
+    # Define simple callable wrappers for each provider
+    def wrap_piper():
+        return _piper_tts(text, output_mp3)
+    
+    def wrap_elevenlabs():
+        return _elevenlabs_tts(text, output_mp3)
+        
+    def wrap_gemini():
+        return _gemini_tts(text, output_mp3, voz_gemini)
+        
+    def wrap_edge():
+        return _edge_tts(text, output_mp3, voz_edge, rate_tts, pitch_tts, subs_vtt_path)
+
+    # Register Piper
+    cascade.register(
+        "piper",
+        wrap_piper,
+        tier="free",
+        base_score=100.0 if strict_free else 60.0,
+        enabled=settings.use_piper_tts
+    )
+
+    # Register ElevenLabs
+    eleven_allowed = (
+        settings.provider_allowed("elevenlabs", usage="media")
+        if enforce_provider_policy else True
+    )
+    cascade.register(
+        "elevenlabs",
+        wrap_elevenlabs,
+        tier="premium",
+        base_score=90.0,
+        enabled=bool(settings.elevenlabs_api_key) and eleven_allowed
+    )
+
+    # Register Gemini
+    gemini_allowed = (
+        settings.provider_allowed("gemini", usage="media")
+        if enforce_provider_policy else True
+    )
+    cascade.register(
+        "gemini",
+        wrap_gemini,
+        tier="freemium",
+        base_score=80.0,
+        enabled=bool(settings.get_gemini_keys()) and gemini_allowed
+    )
+
+    # Register Edge-TTS
+    cascade.register(
+        "edge-tts",
+        wrap_edge,
+        tier="free",
+        base_score=70.0,
+        enabled=not _edge_is_temporarily_disabled()
+    )
+
+    result = cascade.execute()
+
+    if result.success:
+        # Subtitles synchronization step
+        if subs_vtt_path:
+            if sync_subtitles:
+                _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
+            else:
+                if not subs_vtt_path.exists():
+                    subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+        return True, result.provider_name
+    
+    logger.warning(f"All TTS providers failed: {result.error}")
+    return False, "none"
+
+
+def _generate_tts_legacy(
+    text: str,
+    output_mp3: Path,
+    voz_gemini: str = "Kore",
+    voz_edge: str = "es-MX-JorgeNeural",
+    rate_tts: str = "+0%",
+    pitch_tts: str = "+0Hz",
+    subs_vtt_path: Optional[Path] = None,
+    enforce_provider_policy: bool = True,
+    sync_subtitles: bool = True,
+) -> tuple[bool, str]:
+    """Original fallback sequence for backward compatibility."""
+    strict_free = enforce_provider_policy and (
+        settings.v15_strict_free_media_tools
+        or (settings.free_mode and not settings.allow_freemium_in_free_mode)
+    )
+
     # In strict free mode, prefer fully offline TTS first when available.
     if strict_free and settings.use_piper_tts:
         if _piper_tts(text, output_mp3):
@@ -77,7 +190,7 @@ def generate_tts(
                     subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "piper"
 
-    # Try ElevenLabs TTS (unless blocked by provider policy)
+    # Try ElevenLabs TTS
     eleven_allowed = (
         settings.provider_allowed("elevenlabs", usage="media")
         if enforce_provider_policy
@@ -92,17 +205,13 @@ def generate_tts(
                 else:
                     subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "elevenlabs"
-        logger.warning("ElevenLabs TTS failed, trying Gemini TTS")
-    elif settings.elevenlabs_api_key and enforce_provider_policy and not eleven_allowed:
-        logger.info("ElevenLabs TTS skipped by provider policy")
 
-    # Try Gemini TTS (unless blocked by provider policy)
+    # Try Gemini TTS
     gemini_allowed = (
         settings.provider_allowed("gemini", usage="media")
         if enforce_provider_policy
         else True
     )
-
     if settings.gemini_api_key and gemini_allowed:
         success = _gemini_tts(text, output_mp3, voz_gemini)
         if success:
@@ -112,20 +221,14 @@ def generate_tts(
                 else:
                     subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "gemini"
-        logger.warning("Gemini TTS failed, trying Edge-TTS")
-    elif settings.gemini_api_key and enforce_provider_policy and not gemini_allowed:
-        logger.info("Gemini TTS skipped by provider policy")
 
     # Fallback: Edge-TTS
-    if _edge_is_temporarily_disabled():
-        logger.warning("Edge-TTS fallback skipped (cooldown active after previous 403/auth failure)")
-        success = False
-    else:
+    if not _edge_is_temporarily_disabled():
         success = _edge_tts(text, output_mp3, voz_edge, rate_tts, pitch_tts, subs_vtt_path)
-    if success:
-        return True, "edge-tts"
+        if success:
+            return True, "edge-tts"
 
-    # Final fallback: Piper offline TTS (if configured)
+    # Final fallback: Piper
     if settings.use_piper_tts and _piper_tts(text, output_mp3):
         if subs_vtt_path:
             subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")

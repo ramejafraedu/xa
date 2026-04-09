@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -96,8 +96,69 @@ def download_music(url: str, timestamp: int, temp_dir: Path) -> Optional[Path]:
     return None
 
 
+def _resolve_clip_paths(
+    clip_inputs: list[Any],
+    timestamp: int,
+    temp_dir: Path,
+) -> list[Path]:
+    """Resolve incoming clip inputs into local files.
+
+    Supports pre-downloaded `Path` entries and URL/dict payloads.
+    """
+    if not clip_inputs:
+        return []
+
+    resolved: list[Path] = []
+    to_download: list[Any] = []
+
+    for item in clip_inputs:
+        if isinstance(item, Path):
+            if item.exists() and item.stat().st_size > 1000:
+                resolved.append(item)
+            continue
+
+        if isinstance(item, dict):
+            local_path = str(item.get("local_path") or "").strip()
+            if local_path:
+                candidate = Path(local_path)
+                if candidate.exists() and candidate.stat().st_size > 1000:
+                    resolved.append(candidate)
+                    continue
+            to_download.append(item)
+            continue
+
+        if isinstance(item, str):
+            value = item.strip()
+            if not value:
+                continue
+            if value.startswith("http://") or value.startswith("https://"):
+                to_download.append(value)
+                continue
+
+            candidate = Path(value)
+            if candidate.exists() and candidate.stat().st_size > 1000:
+                resolved.append(candidate)
+                continue
+
+            to_download.append(value)
+
+    if to_download:
+        resolved.extend(download_clips(to_download, timestamp, temp_dir))
+
+    # De-duplicate while preserving order.
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for clip in resolved:
+        key = str(clip.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(clip)
+    return unique
+
+
 def render_video(
-    video_urls: list[str],
+    clips: list[Any],
     audio_path: Path,
     subs_path: Optional[Path],
     images: list[Path],
@@ -113,13 +174,14 @@ def render_video(
     num_clips: int = 8,
     duraciones_clips: Optional[list[float]] = None,
     render_fixes: Optional[dict] = None,
+    manim_path: Optional[Path | str] = None,
 ) -> tuple[Optional[Path], Optional[Path], str]:
     """Render the final video. Returns (video_path, thumb_path, error_or_empty).
 
     If render_fixes is provided, applies corrected parameters from the self-healer.
     """
-    clips = download_clips(video_urls, timestamp, temp_dir)
-    if not clips and not images:
+    clip_paths = _resolve_clip_paths(clips, timestamp, temp_dir)
+    if not clip_paths and not images:
         return None, None, "No clips and no images to render"
 
     # Initialize memory manager if enabled
@@ -150,7 +212,7 @@ def render_video(
 
     # --- Step 2: Process clips (crop, scale, effects) ---
     processed, lista_lines = _process_clips(
-        clips=clips,
+        clips=clip_paths,
         timestamp=timestamp,
         temp_dir=temp_dir,
         duracion_audio=duracion_audio,
@@ -229,6 +291,14 @@ def render_video(
     )
     if audio_error:
         return None, None, f"Audio mix failed: {audio_error}"
+
+    # --- Step 5.5: Manim Overlay ---
+    if manim_path:
+        mp = Path(manim_path)
+        if mp.exists() and mp.stat().st_size > 1000:
+            manim_error = _overlay_manim(video_final, mp, temp_dir, timestamp, preset, extra_flags)
+            if manim_error:
+                logger.warning(f"Manim overlay failed (non-fatal): {manim_error}")
 
     # --- Step 6: Burn subtitles ---
     if subs_path and subs_path.exists() and subs_path.stat().st_size > 100:
@@ -632,6 +702,48 @@ def _burn_subtitles(
     ]
 
     error = _run_ffmpeg(cmd, "subtitles")
+    if not error and output.exists() and output.stat().st_size > 1000:
+        video.unlink(missing_ok=True)
+        output.rename(video)
+        return ""
+    output.unlink(missing_ok=True)
+    return error
+
+
+def _overlay_manim(
+    video: Path,
+    manim_vid: Path,
+    temp_dir: Path,
+    timestamp: int,
+    preset: str,
+    extra_flags: list[str],
+) -> str:
+    """Overlay Manim animation using chroma key on pure green (#00FF00)."""
+    output = temp_dir / f"video_manim_{timestamp}.mp4"
+    
+    # We apply a chromakey filter to remove the green background (0x00FF00)
+    # The overlay is scaled to fit, assuming manim output is 1080x1920 or we scale it
+    # We place it over the video starting at the earliest possible time
+    vf = (
+        "[1:v]colorkey=0x00FF00:0.1:0.0[chroma];"
+        "[0:v][chroma]overlay=0:0:shortest=0[outv]"
+    )
+    
+    cmd = [
+        "ffmpeg", "-y", "-threads", "2",
+        "-i", video.as_posix(),
+        "-i", manim_vid.as_posix(),
+        "-filter_complex", vf,
+        "-map", "[outv]", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", preset, "-crf", "22",
+        "-pix_fmt", "yuv420p", "-c:a", "copy",
+        "-movflags", "+faststart",
+        *_privacy_ffmpeg_args(),
+        *extra_flags,
+        output.as_posix(),
+    ]
+
+    error = _run_ffmpeg(cmd, "manim_overlay")
     if not error and output.exists() and output.stat().st_size > 1000:
         video.unlink(missing_ok=True)
         output.rename(video)

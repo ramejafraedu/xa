@@ -212,8 +212,8 @@ def render_video_with_fallback(
     if settings.force_ffmpeg_renderer and settings.use_remotion:
         logger.info("Remotion renderer forced OFF by config; using FFmpeg renderer")
     elif settings.use_remotion:
-        if not clips:
-            logger.info("Remotion skipped: no video clips detected, using FFmpeg image pipeline")
+        if not clips and not images:
+            logger.info("Remotion skipped: no visual assets detected")
         else:
             output_dir.mkdir(parents=True, exist_ok=True)
             final_name = f"{_slugify(nicho_slug, 24)}_{_slugify(gancho, 38)}_{timestamp}.mp4"
@@ -226,6 +226,11 @@ def render_video_with_fallback(
                 "transition": "crossfade",
                 "composition_id": "CinematicRenderer",
             }
+
+            # Build a timeline dynamically for image-only jobs so Remotion can render
+            # cinematic image scenes instead of falling back immediately to FFmpeg.
+            if not timeline_payload and not clips and images:
+                timeline_payload = _build_image_timeline(images, duracion_audio)
 
             if render_with_remotion(
                 clips=clips,
@@ -261,6 +266,39 @@ def render_video_with_fallback(
         render_fixes=render_fixes,
     )
     return ff_video, ff_thumb, ff_error, "ffmpeg"
+
+
+def _build_image_timeline(images: list[Path], duration: float) -> dict:
+    """Build a Remotion timeline for images using Parallax/Ken Burns."""
+    valid_images = [img for img in images if img.exists()]
+    if not valid_images:
+        return {}
+
+    scene_dur = max(0.8, duration / len(valid_images))
+    scenes = []
+    cursor = 0.0
+    animations = ["parallax", "kenBurns", "panCross", "zoomPulse"]
+    from itertools import cycle
+    anim_cycle = cycle(animations)
+    
+    for idx, img in enumerate(valid_images):
+        scenes.append({
+            "id": f"image_scene_{idx + 1}",
+            "kind": "image",
+            "src": str(img.resolve()),
+            "startSeconds": round(cursor, 3),
+            "durationSeconds": round(scene_dur, 3),
+            "animation": next(anim_cycle),
+            "animationIntensity": 1.2,
+            "tone": "neutral",
+            "overlayParticles": True,
+            "fadeInFrames": 15 if idx > 0 else 0,
+            "fadeOutFrames": 15 if idx < len(valid_images) - 1 else 0,
+            "filter": "contrast(1.05) saturate(1.1) brightness(0.95)",
+        })
+        cursor += scene_dur
+
+    return {"scenes": scenes}
 
 
 def render_with_fallback(
@@ -441,7 +479,9 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
         if not isinstance(raw, dict):
             continue
 
-        kind = str(raw.get("kind", "video"))
+        kind = str(raw.get("kind", "video")).strip().lower()
+        if kind not in {"video", "image", "title"}:
+            kind = "video"
         scene_id = str(raw.get("id") or f"scene_{idx + 1}")
         start_seconds = float(raw.get("startSeconds", 0.0) or 0.0)
         duration_seconds = max(0.8, float(raw.get("durationSeconds", 1.5) or 1.5))
@@ -466,7 +506,7 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
 
         scene: dict = {
             "id": scene_id,
-            "kind": "video",
+            "kind": kind,
             "src": _to_file_uri(src),
             "startSeconds": round(start_seconds, 3),
             "durationSeconds": round(duration_seconds, 3),
@@ -475,6 +515,16 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
             "fadeOutFrames": int(raw.get("fadeOutFrames", 6) or 0),
             "filter": str(raw.get("filter", "contrast(1.06) saturate(0.90) brightness(0.98)")),
         }
+
+        if kind == "image":
+            if "animation" in raw:
+                scene["animation"] = str(raw["animation"])
+            if "animationIntensity" in raw:
+                scene["animationIntensity"] = float(raw["animationIntensity"])
+            if "animationDirection" in raw:
+                scene["animationDirection"] = str(raw["animationDirection"])
+            if "overlayParticles" in raw:
+                scene["overlayParticles"] = bool(raw["overlayParticles"])
 
         if "trimBeforeSeconds" in raw:
             scene["trimBeforeSeconds"] = float(raw.get("trimBeforeSeconds") or 0.0)

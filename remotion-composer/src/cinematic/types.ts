@@ -24,7 +24,20 @@ export interface CinematicTitleScene extends CinematicBaseScene {
   intensity?: number;
 }
 
-export type CinematicScene = CinematicVideoScene | CinematicTitleScene;
+export interface CinematicImageScene extends CinematicBaseScene {
+  kind: "image";
+  src: string;
+  animation?: "kenBurns" | "parallax" | "panCross" | "zoomPulse";
+  animationIntensity?: number;
+  animationDirection?: "left" | "right" | "up" | "down" | "center";
+  overlayParticles?: boolean;
+  tone?: CinematicTone;
+  filter?: string;
+  fadeInFrames?: number;
+  fadeOutFrames?: number;
+}
+
+export type CinematicScene = CinematicVideoScene | CinematicTitleScene | CinematicImageScene;
 
 export interface CinematicSoundtrack {
   src: string;
