@@ -17,6 +17,17 @@ from config import settings
 from services.http_client import download_file
 
 
+def _init_memory_manager(job_id: str = "") -> Optional["MemoryBudgetManager"]:
+    """Initialize memory manager if enabled in settings."""
+    if settings.max_ram_percent_per_job < 100.0 or settings.enable_memory_streaming:
+        try:
+            from core.memory_manager import create_memory_manager
+            return create_memory_manager(job_id=job_id)
+        except Exception as e:
+            logger.debug(f"Memory manager initialization failed: {e}")
+    return None
+
+
 # Global color grading filter (identical to MASTER V13)
 GLOBAL_GRADE_VF = (
     "eq=saturation=0.90:contrast=1.06:brightness=0.012:gamma=0.97,"
@@ -86,17 +97,17 @@ def download_music(url: str, timestamp: int, temp_dir: Path) -> Optional[Path]:
 
 
 def render_video(
-    clips: list[Path],
+    video_urls: list[str],
     audio_path: Path,
     subs_path: Optional[Path],
-    music_path: Optional[Path],
     images: list[Path],
-    timestamp: int,
+    music_path: Optional[Path],
     temp_dir: Path,
     output_dir: Path,
-    nicho_slug: str,
+    timestamp: int,
     gancho: str,
     titulo: str,
+    nicho_slug: str,
     duracion_audio: float,
     velocidad: str = "rapido",
     num_clips: int = 8,
@@ -107,8 +118,19 @@ def render_video(
 
     If render_fixes is provided, applies corrected parameters from the self-healer.
     """
+    clips = download_clips(video_urls, timestamp, temp_dir)
     if not clips and not images:
         return None, None, "No clips and no images to render"
+
+    # Initialize memory manager if enabled
+    memory_manager = None
+    try:
+        memory_manager = _init_memory_manager(job_id=f"render_{timestamp}")
+        if memory_manager:
+            logger.info(f"🧠 Memory budget: {memory_manager._human_readable(memory_manager.max_bytes)}")
+    except Exception as e:
+        logger.debug(f"Memory manager initialization skipped: {e}")
+        memory_manager = None
 
     # --- Configuration ---
     preset = "veryfast"
@@ -236,6 +258,10 @@ def render_video(
     md_error = _sanitize_output_metadata(final_path, temp_dir, timestamp)
     if md_error:
         logger.warning(f"Final metadata cleanup failed (non-fatal): {md_error}")
+
+    # Cleanup memory manager if initialized
+    if memory_manager:
+        memory_manager.cleanup()
 
     logger.info(f"✅ Video rendered: {final_path.name} ({final_path.stat().st_size // 1024 // 1024}MB)")
     return final_path, thumb_path, ""

@@ -28,6 +28,20 @@ from core.state import SceneBlueprint, StoryState
 
 console = Console()
 
+# Verification support
+_verification_agent: Optional["VerificationAgent"] = None  # Lazy import
+
+def _get_verification_agent() -> Optional["VerificationAgent"]:
+    """Lazy initialization of VerificationAgent."""
+    global _verification_agent
+    if _verification_agent is None:
+        try:
+            from agents.verification_agent import VerificationAgent
+            _verification_agent = VerificationAgent()
+        except Exception as e:
+            logger.debug(f"VerificationAgent not available: {e}")
+    return _verification_agent
+
 # Web checkpoints shared state
 WEB_CHECKPOINTS: dict[str, dict] = {}
 WEB_RESOLUTIONS: dict[str, dict] = {}
@@ -56,6 +70,11 @@ class CheckpointResult:
         self.decision = decision
         self.content = content    # Original or edited content
         self.notes = notes        # Rejection/edit notes for the agent
+        
+        # Verification metadata (populated for script checkpoints)
+        self.verification_score: Optional[float] = None
+        self.verification_summary: Optional[str] = None
+        self.verification_entities: list[dict] = []
 
     @property
     def approved(self) -> bool:
@@ -105,6 +124,35 @@ class Director:
             CheckpointResult with decision and optional notes.
         """
         if self.mode == DirectorMode.AUTO:
+            # Check if fact verification should block auto-approval
+            if stage == "script" and state and state.script_full:
+                from config import settings
+                
+                if settings.fact_verification_should_block(nicho_slug=getattr(state, 'nicho_slug', '')):
+                    verifier = _get_verification_agent()
+                    if verifier:
+                        try:
+                            report = verifier.run(state.script_full, state.hook)
+                            
+                            # If score below minimum and not in interactive mode, log warning but still approve
+                            # (AUTO mode is meant to be hands-off, but we log for review)
+                            if report.overall_score < settings.fact_verification_min_score:
+                                logger.warning(
+                                    f"⚠️  Verification score {report.overall_score:.0f}% below threshold "
+                                    f"({settings.fact_verification_min_score}%). "
+                                    f"Recommendation: {report.recommendation}. "
+                                    f"Unverified: {report.unverified_count}, Contradictory: {report.contradictory_count}"
+                                )
+                            else:
+                                logger.info(f"✅ Verification passed: {report.overall_score:.0f}%")
+                                
+                        except Exception as e:
+                            logger.debug(f"Auto verification error: {e}")
+                
+                elif settings.fact_verification_should_warn():
+                    # Just log that verification would have flagged issues
+                    logger.info("🔍 Fact verification enabled in warning mode (AUTO)")
+            
             logger.debug(f"Director AUTO-APPROVE: {stage}")
             self._record(stage, Decision.APPROVE)
             return CheckpointResult(Decision.APPROVE, content)
@@ -155,6 +203,31 @@ class Director:
             "metadata": metadata or {},
             "timestamp": time.time()
         }
+        
+        # Add verification report for script stage
+        if stage == "script" and state and state.script_full:
+            verifier = _get_verification_agent()
+            if verifier:
+                try:
+                    report = verifier.run(state.script_full, state.hook)
+                    checkpoint_data["verification"] = {
+                        "score": report.overall_score,
+                        "recommendation": report.recommendation,
+                        "summary": report.summary,
+                        "entities": [
+                            {
+                                "type": e.entity_type,
+                                "text": e.original_text,
+                                "status": e.status.value,
+                                "confidence": e.confidence,
+                                "suggestion": e.suggestion
+                            }
+                            for e in report.entities
+                        ]
+                    }
+                    logger.info(f"🔍 Web checkpoint verification: {report.overall_score:.0f}%")
+                except Exception as e:
+                    logger.debug(f"Web verification failed: {e}")
         
         # Publish checkpoint
         WEB_CHECKPOINTS[self.job_id] = checkpoint_data
@@ -208,6 +281,18 @@ class Director:
             padding=(0, 2),
         ))
 
+        # Verification for script stage
+        verification_report = None
+        if stage == "script" and state:
+            verifier = _get_verification_agent()
+            if verifier and state.script_full:
+                try:
+                    console.print("[dim]🔍 Verificando datos del guion...[/dim]")
+                    verification_report = verifier.run(state.script_full, state.hook)
+                    self._display_verification_report(verification_report)
+                except Exception as e:
+                    logger.debug(f"Verification failed: {e}")
+
         # Show context if available
         if state and state.topic:
             console.print(
@@ -248,7 +333,12 @@ class Director:
         if decision == "y":
             self._record(stage, Decision.APPROVE)
             console.print("[green]✅ Aprobado[/green]\n")
-            return CheckpointResult(Decision.APPROVE, content)
+            # Include verification notes in result if available
+            result = CheckpointResult(Decision.APPROVE, content)
+            if verification_report:
+                result.verification_score = verification_report.overall_score
+                result.verification_summary = verification_report.summary
+            return result
 
         elif decision == "e":
             console.print("[yellow]✏️  Modo edición[/yellow]")
@@ -262,6 +352,59 @@ class Director:
             self._record(stage, Decision.REJECT, notes)
             console.print(f"[red]❌ Rechazado: {notes}[/red]\n")
             return CheckpointResult(Decision.REJECT, content, notes)
+
+    def _display_verification_report(self, report) -> None:
+        """Display verification report in Rich format."""
+        from rich.table import Table
+        
+        # Determine color based on score
+        score = report.overall_score
+        if score >= 80:
+            score_color = "green"
+            status = "✅ APROBADO"
+        elif score >= 60:
+            score_color = "yellow"
+            status = "🟡 REVISAR"
+        else:
+            score_color = "red"
+            status = "❌ RECHAZAR"
+        
+        # Summary panel
+        console.print(Panel(
+            f"[bold {score_color}]📊 Verificación Factual: {score:.0f}% - {status}[/bold {score_color}]\n"
+            f"[dim]✓ {sum(1 for e in report.entities if e.status.value == 'verified')} verificados | "
+            f"⚠ {sum(1 for e in report.entities if e.status.value == 'unverified')} no verificados | "
+            f"✗ {report.contradictory_count} contradictorios[/dim]",
+            border_style=score_color,
+            padding=(0, 1),
+        ))
+        
+        # Detailed table if there are issues
+        unverified = [e for e in report.entities if e.status.value in ('unverified', 'contradictory', 'partial')]
+        if unverified:
+            table = Table(title="Entidades a Verificar", show_lines=True, title_style="dim")
+            table.add_column("Tipo", style="cyan", width=12)
+            table.add_column("Texto", width=30)
+            table.add_column("Estado", width=10)
+            table.add_column("Sugerencia", width=35)
+            
+            for entity in unverified[:5]:  # Show first 5
+                status_icon = {
+                    "unverified": "⚠️",
+                    "contradictory": "❌",
+                    "partial": "🟡",
+                    "verified": "✅"
+                }.get(entity.status.value, "❓")
+                
+                table.add_row(
+                    entity.entity_type,
+                    entity.original_text[:40],
+                    f"{status_icon} {entity.status.value}",
+                    entity.suggestion[:50] or "-"
+                )
+            
+            console.print(table)
+            console.print()
 
     def _interactive_scenes(
         self,

@@ -47,13 +47,19 @@ def generate_tts(
     pitch_tts: str = "+0Hz",
     subs_vtt_path: Optional[Path] = None,
     enforce_provider_policy: bool = True,
+    sync_subtitles: bool = True,  # NEW: Enable subtitle synchronization
 ) -> tuple[bool, str]:
     """Generate TTS audio. Returns (success, engine_used).
 
     Tries Gemini TTS first, falls back to Edge-TTS.
+    If sync_subtitles is True and TTS doesn't provide timing,
+    uses AudioSubtitleSynchronizer to force-align text with audio.
     """
     if output_mp3.exists() and output_mp3.stat().st_size > 1000:
         logger.info("TTS audio already exists, skipping")
+        # Even if audio exists, ensure subtitles are synced if needed
+        if subs_vtt_path and sync_subtitles and not subs_vtt_path.exists():
+            _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
         return True, "cached"
 
     strict_free = enforce_provider_policy and (
@@ -65,7 +71,10 @@ def generate_tts(
     if strict_free and settings.use_piper_tts:
         if _piper_tts(text, output_mp3):
             if subs_vtt_path:
-                subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+                if sync_subtitles:
+                    _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
+                else:
+                    subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "piper"
 
     # Try ElevenLabs TTS (unless blocked by provider policy)
@@ -78,7 +87,10 @@ def generate_tts(
         success = _elevenlabs_tts(text, output_mp3)
         if success:
             if subs_vtt_path:
-                subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+                if sync_subtitles:
+                    _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
+                else:
+                    subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "elevenlabs"
         logger.warning("ElevenLabs TTS failed, trying Gemini TTS")
     elif settings.elevenlabs_api_key and enforce_provider_policy and not eleven_allowed:
@@ -94,9 +106,11 @@ def generate_tts(
     if settings.gemini_api_key and gemini_allowed:
         success = _gemini_tts(text, output_mp3, voz_gemini)
         if success:
-            # Create empty VTT for ASS generation (Gemini doesn't provide timing)
             if subs_vtt_path:
-                subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+                if sync_subtitles:
+                    _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
+                else:
+                    subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "gemini"
         logger.warning("Gemini TTS failed, trying Edge-TTS")
     elif settings.gemini_api_key and enforce_provider_policy and not gemini_allowed:
@@ -118,6 +132,57 @@ def generate_tts(
         return True, "piper"
 
     return False, "none"
+
+
+def _sync_subtitles_if_needed(
+    audio_path: Path,
+    script_text: str,
+    subs_vtt_path: Path,
+    language: str = "es"
+) -> bool:
+    """Synchronize subtitles with audio using forced alignment.
+    
+    This function runs after TTS generation to create accurate word-level
+    timestamps for subtitle burning, even when TTS doesn't provide them.
+    
+    Args:
+        audio_path: Path to generated audio file
+        script_text: Original script text
+        subs_vtt_path: Where to save synchronized VTT
+        language: Language code
+        
+    Returns:
+        True if synchronization successful
+    """
+    try:
+        from pipeline.audio_sync import AudioSubtitleSynchronizer
+        
+        logger.info(f"🔍 Synchronizing subtitles for: {audio_path.name}")
+        
+        synchronizer = AudioSubtitleSynchronizer(model_size="base")
+        success = synchronizer.align_script_with_audio(
+            audio_path=audio_path,
+            script_text=script_text,
+            output_vtt=subs_vtt_path,
+            language=language
+        )
+        
+        if success:
+            logger.info(f"✅ Subtitles synchronized: {subs_vtt_path.name}")
+        else:
+            logger.warning("⚠️ Subtitle sync failed, using empty VTT")
+            subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+        
+        return success
+        
+    except Exception as e:
+        logger.warning(f"Subtitle sync error: {e}")
+        # Fallback: create empty VTT
+        try:
+            subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+        except Exception:
+            pass
+        return False
 
 
 def _piper_tts(text: str, output_mp3: Path) -> bool:

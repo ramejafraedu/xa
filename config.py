@@ -139,6 +139,18 @@ class Settings(BaseSettings):
     enable_web_research_plus: bool = False
     enable_reference_driven: bool = False
     enable_cost_governance: bool = False
+    
+    # Fact verification (NEW - protects Faceless Channels from misinformation)
+    enable_fact_verification: bool = True
+    fact_verification_mode: str = "blocking"  # "blocking" | "warning" | "info"
+    fact_verification_min_score: int = 60  # Minimum score (0-100) to auto-approve
+    fact_verification_skip_for_nichos: str = ""  # Comma-separated slugs to skip
+    
+    # Memory management (RAM limit disabled - use full available memory)
+    max_ram_percent_per_job: float = 100.0  # Use all available RAM (no limit)
+    enable_memory_streaming: bool = False   # Disabled - keep everything in RAM
+    frame_buffer_seconds: int = 300       # Large buffer for full videos
+    force_gc_between_stages: bool = False   # Disabled - let Python manage memory
 
     # OpenMontage free-tools rollout (V15)
     enable_openmontage_free_tools: bool = True
@@ -293,6 +305,14 @@ class Settings(BaseSettings):
             "openmontage_enable_enhancement": self.openmontage_enable_enhancement,
             "openmontage_enable_video_utilities": self.openmontage_enable_video_utilities,
             "v15_strict_free_media_tools": self.v15_strict_free_media_tools,
+            # Fact verification flags
+            "enable_fact_verification": self.enable_fact_verification,
+            "fact_verification_mode": self.fact_verification_mode,
+            "fact_verification_min_score": self.fact_verification_min_score,
+            # Memory management flags
+            "max_ram_percent_per_job": self.max_ram_percent_per_job,
+            "enable_memory_streaming": self.enable_memory_streaming,
+            "force_gc_between_stages": self.force_gc_between_stages,
         }
 
     def openmontage_root(self) -> Path:
@@ -309,6 +329,39 @@ class Settings(BaseSettings):
     def cost_governance_enabled(self) -> bool:
         """Enable governance explicitly or by freemium execution mode."""
         return self.enable_cost_governance or self.execution_mode_label() == "freemium"
+
+    def fact_verification_should_block(self, nicho_slug: str = "") -> bool:
+        """Determine if verification failures should block pipeline.
+        
+        Returns True only if:
+        - Verification is enabled
+        - Mode is 'blocking'
+        - Niche is not in skip list
+        """
+        if not self.enable_fact_verification:
+            return False
+        
+        if self.fact_verification_mode == "info":
+            return False
+            
+        skip_nichos = [s.strip() for s in self.fact_verification_skip_for_nichos.split(",") if s.strip()]
+        if nicho_slug and nicho_slug in skip_nichos:
+            return False
+            
+        return self.fact_verification_mode == "blocking"
+
+    def fact_verification_should_warn(self, nicho_slug: str = "") -> bool:
+        """Determine if verification should show warnings (non-blocking)."""
+        if not self.enable_fact_verification:
+            return False
+        if self.fact_verification_mode == "blocking":
+            return False  # Already handled by blocking
+        
+        skip_nichos = [s.strip() for s in self.fact_verification_skip_for_nichos.split(",") if s.strip()]
+        if nicho_slug and nicho_slug in skip_nichos:
+            return False
+            
+        return self.fact_verification_mode in ("warning", "info")
 
     def resolve_scheduler_nichos(self, all_slugs: list[str]) -> list[str]:
         """Resolve target nichos for scheduler, supporting canary rollout."""

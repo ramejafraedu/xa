@@ -20,6 +20,15 @@ edge-tts>=6.1,<7
 # Scheduler
 apscheduler>=3.10,<4
 
+# CLI/UI
+rich>=13.0.0
+typer>=0.9.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# Memory Management
+psutil>=5.9.0,<1
+
 # Dashboard
 fastapi>=0.115,<1
 uvicorn>=0.34,<1

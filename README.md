@@ -1,20 +1,26 @@
-# Video Factory V15 PRO
+# Video Factory V16 PRO
 
-Fabrica automatizada de videos verticales (formato short) con pipeline multi-agente por etapas, recuperacion por checkpoints y ejecucion manual, programada o desde dashboard web.
+Fabrica automatizada de videos verticales (formato short) para "Faceless Channels" / "Cash Cow Channels". Pipeline multi-agente con verificación factual, sincronización audio-subtítulo, input manual de ideas, y gestión de memoria optimizada para servidores.
 
-> **V14 → V15**: V14 es el pipeline clasico secuencial. V15 agrega un sistema multi-agente (Research → Script → Scene → Assets → Editor), director humano-en-el-loop, StoryState para coherencia narrativa y feedback loop con autoregenacion. V14 se mantiene como fallback con `--v14`.
+> **V15 → V16**: V16 agrega: (1) **Verification Agent** - verificación automática de datos/fuentes, (2) **Topic Injection** - input manual de ideas, (3) **Audio Sync** - sincronización WhisperX de subtítulos, (4) **Memory Manager** - control de RAM (20% max), (5) **Free APIs** - NumbersAPI, UselessFacts, Wikidata para hooks y verificación.
 
-## Caracteristicas
+> **V14 → V15**: Pipeline multi-agente con director humano-en-el-loop.
 
-- Pipeline completo end-to-end para 5 nichos (V14 clasico + V15 multi-agent).
-- Checkpoints por etapa con resume de jobs fallidos.
-- Idempotencia por hashes para evitar reprocesos innecesarios.
-- QA antes y despues del render.
-- Dashboard web con API y logs en tiempo real (SSE).
-- Scheduler 24/7 con APScheduler y timezone America/Mexico_City.
-- Integraciones opcionales: Supabase, Google Drive/Sheets, Telegram.
-- Validacion Pydantic de configuraciones YAML al arrancar.
-- Retry con backoff exponencial + circuit breaker en todas las APIs externas.
+## Caracteristicas V16
+
+- **Verificación Factual**: Verifica automáticamente datos, universidades, términos psicológicos
+- **Input Manual de Ideas**: Sistema de topic injection para temas específicos del usuario
+- **Sincronización Audio-Subtítulo**: WhisperX forced alignment para timing preciso
+- **Gestión de Memoria**: Límite de 20% RAM por video, streaming automático
+- **APIs Gratuitas**: NumbersAPI, UselessFacts, Wikidata para hooks y verificación
+- Pipeline multi-agente: Research → Script → Verification → Scene → Assets → Editor
+- Checkpoints por etapa con aprobación manual opcional
+- 5 nichos pre-configurados: finanzas, historia, curiosidades, historias_reddit, ia_herramientas
+- TTS con fallback: ElevenLabs → Gemini → Edge TTS → Piper (offline)
+- Video stock: Pexels, Pixabay, Coverr con rotación y caché
+- Dashboard web con API REST
+- Scheduler 24/7 con APScheduler
+- Optimizado para Ubuntu Server (8GB RAM)
 
 ## Nichos incluidos
 
@@ -227,11 +233,80 @@ Cost governance freemium:
 - DAILY_BUDGET_USD para tope diario opcional.
 - MONTHLY_BUDGET_USD (default recomendado: 1) para tope mensual en modo freemium.
 
+## Deployment en Ubuntu Server (Recomendado)
+
+### Setup Automático
+
+Para tu servidor DigitalOcean (Ubuntu 24.04, 8GB RAM):
+
+```bash
+# 1. Descargar el proyecto
+git clone https://github.com/yourusername/video_factory.git
+cd video_factory
+
+# 2. Ejecutar script de setup
+chmod +x setup_ubuntu.sh
+./setup_ubuntu.sh
+
+# 3. Configurar API keys
+nano .env
+
+# 4. Verificar instalación
+./check_health.sh
+
+# 5. Instalar servicio systemd
+sudo cp /tmp/video-factory.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable video-factory
+sudo systemctl start video-factory
+
+# 6. Monitorear
+sudo journalctl -u video-factory -f
+```
+
+### Configuración para 8GB RAM
+
+El archivo `.env` ya viene pre-configurado con:
+
+```bash
+MAX_RAM_PERCENT_PER_JOB=20.0      # 20% = 1.6GB por video
+ENABLE_MEMORY_STREAMING=true      # Usa disco si RAM baja
+FRAME_BUFFER_SECONDS=30           # Buffer limitado
+FORCE_GC_BETWEEN_STAGES=true      # Limpieza entre etapas
+```
+
+### Gestión del Servicio
+
+```bash
+# Ver estado
+sudo systemctl status video-factory
+
+# Ver logs
+sudo journalctl -u video-factory -f
+
+# Reiniciar
+sudo systemctl restart video-factory
+
+# Detener
+sudo systemctl stop video-factory
+```
+
+### Limpieza Automática
+
+Programar en cron:
+
+```bash
+crontab -e
+# Agregar:
+0 3 * * * /home/xavito/video_factory/cleanup.sh
+```
+
 ## Scheduler
 
 El scheduler corre con timezone America/Mexico_City y evita solapamientos por configuracion de misfire/coalesce.
 
-Para uso continuo en Windows, puedes ejecutar en inicio de sesion con Task Scheduler.
+Para Windows: ejecutar en inicio de sesion con Task Scheduler.
+Para Ubuntu: usar systemd (ver arriba).
 
 ## Logs y artefactos
 

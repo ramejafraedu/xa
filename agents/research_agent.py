@@ -40,8 +40,15 @@ class ResearchAgent:
         """
         t0 = time.time()
         brief = ResearchBrief()
+        
+        # Check if user provided a specific topic (skip trending if so)
+        user_topic = getattr(state, 'user_provided_topic', False)
+        user_angle = getattr(state, 'user_angle', '')
+        
         brief.precedence_rule = state.precedence_rule or (
-            "REFERENCE > RESEARCH > NICHO_DEFAULT"
+            "USER_TOPIC > REFERENCE > RESEARCH > NICHO_DEFAULT"
+            if user_topic
+            else "REFERENCE > RESEARCH > NICHO_DEFAULT"
             if state.reference_url
             else "RESEARCH > NICHO_DEFAULT"
         )
@@ -51,33 +58,41 @@ class ResearchAgent:
         elif state.reference_summary:
             brief.reference_signals = [state.reference_summary[:220]]
 
-        # 1. Trending topics (existing V14 services)
-        try:
-            from services.trends import get_trending_context, get_trending_signals
+        # 1. Trending topics (skip if user provided specific topic)
+        if user_topic:
+            logger.info(f"📝 Using user-provided topic: {getattr(state, 'topic', 'N/A')}")
+            brief.trending_context_raw = f"Tema proporcionado por usuario: {getattr(state, 'topic', '')}"
+            if user_angle:
+                brief.recommended_angles = [user_angle]
+            # Use topic as the only trending topic
+            brief.trending_topics = [getattr(state, 'topic', nicho.nombre)]
+        else:
+            try:
+                from services.trends import get_trending_context, get_trending_signals
 
-            signals = get_trending_signals(nicho.nombre, settings.rapidapi_key)
-            raw_trending = get_trending_context(nicho.nombre, settings.rapidapi_key)
-            brief.trending_context_raw = raw_trending
+                signals = get_trending_signals(nicho.nombre, settings.rapidapi_key)
+                raw_trending = get_trending_context(nicho.nombre, settings.rapidapi_key)
+                brief.trending_context_raw = raw_trending
 
-            merged_topics = signals.get("merged_topics", [])
-            if merged_topics:
-                brief.trending_topics = merged_topics[:8]
+                merged_topics = signals.get("merged_topics", [])
+                if merged_topics:
+                    brief.trending_topics = merged_topics[:8]
 
-            web_pool = (
-                signals.get("youtube_hot", [])
-                + signals.get("reddit_hot", [])
-                + signals.get("news_headlines", [])
-            )
-            if web_pool:
-                brief.web_sources = self._merge_unique(web_pool)[:8]
+                web_pool = (
+                    signals.get("youtube_hot", [])
+                    + signals.get("reddit_hot", [])
+                    + signals.get("news_headlines", [])
+                )
+                if web_pool:
+                    brief.web_sources = self._merge_unique(web_pool)[:8]
 
-            if signals.get("tiktok_hashtags", []):
-                brief.trending_topics = self._merge_unique(
-                    brief.trending_topics + [f"#{tag}" for tag in signals.get("tiktok_hashtags", [])]
-                )[:10]
-        except Exception as e:
-            logger.debug(f"Trending fetch failed: {e}")
-            brief.trending_context_raw = f"Tendencias no disponibles — usa contexto del nicho: {nicho.nombre}"
+                if signals.get("tiktok_hashtags", []):
+                    brief.trending_topics = self._merge_unique(
+                        brief.trending_topics + [f"#{tag}" for tag in signals.get("tiktok_hashtags", [])]
+                    )[:10]
+            except Exception as e:
+                logger.debug(f"Trending fetch failed: {e}")
+                brief.trending_context_raw = f"Tendencias no disponibles — usa contexto del nicho: {nicho.nombre}"
 
         # Optional: web research plus (extra RSS enrichment)
         if settings.enable_web_research_plus:
@@ -209,7 +224,24 @@ class ResearchAgent:
         return self._fallback_angles(nicho)
 
     def _generate_hooks(self, nicho: NichoConfig, brief: ResearchBrief, state: StoryState) -> list[str]:
-        """Generate viral hook suggestions."""
+        """Generate viral hook suggestions using LLM and free APIs."""
+        hooks = []
+        
+        # 1. Try free APIs for hook inspiration (complementary)
+        try:
+            from services.free_apis import FreeAPIAggregator
+            aggregator = FreeAPIAggregator()
+            
+            # Get hook from free APIs
+            topic = getattr(state, 'topic', '') or nicho.nombre
+            free_hook = aggregator.get_hook_suggestion(topic)
+            if free_hook:
+                hooks.append(free_hook)
+                logger.debug(f"Added hook from free APIs: {free_hook[:50]}...")
+        except Exception as e:
+            logger.debug(f"Free API hooks failed: {e}")
+        
+        # 2. Generate hooks with LLM
         system = (
             "Eres experto en hooks virales de TikTok. "
             "Genera 5 hooks en español, cada uno de 8-14 palabras. "
@@ -246,9 +278,12 @@ class ResearchAgent:
 
         start, end = text.find("["), text.rfind("]")
         if start != -1 and end > start:
-            return json.loads(text[start:end + 1])[:5]
+            llm_hooks = json.loads(text[start:end + 1])[:5]
+            # Combine free API hooks with LLM hooks, remove duplicates
+            combined = hooks + [h for h in llm_hooks if h not in hooks]
+            return combined[:6]  # Max 6 hooks
 
-        return []
+        return hooks[:3] if hooks else []
 
     def _fallback_angles(self, nicho: NichoConfig) -> list[str]:
         """Fallback angles when LLM is unavailable."""

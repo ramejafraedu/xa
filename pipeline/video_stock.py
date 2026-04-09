@@ -49,6 +49,31 @@ _CARTOON_ANIMATION_TAGS = {
 }
 _pexels_rotation_counter: list[int] = [0]
 
+# Global rotation counter for cache hits - ensures variety in returned videos
+_cache_rotation_counter: list[int] = [0]
+
+
+def _rotated_cache_items(items: list[dict], num_needed: int) -> list[dict]:
+    """Rotate cache items to provide variety across different video requests.
+
+    Uses a global counter to shift the starting position, ensuring that
+    repeated searches for the same keywords return different videos when possible.
+    """
+    if not items:
+        return items
+
+    # Increment global counter for variety
+    _cache_rotation_counter[0] += 1
+
+    # If we have more items than needed, rotate starting position
+    if len(items) > num_needed:
+        # Use rotation to shift starting point
+        rotation = _cache_rotation_counter[0] % max(1, len(items) - num_needed + 1)
+        rotated = items[rotation:] + items[:rotation]
+        return rotated[:num_needed]
+
+    return items
+
 
 def fetch_stock_videos(
     keywords: list[str],
@@ -127,8 +152,10 @@ def fetch_stock_videos(
     # If cache already covers requested count, skip provider API calls.
     if len(all_items) >= num_needed:
         _save_cache_index(index_file, index_data)
-        logger.info(f"Stock videos found: {len(all_items)} (needed: {num_needed}) [cache-only]")
-        return all_items[:target_pool]
+        # Rotate items to provide variety across repeated searches
+        rotated_items = _rotated_cache_items(all_items, target_pool)
+        logger.info(f"Stock videos found: {len(rotated_items)} (needed: {num_needed}) [cache-only, rotated]")
+        return rotated_items
 
     # 2. Fetch more following selected provider order.
     provider_order = provider_order or ["pexels", "pixabay", "coverr"]
@@ -277,13 +304,20 @@ def _upsert_cache_entry(entries: list[dict], filename: str, cached_at: int, prov
     })
 
 
-def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False) -> list[str]:
-    """Try each Pexels key until we get videos."""
+def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False, page: int = 1) -> list[str]:
+    """Try each Pexels key until we get videos.
+
+    Args:
+        page: Page number for pagination (1-based). Uses rotation for variety.
+    """
     if not keyword or not keyword.strip():
         return []
 
+    # Rotate page number for variety (pages 1-3)
+    effective_page = ((page - 1 + _cache_rotation_counter[0]) % 3) + 1
+
     q = urllib.parse.quote(keyword.strip())
-    url = f"https://api.pexels.com/videos/search?query={q}&orientation=portrait&size=large&per_page=12"
+    url = f"https://api.pexels.com/videos/search?query={q}&orientation=portrait&size=large&per_page=12&page={effective_page}"
 
     for i, key in enumerate(_rotated_pexels_keys(keys)):
         try:
@@ -345,17 +379,20 @@ def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False
     return []
 
 
-def _fetch_pixabay_video(keyword: str, require_realistic: bool = False) -> list[str]:
+def _fetch_pixabay_video(keyword: str, require_realistic: bool = False, page: int = 1) -> list[str]:
     """Fetch vertical videos from Pixabay."""
     if not settings.pixabay_api_key:
         return []
 
     try:
+        # Rotate page number for variety (pages 1-3)
+        effective_page = ((page - 1 + _cache_rotation_counter[0]) % 3) + 1
+
         q = urllib.parse.quote(keyword)
         url = (
             f"https://pixabay.com/api/videos/"
             f"?key={settings.pixabay_api_key}"
-            f"&q={q}&orientation=vertical&per_page=5&min_width=720"
+            f"&q={q}&orientation=vertical&per_page=5&min_width=720&page={effective_page}"
         )
         data = get_json(url, max_retries=2)
         hits = data.get("hits", [])
