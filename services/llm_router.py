@@ -236,7 +236,9 @@ def _call_gemini_chat(
         attempted_model = False
         for key_idx, api_key in enumerate(keys):
             key_slot = key_idx + 1
-            if _is_key_cooling_down(key_slot):
+            # In Vertex mode all traffic goes through one project quota.
+            # Key-slot cooldowns are for API-key rotation mode only.
+            if (not settings.use_vertex_ai) and _is_key_cooling_down(key_slot):
                 continue
 
             attempted_model = True
@@ -277,6 +279,13 @@ def _call_gemini_chat(
                 _record_gemini_usage(model_name, key_slot, False, latency_ms, err)
 
                 if category == "quota":
+                    if settings.use_vertex_ai:
+                        # Vertex quotas are model/project scoped; move to next model
+                        # instead of blocking all pseudo key slots.
+                        _set_model_cooldown(model_name)
+                        logger.debug(f"Gemini {model_name} quota/rate hit on Vertex, trying next model")
+                        break
+
                     _set_key_cooldown(key_slot)
                     logger.debug(f"Gemini {model_name} key#{key_slot} quota/rate hit, rotating")
                     continue
