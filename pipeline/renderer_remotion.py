@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import subprocess
+from urllib.parse import unquote
 from pathlib import Path
 from typing import Optional
 
@@ -127,6 +128,8 @@ def render_with_remotion(
                 music_path=music_path,
                 metadata=metadata,
             )
+
+        _materialize_workspace_assets(props)
 
         props_file = output_path.parent / f"remotion_props_{metadata.get('timestamp', 0)}.json"
         props_file.write_text(json.dumps(props, indent=2), encoding="utf-8")
@@ -662,7 +665,11 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
 
 
 def _to_file_uri(value: str) -> str:
-    """Convert absolute local paths to URIs for Remotion assets.
+    """Normalize asset paths for CinematicRenderer staticFile()/URL handling.
+
+    - HTTP(S)/data/file URIs pass-through.
+    - Local files under workspace become "workspace/..." static paths.
+    - Other local paths stay absolute (best-effort fallback).
     """
     src = (value or "").strip()
     if not src:
@@ -673,15 +680,79 @@ def _to_file_uri(value: str) -> str:
         return src
     if lowered.startswith("file://"):
         return src
-    
-    # Resolve to absolute local path. CinematicRenderer converts absolute
-    # paths into file:// URIs, avoiding fragile staticFile(public/workspace)
-    # lookups that can fail in bundled render temp dirs.
+
     try:
         path = Path(src).resolve()
+        workspace_dir = settings.workspace.resolve()
+        if path.is_relative_to(workspace_dir):
+            rel = path.relative_to(workspace_dir)
+            return f"workspace/{rel.as_posix()}"
         return str(path)
     except Exception:
         return src
+
+
+def _materialize_workspace_assets(props: dict) -> None:
+    """Copy workspace-referenced assets into remotion public/workspace.
+
+    This avoids relying on symlink behavior in bundled render temp dirs.
+    """
+    public_workspace = REMOTION_DIR / "public" / "workspace"
+    public_workspace.mkdir(parents=True, exist_ok=True)
+    workspace_dir = settings.workspace.resolve()
+
+    def _source_and_static(src: str) -> tuple[Optional[Path], str]:
+        raw = (src or "").strip()
+        if not raw:
+            return None, raw
+
+        lowered = raw.lower()
+        if lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("data:"):
+            return None, raw
+
+        if lowered.startswith("workspace/"):
+            local = settings.workspace.parent / raw
+            return local, raw.replace("\\", "/")
+
+        if lowered.startswith("file://"):
+            decoded = unquote(raw[7:])
+            local = Path(decoded)
+        else:
+            local = Path(raw)
+
+        try:
+            local = local.resolve()
+            if local.is_relative_to(workspace_dir):
+                rel = local.relative_to(workspace_dir)
+                return local, f"workspace/{rel.as_posix()}"
+        except Exception:
+            return None, raw
+
+        return None, raw
+
+    def _materialize(entry: dict, key: str = "src") -> None:
+        if not isinstance(entry, dict):
+            return
+        src = str(entry.get(key, "") or "")
+        local_path, static_src = _source_and_static(src)
+        if local_path and local_path.exists() and local_path.is_file():
+            rel = static_src.replace("workspace/", "", 1)
+            dest = public_workspace / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_path, dest)
+            entry[key] = static_src
+
+    for scene in props.get("scenes", []):
+        if isinstance(scene, dict):
+            _materialize(scene, "src")
+
+    soundtrack = props.get("soundtrack")
+    if isinstance(soundtrack, dict):
+        _materialize(soundtrack, "src")
+
+    music = props.get("music")
+    if isinstance(music, dict):
+        _materialize(music, "src")
 
 
 def _parse_ass_words(subtitles_path: Optional[Path]) -> list[dict]:
