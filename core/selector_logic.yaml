@@ -1,0 +1,165 @@
+# Provider Decision Logic Configuration
+# This file defines the decision rules for provider selection across different resource types
+
+version: "1.0"
+description: "Smart provider routing for V16 pipeline"
+
+# Global settings
+globals:
+  prefer_free_providers: true
+  quality_default: "balanced"  # budget | balanced | premium
+  cost_optimization_mode: true
+
+# TTS Provider Routing Rules
+tts:
+  decision_factors:
+    - script_length:
+        "< 200 chars": 
+          preferred: ["edge_tts", "piper_tts"]
+          reason: "Short scripts: prioritize free options"
+        "200-500 chars":
+          preferred: ["google_tts", "elevenlabs"]
+          reason: "Medium scripts: balance cost/quality"
+        "> 500 chars":
+          preferred: ["google_tts"]
+          reason: "Long scripts: cost-effective TTS"
+    
+    - quality_tier:
+        "budget":
+          order: ["edge_tts", "piper_tts", "google_tts", "elevenlabs"]
+        "balanced":
+          order: ["google_tts", "elevenlabs", "edge_tts", "piper_tts"]
+        "premium":
+          order: ["elevenlabs", "google_tts", "edge_tts"]
+  
+  fallback_chain:
+    - "google_tts"
+    - "elevenlabs"
+    - "edge_tts"
+    - "piper_tts"
+  
+  cost_targets:
+    per_video_budget: 0.04
+    monthly_budget: 1.20  # 30 videos
+
+# Image Provider Routing
+images:
+  decision_factors:
+    - image_count:
+        "1-2":
+          preferred: ["pexels", "pixabay"]
+          reason: "Single/pair: use stock"
+        "3-6":
+          preferred: ["pexels", "leonardo_ai"]
+          reason: "Multiple: mix stock + generation"
+        "> 6":
+          preferred: ["leonardo_ai", "pollinations"]
+          reason: "Many images: generation-focused"
+    
+    - quality_tier:
+        "budget":
+          order: ["pexels", "pixabay", "pollinations", "leonardo_ai"]
+        "balanced":
+          order: ["pexels", "leonardo_ai", "pollinations", "pixabay"]
+        "premium":
+          order: ["leonardo_ai", "pollinations", "pexels"]
+  
+  fallback_chain:
+    - "pexels"
+    - "pixabay"
+    - "pollinations"
+    - "leonardo_ai"
+  
+  cost_targets:
+    per_image: 0.016
+    per_video_budget: 0.10
+
+# Music Provider Routing
+music:
+  decision_factors:
+    - use_case:
+        "background":
+          preferred: ["jamendo", "freesound"]
+          reason: "Background music: use free/cheap stock"
+        "generated":
+          preferred: ["suno_api", "epidemic_sound"]
+          reason: "Custom music: use generation"
+    
+    - quality_tier:
+        "budget":
+          order: ["jamendo", "freesound", "suno_api"]
+        "balanced":
+          order: ["jamendo", "suno_api", "epidemic_sound"]
+        "premium":
+          order: ["epidemic_sound", "suno_api", "jamendo"]
+  
+  fallback_chain:
+    - "jamendo"
+    - "freesound"
+    - "suno_api"
+    - "epidemic_sound"
+  
+  cost_targets:
+    per_track: 0.01
+    per_video_budget: 0.02
+
+# Cost Targets & Budgets
+cost_targets:
+  budget_tier:
+    per_video: 0.15
+    monthly_30_videos: 4.50
+    explanation: "Free + cheap stock + cloud TTS"
+  
+  balanced_tier:
+    per_video: 0.25
+    monthly_30_videos: 7.50
+    explanation: "Mix of stock + generation + quality TTS"
+  
+  premium_tier:
+    per_video: 0.75
+    monthly_30_videos: 22.50
+    explanation: "Premium generation + quality TTS + curated music"
+
+# Niche-specific overrides
+niche_overrides:
+  finanzas:
+    quality_tier: "balanced"
+    prefer_stock_premium: true
+    music_preference: "professional"
+  
+  curiosidades:
+    quality_tier: "balanced"
+    prefer_generation: true
+    style: "vibrant"
+  
+  historia:
+    quality_tier: "premium"
+    prefer_cinematic: true
+    music_preference: "orchestral"
+  
+  ia_herramientas:
+    quality_tier: "balanced"
+    prefer_clarity: true
+    music_preference: "minimal"
+
+# Provider health thresholds
+health_thresholds:
+  success_rate_min: 0.85
+  consecutive_failures_max: 3
+  penalize_after_failures: true
+  recovery_time_minutes: 30
+
+# Logging & Analytics
+logging:
+  show_decisions: true
+  log_cost_impact: true
+  track_savings: true
+  decision_log_file: "logs/provider_decisions.log"
+
+# Feature Flags
+features:
+  smart_tts_routing: true
+  smart_image_routing: true
+  smart_music_routing: true
+  cost_reporting: true
+  savings_projection: true

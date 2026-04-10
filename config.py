@@ -181,6 +181,17 @@ class Settings(BaseSettings):
     enable_reference_driven: bool = False
     enable_cost_governance: bool = False
     
+    # --- V16.1: Variedad de Subtemas Anti-Repeticion ---
+    force_subtopic_variety: bool = True
+    subtopic_history_limit: int = 20  # Cuántos subtemas recordar por nicho
+    subtopic_similarity_threshold: float = 0.7  # Umbral de similitud para considerar repetido
+    
+    # --- V16.1: Desactivar Caches para Forzar Variedad ---
+    disable_stock_cache: bool = True
+    disable_suno_cache: bool = True
+    disable_image_cache: bool = True
+    force_fresh_assets: bool = True
+    
     # Provider Cascade (V16 PRO)
     enable_provider_cascade: bool = True
     provider_cascade_cooldown_seconds: int = 1800
@@ -195,6 +206,13 @@ class Settings(BaseSettings):
     manim_enabled_nichos: str = "finanzas"
     manim_render_quality: str = "medium_quality"
     manim_timeout_seconds: int = 120
+    
+    # Remotion - Provider Principal (V16 PRO)
+    force_remotion_primary: bool = True  # Forzar Remotion sin fallback a FFmpeg
+    remotion_concurrency: int = 4  # Workers para n2-standard-8
+    remotion_timeout_seconds: int = 900
+    remotion_quality: int = 80
+    remotion_preset: str = "ultrafast"
     
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True
@@ -218,6 +236,54 @@ class Settings(BaseSettings):
     openmontage_enable_enhancement: bool = False
     openmontage_enable_video_utilities: bool = False
     v15_strict_free_media_tools: bool = True
+
+    # --- V16 Integration: Playbook System ---
+    playbook_validation_enabled: bool = True
+    playbook_dir: str = "./nichos"
+    playbook_quality_gate_enabled: bool = True
+    playbook_enforce_colors: bool = True
+    playbook_enforce_typography: bool = True
+    playbook_enforce_motion: bool = False  # advisory-only for now
+    playbook_acceptable_score_threshold: float = 8.0
+    
+    # --- V16 Integration: Provider Selector ---
+    provider_selector_enabled: bool = True
+    provider_routing_config: str = "core/selector_logic.yaml"
+    provider_show_decisions: bool = True
+    provider_log_level: str = "info"  # debug | info | warning
+    
+    # Provider-specific toggles
+    tts_smart_routing_enabled: bool = True
+    image_smart_routing_enabled: bool = True
+    music_smart_routing_enabled: bool = True
+    
+    # Cost optimization targets
+    target_cost_per_video_usd: float = 0.20
+    prefer_free_providers: bool = True
+    
+    # --- V16 Integration: Avatar Pipeline (Future) ---
+    avatar_pipeline_enabled: bool = False
+    avatar_provider: str = "heygen"  # heygen | wan | d-id
+    avatar_provider_keys: str = ""  # JSON string with credentials
+    avatar_voice_id: str = "default"
+    presenter_mode_enabled: bool = False
+    
+    # --- V16 Integration: Clip-Factory (Future) ---
+    clipfactory_enabled: bool = False
+    clipfactory_default_clip_count: int = 5
+    clipfactory_platforms: str = "tiktok,reels,youtube_shorts"
+    batch_mode_enabled: bool = False
+    
+    # --- V16 Integration: Review System (Future) ---
+    reviewer_enabled: bool = True
+    reviewer_skills_dir: str = "skills/review"
+    reviewer_show_advisory: bool = True
+    reviewer_block_on_issues: bool = False  # advisory-only by default
+    
+    # --- V16 Integration: Reference Analysis (Future) ---
+    reference_analysis_depth: str = "moderate"  # basic | moderate | deep
+    reference_color_extraction_enabled: bool = True
+    reference_pacing_analysis_enabled: bool = True
 
     # Budget governance (USD)
     daily_budget_usd: float = 0.0

@@ -1,0 +1,166 @@
+name: finanzas-dramatic
+description: Bold, aggressive financial content with high contrast and dynamic pacing
+mood: Bold, aggressive, confidence-driven
+best_for: Investment tips, crypto, market analysis, wealth building strategies
+target_audience: Financial professionals, ambitious entrepreneurs, crypto enthusiasts
+
+identity:
+  primary_emotion: Confidence, urgency, power
+  energy_level: High (8/10)
+  formality: Professional but modern
+  pace: Aggressive cuts, no excess silence
+
+visual_language:
+  primary_colors:
+    - name: "Deep Navy"
+      hex: "#1a1a2e"
+      usage: "Background, dominant element"
+    - name: "Vibrant Gold"
+      hex: "#ffd700"
+      usage: "Accent, money/success symbols, text highlights"
+    - name: "Slate Gray"
+      hex: "#2d3436"
+      usage: "Secondary background, charts"
+  secondary_colors:
+    - name: "Emerald"
+      hex: "#27ae60"
+      usage: "Positive indicators (profit, gains)"
+    - name: "Coral Red"
+      hex: "#e74c3c"
+      usage: "Negative indicators (losses, risks)"
+  
+  composition:
+    - rule: "No soft pastel colors. Sharp, high-contrast imagery only"
+    - rule: "Geometric layouts (grids, diagonal splits) preferred"
+    - rule: "Every scene should have a gold accent (text, icon, or border)"
+    - rule: "Dark scenes dominant (80% dark background)"
+  
+  backgrounds:
+    preferred: "Modern office, stock trading floors, blockchain visualizations, digital dashboards"
+    avoid: "Soft gradients, nature, warm tones"
+
+typography:
+  heading:
+    font: "Raleway Extra Bold, Montserrat Bold"
+    size: "720px - 1080px on 1080p"
+    color: "#ffd700 (gold) or #ffffff on dark"
+    weight: "800+"
+  
+  body:
+    font: "Open Sans, Roboto"
+    size: "60px - 120px on 1080p"
+    color: "#ffffff"
+    weight: "600+"
+  
+  accent:
+    font: "Courier New monospace (for numbers/charts)"
+    color: "#27ae60 or #e74c3c"
+    weight: "700"
+  
+  rules:
+    - "All caps for titles (CRYPTO BOOM, INVESTMENT HACK)"
+    - "No script/cursive fonts"
+    - "Minimum contrast ratio 5:1 (WCAG AA)"
+    - "No small text below 48px on 1080p"
+
+motion:
+  average_shot_hold: 1.2s
+  transition_style: "Whip transitions, quick cuts, NO fade"
+  transition_duration: 0.3s - 0.5s
+  
+  pacing_rules:
+    - "First 3 seconds MUST be hook (high energy cut)"
+    - "Never hold still on single text for more than 1.5s"
+    - "Use motion graphics/zoom for emphasis (not just pan)"
+    - "Music cuts should align with visual cuts (tight sync)"
+  
+  effects:
+    preferred:
+      - "Whip/swish transitions (80% of cuts)"
+      - "Zoom-in with emphasis (20%)"
+      - "Text pop-up with animation"
+      - "Chart animation (line growth, bar fills)"
+    avoid:
+      - "Slow fade (feels weak)"
+      - "Dissolve transitions"
+      - "Slow zoom (feels dated)"
+      - "Static title cards"
+
+audio:
+  voice_style: "Confident, energetic, no-nonsense"
+  voice_pace: "Slightly fast (120-130 wpm, no breathiness)"
+  voice_providers: ["google_tts", "elevenlabs_most_dynamic", "azure_voice_5"]
+  
+  music:
+    genre: "Dark synth, electronic, aggressive hip-hop"
+    tempo: 120+ BPM
+    energy: "High (8-9/10)"
+    examples: ["Cyberpunk soundtrack", "Dark Techno", "Trap production"]
+    licensing: "Epidemic Sound, Artlist, YouTube Audio Library"
+  
+  music_rules:
+    - "Bass-heavy drop in intro (0-2s)"
+    - "Keep music 0.15 volume level when voice speaks"
+    - "Hard cut to silence for emphasis (max 0.5s silence)"
+    - "Build intensity through video (crescendo)"
+    - "Outro drop must hit hard (last 2-3 seconds)"
+  
+  sfx: "Digital beeps, notification sounds, coin/money jingles"
+
+asset_generation:
+  image_prompt_template: |
+    Professional financial content image for {topic}
+    Style: High contrast, dark navy background with vibrant gold accents
+    mood: confident, aggressive, modern
+    Colors: Navy #1a1a2e, Gold #ffd700, Slate #2d3436
+    No soft colors. Geometric composition. Sharp details.
+    4K quality, professional photography/3D rendering
+  
+  image_rules:
+    - "Every image MUST have at least one gold accent (text, icon, or border)"
+    - "Dark tones dominant (80% of image)"
+    - "High contrast (no muddy colors)"
+    - "Geometric or futuristic style preferred"
+  
+  quality_rules:
+    - rule: "No more than 3 primary colors per scene"
+      check: "Color histogram analysis"
+    - rule: "Contrast ratio minimum 5:1 (WCAG AA standard)"
+      check: "Color contrast checker"
+    - rule: "Hold shots minimum 1.5s, maximum 3s"
+      check: "Shot duration analysis"
+    - rule: "Every image must have gold (#ffd700) accent"
+      check: "Color presence detection"
+    - rule: "No stock photography with people (use avatars or illustration)"
+      check: "Manual review or ML classifier"
+    - rule: "Text must be readable at 480p (test at half resolution)"
+      check: "OCR confidence > 0.95"
+
+color_harmony:
+  rule: "Navy + Gold is primary (navy dominant, gold accent)"
+  accessibility:
+    - rule: "Minimum WCAG AA contrast (5:1 ratio)"
+      check: "Disabled users, bright sunlight viewing"
+    - rule: "No red/green color coding alone (use icons + color)"
+      check: "Colorblind users (deuteranopia, protanopia)"
+  
+  palette_combinations:
+    - "Navy + Gold + Slate (professional)"
+    - "Navy + Gold + Emerald (positive growth)"
+    - "Navy + Gold + Coral (risks/losses)"
+
+validation_scoring:
+  color_consistency: 0.25
+  typography_readability: 0.20
+  motion_pacing: 0.20
+  audio_sync: 0.15
+  asset_quality: 0.20
+  
+  acceptable_score: 8.0/10
+  premium_score: 9.0/10
+
+notes: |
+  This playbook is designed for financial/crypto content creators 
+  who want high-energy, professional videos. Use when budget allows 
+  premium assets and audience expects confident, assertive presentation.
+  NOT for general education or kid-friendly content.

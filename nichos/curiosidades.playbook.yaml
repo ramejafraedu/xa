@@ -1,0 +1,96 @@
+name: curiosidades-vibrant
+description: High-energy, fast-paced curiosities with bold colors and chaotic energy
+mood: Surprising, vibrant, playful, attention-grabbing
+best_for: Fun facts, weird science, mind-bending questions, clickbait-friendly topics
+target_audience: Gen Z, casual viewers, TikTok/YouTube Shorts audience
+
+identity:
+  primary_emotion: Surprise, curiosity, fun
+  energy_level: Very High (9/10)
+  formality: Casual, conversational
+  pace: Hyper-fast cuts, constant movement
+
+visual_language:
+  primary_colors:
+    - name: "Bright Purple"
+      hex: "#9b59b6"
+      usage: "Background, dominant element"
+    - name: "Neon Pink"
+      hex: "#ff1493"
+      usage: "Accent, highlights, shock moments"
+    - name: "Electric Cyan"
+      hex: "#00bfff"
+      usage: "Secondary accent, graphics"
+  
+  secondary_colors:
+    - name: "Lime Green"
+      hex: "#00ff00"
+      usage: "Positive, surprising facts"
+    - name: "Orange"
+      hex: "#ff8c00"
+      usage: "Warning, attention-grabbing"
+  
+  composition:
+    - rule: "Multiple colors per scene (controlled chaos)"
+    - rule: "Bright, saturated colors only"
+    - rule: "Overlapping elements, layered graphics"
+    - rule: "Emoji and text overlays encouraged"
+
+typography:
+  heading:
+    font: "Impact, Bebas Neue, Anton"
+    size: "800px - 1200px on 1080p"
+    color: "Neon Pink (#ff1493) or bright yellow"
+    weight: "900"
+  
+  body:
+    font: "Comic Sans MS, Quicksand Bold, Poppins"
+    size: "80px - 140px on 1080p"
+    color: "#ffffff or #000000"
+    weight: "700+"
+
+motion:
+  average_shot_hold: 0.8s
+  transition_style: "Jump cuts, zoom, spin, optical flares"
+  transition_duration: 0.2s - 0.4s
+  
+  pacing_rules:
+    - "Constant movement (no still moments longer than 0.5s)"
+    - "Every 3-4 seconds introduce a new visual element"
+    - "Use text pop-ups for emphasis"
+    - "Rapid zoom/scale changes for shock value"
+
+audio:
+  voice_style: "Enthusiastic, playful, high-pitched optional"
+  voice_pace: "Fast (140+ wpm)"
+  
+  music:
+    genre: "Upbeat electronic, pop, trap, bass-heavy"
+    tempo: "130-150 BPM"
+    energy: "Very high (9/10)"
+
+asset_generation:
+  image_prompt_template: |
+    Vibrant, eye-catching image for curiosity content about {topic}
+    Style: Bold, colorful, high-saturation
+    Colors: Bright purples, neon pink, electric cyan
+    mood: Playful, surprising, attention-grabbing, fun
+    High energy, young audience appeal, colorful overlays acceptable
+    4K quality, digital illustration/3D preferred
+
+quality_rules:
+    - rule: "Saturated colors (no desaturated/gray tones)"
+      check: "Color saturation analysis"
+    - rule: "Frequent cuts (0.8-1.2s average shot)"
+      check: "Shot duration analysis"
+    - rule: "Text must pop (drop shadow, outline, color contrast)"
+      check: "Visual hierarchy check"
+
+validation_scoring:
+  color_vibrancy: 0.30
+  motion_energy: 0.25
+  typography_impact: 0.20
+  audio_engagement: 0.15
+  asset_quality: 0.10
+  
+  acceptable_score: 7.5/10

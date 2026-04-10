@@ -28,6 +28,7 @@ from core.openmontage_free import (
     apply_upscale,
     strict_free_candidates,
 )
+from core.playbook_loader import get_playbook, get_playbook_loader
 from core.provider_selector import ProviderSelector
 from core.state import StoryState
 from models.config_models import NichoConfig
@@ -92,6 +93,15 @@ class AssetAgent:
         """
         t0 = time.time()
         selector = ProviderSelector()
+        
+        # Load playbook for niche (V16 Playbook System)
+        playbook = None
+        if settings.playbook_validation_enabled:
+            playbook = get_playbook(nicho.slug)
+            if playbook:
+                logger.info(f"📋 Using playbook: {playbook.name}")
+            else:
+                logger.debug(f"No playbook found for {nicho.slug}, using defaults")
         results = {
             "stock_clips": [],
             "images": [],
@@ -150,6 +160,7 @@ class AssetAgent:
                 temp_dir,
                 provider_order=image_order,
                 runtime_overrides=runtime_overrides,
+                playbook=playbook,
             ),
             is_success=lambda value: len(value[0]) > 0,
             max_attempts=2,
@@ -552,8 +563,13 @@ class AssetAgent:
         temp_dir: Path,
         provider_order: Optional[list[str]] = None,
         runtime_overrides: Optional[dict] = None,
+        playbook: Optional[Any] = None,
     ) -> tuple[list[Path], dict[str, dict[str, int]]]:
-        """Generate images with visual direction from StoryState."""
+        """Generate images with visual direction from StoryState and playbook.
+        
+        If playbook is provided, uses color palette and image generation rules
+        from the playbook to ensure visual consistency across the niche.
+        """
         try:
             from pipeline.image_gen import generate_images_with_stats
 
@@ -572,6 +588,20 @@ class AssetAgent:
 
             if state.color_palette:
                 prompt_base += f", {state.color_palette}"
+            
+            # Add playbook colors if available (V16 Playbook System)
+            if playbook and settings.playbook_enforce_colors:
+                primary_colors = playbook.visual_language.get('primary_colors', {})
+                if primary_colors:
+                    color_names = []
+                    for color_info in primary_colors.values():
+                        if isinstance(color_info, dict):
+                            color_name = color_info.get('name', '').lower()
+                            hex_val = color_info.get('hex', '')
+                            if color_name and hex_val:
+                                color_names.append(f"{color_name} {hex_val}")
+                    if color_names:
+                        prompt_base += f". Color palette: {', '.join(color_names[:3])}"
 
             ab_variant = raw_content.get("_ab_variant", "A")
 

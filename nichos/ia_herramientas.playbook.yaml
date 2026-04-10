@@ -1,0 +1,100 @@
+name: ai-tools-modern
+description: Clean, modern, practical design for AI/tools education with clarity focus
+mood: Educational, clear, professional, trusted
+best_for: AI tool tutorials, tech reviews, how-to guides, product demos
+target_audience: Professionals, developers, tech enthusiasts, enterprise users
+
+identity:
+  primary_emotion: Clarity, reliability, progress
+  energy_level: Medium (5/10)
+  formality: Professional, instructional
+  pace: Steady, methodical
+
+visual_language:
+  primary_colors:
+    - name: "Clean White"
+      hex: "#ffffff"
+      usage: "Primary background"
+    - name: "Tech Blue"
+      hex: "#0066cc"
+      usage: "Primary accent, CTAs, interactive elements"
+    - name: "Slate Gray"
+      hex: "#44546f"
+      usage: "Text, secondary elements"
+  
+  secondary_colors:
+    - name: "Success Green"
+      hex: "#1f8554"
+      usage: "Positive feedback, completions"
+    - name: "Warning Orange"
+      hex: "#ff9500"
+      usage: "Tips, important notes"
+  
+  composition:
+    - rule: "Minimalist, lots of whitespace"
+    - rule: "Grid-based layout"
+    - rule: "Software UI screenshots and mockups preferred"
+    - rule: "Icons for visual language (no photos of people)"
+
+typography:
+  heading:
+    font: "Inter, Helvetica Neue, Segoe UI"
+    size: "600px - 900px on 1080p"
+    color: "#0066cc or #44546f"
+    weight: "700-800"
+  
+  body:
+    font: "Inter, -apple-system, Segoe UI"
+    size: "60px - 100px on 1080p"
+    color: "#44546f"
+    weight: "500-600"
+
+motion:
+  average_shot_hold: 2.0s - 2.5s
+  transition_style: "Subtle slides, fade, wipes (directional)"
+  transition_duration: 0.4s - 0.8s
+  
+  pacing_rules:
+    - "Each step gets equal time (predictable, instructional)"
+    - "Demo animations are smooth and natural"
+    - "Never rush through interface interactions"
+    - "Build focus through zoom/highlight, not through cuts"
+
+audio:
+  voice_style: "Clear, professional, helpful (not robotic)"
+  voice_pace: "Natural (100-110 wpm), with short pauses between steps"
+  
+  music:
+    genre: "Minimal ambient, lo-fi beats, corporate background"
+    tempo: "90-110 BPM"
+    energy: "low-medium (3-4/10)"
+    examples: ["Lofi hip-hop", "Productive ambient", "Erik Satie"]
+
+asset_generation:
+  image_prompt_template: |
+    Clean, professional interface screenshot/mockup for {topic}
+    Style: Modern, minimalist, UI-focused
+    Colors: White background, tech blue accents, gray text
+    mood: Professional, trustworthy, educational
+    Software interface, dashboard, or clean illustration
+    4K quality, flat design or realistic UI rendering
+
+quality_rules:
+    - rule: "Text must be legible (min 50px on 1080p)"
+      check: "OCR confidence > 0.95"
+    - rule: "Color contrast minimum 7:1 (WCAG AAA)"
+      check: "Color contrast checker"
+    - rule: "No background busy (max 1 dominant visual element per scene)"
+      check: "Visual complexity score"
+    - rule: "Consistent UI element styling throughout"
+      check: "Icon/button style consistency"
+
+validation_scoring:
+  clarity_information: 0.30
+  visual_hierarchy: 0.25
+  pacing_pedagogy: 0.20
+  typography_readability: 0.15
+  audio_clarity: 0.10
+  
+  acceptable_score: 8.2/10
+  premium_score: 9.0/10
