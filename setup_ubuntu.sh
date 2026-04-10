@@ -73,12 +73,28 @@ print_status "Dependencias del sistema instaladas"
 echo ""
 echo "🧩 2.5. Instalando Node.js LTS y npm..."
 
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-sudo apt install -y nodejs
+NODE_VERSION="not-installed"
+if command -v node &> /dev/null; then
+    NODE_VERSION=$(node --version 2>/dev/null || echo "not-installed")
+    print_status "Node.js ya instalado: $NODE_VERSION"
+else
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+    sudo apt install -y nodejs
+    NODE_VERSION=$(node --version 2>/dev/null || echo "not-installed")
+fi
 
-NODE_VERSION=$(node --version 2>/dev/null || echo "not-installed")
 NPM_VERSION=$(npm --version 2>/dev/null || echo "not-installed")
-print_status "Node.js: $NODE_VERSION | npm: $NPM_VERSION"
+NPX_VERSION=$(npx --version 2>/dev/null || echo "not-installed")
+print_status "Node.js: $NODE_VERSION | npm: $NPM_VERSION | npx: $NPX_VERSION"
+
+NODE_MAJOR=$(echo "$NODE_VERSION" | sed -E 's/^v([0-9]+).*/\1/' 2>/dev/null || echo "0")
+if ! [[ "$NODE_MAJOR" =~ ^[0-9]+$ ]]; then
+    NODE_MAJOR=0
+fi
+if [ "$NODE_MAJOR" -lt 20 ]; then
+    print_error "Node.js 20+ es obligatorio para Remotion (actual: $NODE_VERSION)"
+    exit 1
+fi
 
 # ============================================
 # 3. VERIFICAR FFMPEG
@@ -93,6 +109,13 @@ fi
 
 FFMPEG_VERSION=$(ffmpeg -version | head -n1 | cut -d' ' -f3)
 print_status "FFmpeg instalado: versión $FFMPEG_VERSION"
+
+if ! command -v ffprobe &> /dev/null; then
+    print_error "ffprobe no está disponible. Reinstala paquete ffmpeg"
+    exit 1
+fi
+FFPROBE_VERSION=$(ffprobe -version | head -n1 | cut -d' ' -f3)
+print_status "ffprobe instalado: versión $FFPROBE_VERSION"
 
 # ============================================
 # 4. CREAR ESTRUCTURA DE DIRECTORIOS
@@ -115,7 +138,9 @@ echo "🐍 5. Configurando entorno virtual Python..."
 cd "$PROJECT_DIR"
 
 # Crear virtual environment
-python3.11 -m venv venv
+if [ ! -d "venv" ]; then
+    python3.11 -m venv venv
+fi
 source venv/bin/activate
 
 # Upgrade pip
@@ -126,9 +151,26 @@ print_status "Entorno virtual creado"
 # Instalar deps de Remotion si el composer existe en el repo.
 if [ -d "$PROJECT_DIR/remotion-composer" ]; then
     echo ""
-    echo "🎬 Instalando dependencias Remotion..."
+    echo "🎬 Instalando dependencias y build de Remotion..."
     cd "$PROJECT_DIR/remotion-composer"
-    npm install || print_warning "npm install en remotion-composer fallo (se puede reintentar manualmente)"
+    if [ -f "package-lock.json" ]; then
+        npm ci || print_warning "npm ci en remotion-composer fallo (reintentando con npm install)"
+    fi
+    if [ ! -d "node_modules" ]; then
+        npm install || print_warning "npm install en remotion-composer fallo"
+    fi
+
+    if [ ! -d "node_modules" ]; then
+        print_error "node_modules no existe en remotion-composer después de instalar dependencias"
+        exit 1
+    fi
+
+    if npm run | grep -q " build"; then
+        npm run build || print_warning "npm run build fallo en remotion-composer"
+    else
+        print_warning "package.json sin script build; se omite npm run build"
+    fi
+
     cd "$PROJECT_DIR"
 fi
 
@@ -308,6 +350,8 @@ PREFER_STOCK_IMAGES=true
 # === REMOTION RENDERER ===
 USE_REMOTION=true
 FORCE_FFMPEG_RENDERER=false
+REQUIRE_REMOTION=true
+ALLOW_FFMPEG_FALLBACK=false
 
 # === LOGGING ===
 LOG_LEVEL=INFO
@@ -415,6 +459,19 @@ free -h | grep -E "Mem|Swap"
 echo ""
 echo "🎥 FFmpeg:"
 ffmpeg -version | head -n 1
+ffprobe -version | head -n 1
+
+# Verificar Node stack para Remotion
+echo ""
+echo "🎬 Node/Remotion stack:"
+node --version
+npm --version
+npx --version
+if [ -d "remotion-composer/node_modules" ]; then
+    echo "✅ remotion-composer/node_modules presente"
+else
+    echo "❌ remotion-composer/node_modules no existe"
+fi
 EOF
 
 chmod +x check_health.sh

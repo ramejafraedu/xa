@@ -1592,6 +1592,8 @@ async def operations_config():
     return {
         "use_remotion": bool(settings.use_remotion),
         "force_ffmpeg_renderer": bool(settings.force_ffmpeg_renderer),
+        "require_remotion": bool(settings.require_remotion),
+        "allow_ffmpeg_fallback": bool(settings.allow_ffmpeg_fallback),
         "prefer_stock_images": bool(settings.prefer_stock_images),
         "enable_image_cache": bool(settings.enable_image_cache),
         "generated_images_count": int(settings.generated_images_count),
@@ -1617,6 +1619,18 @@ async def operations_config_update(payload: dict = Body(...)):
         settings.force_ffmpeg_renderer = value
         updates["force_ffmpeg_renderer"] = value
         env_updates["FORCE_FFMPEG_RENDERER"] = "true" if value else "false"
+
+    if "require_remotion" in payload:
+        value = _as_bool(payload.get("require_remotion"), default=settings.require_remotion)
+        settings.require_remotion = value
+        updates["require_remotion"] = value
+        env_updates["REQUIRE_REMOTION"] = "true" if value else "false"
+
+    if "allow_ffmpeg_fallback" in payload:
+        value = _as_bool(payload.get("allow_ffmpeg_fallback"), default=settings.allow_ffmpeg_fallback)
+        settings.allow_ffmpeg_fallback = value
+        updates["allow_ffmpeg_fallback"] = value
+        env_updates["ALLOW_FFMPEG_FALLBACK"] = "true" if value else "false"
 
     if "prefer_stock_images" in payload:
         value = _as_bool(payload.get("prefer_stock_images"), default=settings.prefer_stock_images)
@@ -1667,7 +1681,7 @@ async def operations_config_update(payload: dict = Body(...)):
 @app.get("/api/config/remotion-diagnostics")
 async def remotion_diagnostics():
     """Deep diagnostics to explain why Remotion is or is not available."""
-    from pipeline.renderer_remotion import REMOTION_DIR, is_remotion_available
+    from pipeline.renderer_remotion import REMOTION_DIR, is_remotion_available, get_remotion_unavailability_reason
 
     package_json = REMOTION_DIR / "package.json"
     node_modules = REMOTION_DIR / "node_modules"
@@ -1686,13 +1700,22 @@ async def remotion_diagnostics():
     checks = {
         "use_remotion_flag": bool(settings.use_remotion),
         "force_ffmpeg_renderer_flag": bool(settings.force_ffmpeg_renderer),
+        "require_remotion_flag": bool(settings.require_remotion),
+        "allow_ffmpeg_fallback_flag": bool(settings.allow_ffmpeg_fallback),
         "composer_dir_exists": REMOTION_DIR.exists(),
         "package_json_exists": package_json.exists(),
         "node_modules_exists": node_modules.exists(),
         "npx_available": bool(npx_path),
         "node_available": bool(node_path),
     }
-    missing = [k for k, ok in checks.items() if not ok]
+    technical_keys = [
+        "composer_dir_exists",
+        "package_json_exists",
+        "node_modules_exists",
+        "npx_available",
+        "node_available",
+    ]
+    missing = [k for k in technical_keys if not checks.get(k)]
 
     recommendation = "Remotion available"
     if not checks["node_available"]:
@@ -1701,10 +1724,14 @@ async def remotion_diagnostics():
         recommendation = "Asegura npm en PATH para exponer npx"
     elif not checks["node_modules_exists"]:
         recommendation = "Ejecuta: cd remotion-composer && npm install"
+    elif checks["require_remotion_flag"] and checks["force_ffmpeg_renderer_flag"]:
+        recommendation = "Config invalida: REQUIRE_REMOTION=true y FORCE_FFMPEG_RENDERER=true"
     elif checks["force_ffmpeg_renderer_flag"]:
         recommendation = "Desactiva FORCE_FFMPEG_RENDERER para usar Remotion"
     elif not checks["use_remotion_flag"]:
         recommendation = "Activa USE_REMOTION=true para usar Remotion"
+
+    unavailable_reason = get_remotion_unavailability_reason()
 
     return {
         "checks": checks,
@@ -1714,6 +1741,7 @@ async def remotion_diagnostics():
         "npx_path": npx_path or "",
         "composer_dir": str(REMOTION_DIR),
         "overall_available": bool(is_remotion_available()),
+        "unavailable_reason": unavailable_reason,
         "recommendation": recommendation,
     }
 

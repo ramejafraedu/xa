@@ -1495,6 +1495,7 @@
                                 <th>Nicho</th>
                                 <th>Titulo</th>
                                 <th>Status</th>
+                                <th>Render</th>
                                 <th>Quality</th>
                                 <th>Hora</th>
                             </tr>
@@ -1527,6 +1528,14 @@
                             <label class="control-check">
                                 <input id="cfg-force-ffmpeg" type="checkbox" />
                                 Forzar FFmpeg
+                            </label>
+                            <label class="control-check">
+                                <input id="cfg-require-remotion" type="checkbox" />
+                                Remotion obligatorio
+                            </label>
+                            <label class="control-check">
+                                <input id="cfg-allow-ffmpeg-fallback" type="checkbox" />
+                                Fallback FFmpeg (emergencia)
                             </label>
                             <label class="control-check">
                                 <input id="cfg-prefer-stock" type="checkbox" />
@@ -1600,6 +1609,7 @@
                                     <th>Nicho</th>
                                     <th>Titulo</th>
                                     <th>Status</th>
+                                    <th>Render</th>
                                     <th>Quality</th>
                                     <th>Duration</th>
                                     <th>Cost</th>
@@ -1954,6 +1964,8 @@
                 const data = await fetchJson("/api/config/operations");
                 const useRemotionNode = document.getElementById("cfg-use-remotion");
                 const forceFfmpegNode = document.getElementById("cfg-force-ffmpeg");
+                const requireRemotionNode = document.getElementById("cfg-require-remotion");
+                const allowFfmpegFallbackNode = document.getElementById("cfg-allow-ffmpeg-fallback");
                 const preferStockNode = document.getElementById("cfg-prefer-stock");
                 const imageCacheNode = document.getElementById("cfg-image-cache");
                 const generatedNode = document.getElementById("cfg-generated-images");
@@ -1962,6 +1974,8 @@
 
                 if (useRemotionNode) useRemotionNode.checked = Boolean(data.use_remotion);
                 if (forceFfmpegNode) forceFfmpegNode.checked = Boolean(data.force_ffmpeg_renderer);
+                if (requireRemotionNode) requireRemotionNode.checked = Boolean(data.require_remotion);
+                if (allowFfmpegFallbackNode) allowFfmpegFallbackNode.checked = Boolean(data.allow_ffmpeg_fallback);
                 if (preferStockNode) preferStockNode.checked = Boolean(data.prefer_stock_images);
                 if (imageCacheNode) imageCacheNode.checked = Boolean(data.enable_image_cache);
                 if (generatedNode) generatedNode.value = String(data.generated_images_count != null ? data.generated_images_count : 6);
@@ -1970,6 +1984,8 @@
                 if (resultNode) {
                     resultNode.textContent = "Config cargada: remotion=" + Boolean(data.use_remotion) +
                         ", ffmpeg_forced=" + Boolean(data.force_ffmpeg_renderer) +
+                    ", require_remotion=" + Boolean(data.require_remotion) +
+                    ", allow_ffmpeg_fallback=" + Boolean(data.allow_ffmpeg_fallback) +
                     ", stock_first=" + Boolean(data.prefer_stock_images) +
                     ", image_cache=" + Boolean(data.enable_image_cache);
                 }
@@ -1983,6 +1999,8 @@
         async function saveOpsConfig() {
             const useRemotionNode = document.getElementById("cfg-use-remotion");
             const forceFfmpegNode = document.getElementById("cfg-force-ffmpeg");
+            const requireRemotionNode = document.getElementById("cfg-require-remotion");
+            const allowFfmpegFallbackNode = document.getElementById("cfg-allow-ffmpeg-fallback");
             const preferStockNode = document.getElementById("cfg-prefer-stock");
             const imageCacheNode = document.getElementById("cfg-image-cache");
             const generatedNode = document.getElementById("cfg-generated-images");
@@ -1991,6 +2009,8 @@
             const payload = {
                 use_remotion: useRemotionNode ? Boolean(useRemotionNode.checked) : true,
                 force_ffmpeg_renderer: forceFfmpegNode ? Boolean(forceFfmpegNode.checked) : false,
+                require_remotion: requireRemotionNode ? Boolean(requireRemotionNode.checked) : true,
+                allow_ffmpeg_fallback: allowFfmpegFallbackNode ? Boolean(allowFfmpegFallbackNode.checked) : false,
                 prefer_stock_images: preferStockNode ? Boolean(preferStockNode.checked) : true,
                 enable_image_cache: imageCacheNode ? Boolean(imageCacheNode.checked) : true,
                 generated_images_count: generatedNode ? Number(generatedNode.value || 6) : 6,
@@ -2032,8 +2052,13 @@
                     "node=" + (data.node_version || (checks.node_available ? "present" : "missing")),
                     "npx=" + (checks.npx_available ? "ok" : "missing"),
                     "node_modules=" + (checks.node_modules_exists ? "ok" : "missing"),
+                    "require_remotion=" + Boolean(checks.require_remotion_flag),
+                    "allow_ffmpeg_fallback=" + Boolean(checks.allow_ffmpeg_fallback_flag),
                     "recommendation=" + (data.recommendation || ""),
                 ];
+                if (data.unavailable_reason) {
+                    lines.push("unavailable_reason=" + String(data.unavailable_reason));
+                }
                 if (missing.length) {
                     lines.push("missing=" + missing.join(", "));
                 }
@@ -2458,7 +2483,7 @@
             miniBody.innerHTML = "";
             if (!jobs.length) {
                 miniBody.innerHTML =
-                    '<tr><td data-label="Estado" colspan="5"><div class="empty-state"><div class="empty-state-icon">📭</div><div>No hay jobs todavia.</div></div></td></tr>';
+                    '<tr><td data-label="Estado" colspan="6"><div class="empty-state"><div class="empty-state-icon">📭</div><div>No hay jobs todavia.</div></div></td></tr>';
                 return;
             }
 
@@ -2469,6 +2494,7 @@
                         '<td data-label="Nicho" style="text-transform:capitalize;font-weight:600;">' + escapeHtml(job.nicho || "-") + "</td>" +
                         '<td data-label="Titulo">' + escapeHtml(displayTitle) + "</td>" +
                         '<td data-label="Status">' + statusBadge(job.status) + "</td>" +
+                        '<td data-label="Render">' + escapeHtml(job.render_backend || "-") + "</td>" +
                         '<td data-label="Quality">' + scoreCell(job.quality_score) + "</td>" +
                         '<td data-label="Hora">' + escapeHtml(formatTime(job.timestamp)) + "</td>" +
                     "</tr>";
@@ -2493,6 +2519,7 @@
                         '<td data-label="Nicho" style="text-transform:capitalize;">' + escapeHtml(job.nicho || "-") + "</td>" +
                         '<td data-label="Titulo">' + escapeHtml(displayTitle) + "</td>" +
                         '<td data-label="Status">' + statusBadge(job.status) + "</td>" +
+                        '<td data-label="Render">' + escapeHtml(job.render_backend || "-") + "</td>" +
                         '<td data-label="Quality">' + scoreCell(job.quality_score) + "</td>" +
                         '<td data-label="Duration">' + escapeHtml(formatDuration(job.duration)) + "</td>" +
                         '<td data-label="Cost">$' + Number(job.cost_actual_usd || 0).toFixed(4) + "</td>" +
@@ -2510,7 +2537,7 @@
 
             if (!jobs.length) {
                 fullBody.innerHTML =
-                    '<tr><td data-label="Estado" colspan="8"><div class="empty-state"><div class="empty-state-icon">📭</div><div>No hay jobs en historial.</div></div></td></tr>';
+                    '<tr><td data-label="Estado" colspan="9"><div class="empty-state"><div class="empty-state-icon">📭</div><div>No hay jobs en historial.</div></div></td></tr>';
             }
         }
 

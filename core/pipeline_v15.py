@@ -131,7 +131,7 @@ def run_pipeline_v15(
         JobManifest with full audit trail.
     """
     from pipeline.tts_engine import generate_tts, get_audio_duration
-    from pipeline.subtitles import generate_timed_ass_from_text
+    from pipeline.subtitles_whisperx import generate_subtitles_with_fallback
     from pipeline.quality_gate import validate_and_score
     from pipeline.self_healer import attempt_healing
     from pipeline.renderer import download_clips
@@ -302,6 +302,18 @@ def run_pipeline_v15(
             "timestamp": int(time.time() * 1000),
             "metadata": metadata or {},
         })
+
+    def _infer_render_error_code(render_backend: str, render_error: str) -> ErrorCode:
+        msg = (render_error or "").lower()
+        if render_backend == "ffmpeg":
+            if "timeout" in msg:
+                return ErrorCode.FFMPEG_TIMEOUT
+            if "concat" in msg:
+                return ErrorCode.FFMPEG_CONCAT_FAIL
+            if "audio mix" in msg or "amix" in msg:
+                return ErrorCode.FFMPEG_AUDIO_MIX_FAIL
+            return ErrorCode.FFMPEG_FILTER_FAIL
+        return ErrorCode.UNKNOWN
 
     def _merge_unique_strings(items: list[str], limit: int = 12) -> list[str]:
         merged: list[str] = []
@@ -992,10 +1004,18 @@ def run_pipeline_v15(
 
             ass_path = settings.temp_dir / f"subs_{timestamp}.ass"
             subtitles_text = guion_tts if settings.subtitles_use_script_text else (story.scene_texts_joined() or guion_tts)
-            events = generate_timed_ass_from_text(subtitles_text, audio_duration, ass_path)
+            events = generate_subtitles_with_fallback(
+                audio_path=audio_path,
+                text=subtitles_text,
+                audio_duration=audio_duration,
+                ass_path=ass_path,
+                language="es",
+            )
             _add_decision(
                 "subtitles",
-                "Script-locked subtitles applied" if settings.subtitles_use_script_text else "Timed text subtitles applied",
+                "WhisperX word-by-word subtitles applied" if events > 0 and settings.use_whisperx else (
+                    "Script-locked subtitles applied" if settings.subtitles_use_script_text else "Timed text subtitles applied"
+                ),
                 f"events={events}",
             )
 
@@ -1185,12 +1205,13 @@ def run_pipeline_v15(
             )
 
             if render_error or not video_path:
+                render_error_code = _infer_render_error_code(render_backend, render_error)
                 # Self-healing attempt
                 fix = attempt_healing(
                     manifest, FailureType.RENDER, "render",
                     render_error or "No output",
                     json.dumps({"velocidad": velocidad}),
-                    error_code=ErrorCode.FFMPEG_FILTER_FAIL,
+                    error_code=render_error_code,
                 )
                 if fix:
                     try:
@@ -1222,11 +1243,12 @@ def run_pipeline_v15(
                         pass
 
                 if render_error or not video_path:
+                    final_render_error_code = _infer_render_error_code(render_backend, render_error)
                     _stage_end("render", "error", (render_error or "Render failed")[:180])
                     manifest.status = JobStatus.ERROR.value
                     manifest.error_stage = "render"
                     manifest.error_message = render_error or "Render failed"
-                    manifest.error_code = ErrorCode.FFMPEG_FILTER_FAIL.value
+                    manifest.error_code = final_render_error_code.value
                     state_mgr.save(manifest)
                     notify_error(manifest)
                     return manifest

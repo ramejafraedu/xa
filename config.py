@@ -170,6 +170,9 @@ class Settings(BaseSettings):
     # Remotion (premium renderer)
     use_remotion: bool = True
     force_ffmpeg_renderer: bool = False
+    # V16 policy: Remotion is mandatory by default; FFmpeg is emergency-only.
+    require_remotion: bool = True
+    allow_ffmpeg_fallback: bool = False
 
     # --- V16 rollout feature flags ---
     free_mode: bool = False
@@ -383,6 +386,8 @@ class Settings(BaseSettings):
             "allow_freemium_in_free_mode": self.allow_freemium_in_free_mode,
             "use_remotion": self.use_remotion,
             "force_ffmpeg_renderer": self.force_ffmpeg_renderer,
+            "require_remotion": self.require_remotion,
+            "allow_ffmpeg_fallback": self.allow_ffmpeg_fallback,
             "use_piper_tts": self.use_piper_tts,
             "use_google_tts": self.use_google_tts,
             "google_tts_effective_enabled": self.google_tts_effective_enabled(),

@@ -84,6 +84,68 @@ def _script_word_count(data: dict) -> int:
     return len(text.split())
 
 
+def _nicho_story_template_block(nicho_slug: str) -> str:
+    """Return a niche-specific long-form storytelling template block."""
+    slug = str(nicho_slug or "").strip().lower()
+    templates = {
+        "finanzas": (
+            "PLANTILLA_FINANZAS:\n"
+            "1) Error caro actual (situacion real)\n"
+            "2) Evidencia concreta (dato/ejemplo numerico)\n"
+            "3) Mecanismo oculto (por que ocurre)\n"
+            "4) Giro de accion (cambio de estrategia)\n"
+            "5) Mini plan de ejecucion en 2-3 pasos\n"
+            "6) Cierre con costo de inaccion"
+        ),
+        "historia": (
+            "PLANTILLA_HISTORIA:\n"
+            "1) Escena inicial cinematica (lugar/fecha/personaje)\n"
+            "2) Conflicto central\n"
+            "3) Evento detonante con detalle verificable\n"
+            "4) Consecuencia humana/politica\n"
+            "5) Giro final que recontextualiza lo anterior\n"
+            "6) Cierre: por que importa hoy"
+        ),
+        "historias_reddit": (
+            "PLANTILLA_HISTORIAS_REDDIT:\n"
+            "1) Setup humano (quien cuenta y por que duele)\n"
+            "2) Punto de no retorno\n"
+            "3) Escalada por capas (3 micro-revelaciones)\n"
+            "4) Climax emocional\n"
+            "5) Resolucion (consecuencia real)\n"
+            "6) Leccion accionable sin moralina"
+        ),
+        "curiosidades": (
+            "PLANTILLA_CURIOSIDADES:\n"
+            "1) Pregunta imposible o intuicion rota\n"
+            "2) Experimento mental corto\n"
+            "3) Explicacion cientifica simple\n"
+            "4) Caso real sorprendente\n"
+            "5) Aplicacion cotidiana\n"
+            "6) Cierre con nueva pregunta"
+        ),
+        "ia_herramientas": (
+            "PLANTILLA_IA_HERRAMIENTAS:\n"
+            "1) Dolor concreto del usuario\n"
+            "2) Herramienta y promesa realista\n"
+            "3) Flujo paso a paso (input > proceso > output)\n"
+            "4) Resultado medible (tiempo/dinero/calidad)\n"
+            "5) Error comun y como evitarlo\n"
+            "6) CTA para probar hoy"
+        ),
+    }
+    base = (
+        "PLANTILLA_BASE_HISTORIA_COMPLETA:\n"
+        "1) Contexto inicial\n"
+        "2) Conflicto\n"
+        "3) Desarrollo con evidencia\n"
+        "4) Giro\n"
+        "5) Payoff\n"
+        "6) Cierre accionable"
+    )
+    return templates.get(slug, base)
+
+
 class ScriptAgent:
     """Generate a structured, coherent script using prompt chaining."""
 
@@ -150,11 +212,13 @@ class ScriptAgent:
     def _generate_outline(self, state: StoryState, nicho: NichoConfig) -> str:
         """Step 1: Generate a narrative outline (not the full script)."""
         precedence_block = self._build_precedence_block(state, nicho)
+        niche_template = _nicho_story_template_block(getattr(nicho, "slug", ""))
 
         # V16: Load skills for hook and storytelling guidance
         skills_block = _build_skills_block(
             "script/hooks.md",
             "script/storytelling.md",
+            "script/niche_templates.md",
         )
 
         system = (
@@ -187,12 +251,14 @@ class ScriptAgent:
             f"TONO: {nicho.tono}\n"
             f"PLATAFORMA: {state.platform}\n"
             f"ESTILO: {nicho.estilo_narrativo}\n"
+            f"TEMPLATE_NICHO:\n{niche_template}\n"
             f"IDEAS_MANUALES_PRIORITARIAS: {' | '.join(state.manual_ideas[:6]) if state.manual_ideas else 'N/A'}\n"
             f"MEMORIA_LOCAL_NICHO: {' | '.join(state.niche_memory_entries[:6]) if state.niche_memory_entries else 'N/A'}\n"
             f"{precedence_block}\n"
             f"{research_ctx}\n"
             f"TRENDING: {state.research.trending_context_raw[:200]}\n\n"
-            f"Genera el OUTLINE del video aplicando los skills de storytelling."
+            "Genera el OUTLINE del video aplicando los skills de storytelling y la plantilla del nicho. "
+            "Debe ser una historia completa, no una lista de frases sueltas."
         )
 
         return self._call_llm(system, user, temperature=0.9)
@@ -214,6 +280,7 @@ class ScriptAgent:
         hook_rule = _hook_rules(platform, ab_variant)
         word_min, word_max, target_duration = _script_profile(platform)
         precedence_block = self._build_precedence_block(state, nicho)
+        niche_template = _nicho_story_template_block(getattr(nicho, "slug", ""))
 
         correction_block = ""
         if correction_notes:
@@ -239,6 +306,7 @@ EJEMPLO 2 (Finanzas/Éxito):
             "script/hooks.md",
             "script/storytelling.md",
             "script/structure.md",
+            "script/niche_templates.md",
         )
 
         system = f"""Eres head writer de videos faceless top 1%. Objetivo: CTR alto y retención brutal.
@@ -256,11 +324,14 @@ REGLAS MAESTRAS Y NEGATIVE PROMPTS (MANDATORIO):
 - PROHIBIDO: Estilo Wikipedia o ensayo escolar. Ve directo al problema, controversia o punto de fricción.
 - Gancho en <=1.8 segundos con polarización real. En los primeros 3s rompe una creencia popular.
 - Incluye un mini-climax antes del cierre: sube tension, revela giro y entrega payoff claro.
+- ESTRUCTURA OBLIGATORIA: sigue esta plantilla del nicho de inicio a fin:
+{niche_template}
 - Escribe 3 variantes de gancho: shock, pregunta, promesa.
 - Longitud OBLIGATORIA para {platform}: STRICTAMENTE entre {word_min} y {word_max} palabras. SI ES MÁS CORTO, SERÁ RECHAZADO.
 - Frases cortas de 5 a 12 palabras. Cliffhangers cada 8-10 segundos.
 - Usa conflicto, fricción y consecuencia directa. No seas genérico ("aplica esto a tu vida").
 - Incluir 2 a 4 muletillas humanas naturales (mira, o sea, seamos sinceros, la verdad es que).
+- Cada guion debe incluir al menos 1 ejemplo concreto con detalle verificable (fecha, numero, caso, estudio o evento puntual).
 - PROHIBIDO: No uses comillas dobles en los textos generados.
 - NO incluyas frases de despedida, ni pidas "like", ni pidas "guarda este video" en el campo guion. El guion debe terminar en el clímax narrativo. El campo cta es otra cosa.
 - Las 'palabras_clave' DEBEN ser traducciones a INTENCIONES VISUALES en INGLÉS (ej. "red stock chart falling", "person worried laptop"). NO repitas el guion literalmente.
