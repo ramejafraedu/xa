@@ -94,17 +94,25 @@ def fetch_stock_videos(
     """
     settings.ensure_dirs()
     index_file = settings.video_cache_dir / "index.json"
-    index_data = _load_cache_index(index_file)
+    
+    # V16.1: Skip cache if disabled for fresh content
+    if settings.disable_stock_cache or settings.force_fresh_assets:
+        logger.info("🔄 Stock cache disabled - fetching fresh videos from APIs")
+        index_data = {}
+        all_items = []
+    else:
+        index_data = _load_cache_index(index_file)
+        all_items = []
+    
     ttl_seconds = max(0, int(settings.media_cache_ttl_days)) * 86400
     now_ts = int(time.time())
 
-    all_items: list[dict] = []
     seen_paths = set()
     pexels_keys = settings.pexels_keys
     target_pool = max(num_needed, min(num_needed + 4, num_needed * 2))
     provider_counts: dict[str, int] = {}
 
-    # 1. First, check cache for all requested keywords
+    # 1. First, check cache for all requested keywords (skipped if cache disabled)
     for kw in keywords:
         kw_clean = kw.strip().lower()
         if kw_clean in index_data:
@@ -151,7 +159,8 @@ def fetch_stock_videos(
 
     # If cache already covers requested count, skip provider API calls.
     if len(all_items) >= num_needed:
-        _save_cache_index(index_file, index_data)
+        if not (settings.disable_stock_cache or settings.force_fresh_assets):
+            _save_cache_index(index_file, index_data)
         # Rotate items to provide variety across repeated searches
         rotated_items = _rotated_cache_items(all_items, target_pool)
         logger.info(f"Stock videos found: {len(rotated_items)} (needed: {num_needed}) [cache-only, rotated]")
@@ -219,7 +228,8 @@ def fetch_stock_videos(
                 _upsert_cache_entry(index_data[kw_clean], u["filename"], now_ts, provider)
 
     # Save index
-    _save_cache_index(index_file, index_data)
+    if not (settings.disable_stock_cache or settings.force_fresh_assets):
+        _save_cache_index(index_file, index_data)
 
     if provider_counts:
         composition = ", ".join(f"{k}:{v}" for k, v in sorted(provider_counts.items()))

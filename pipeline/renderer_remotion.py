@@ -52,8 +52,8 @@ def get_remotion_unavailability_reason() -> str:
         match = re.match(r"^v?(\d+)", node_version)
         if not match:
             return f"invalid Node.js version output: {node_version or 'unknown'}"
-        if int(match.group(1)) < 20:
-            return f"Node.js 20+ required (found {node_version})"
+        if int(match.group(1)) < 18:
+            return f"Node.js 18+ required (found {node_version})"
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return "Node.js not found in PATH"
     except Exception as exc:
@@ -663,9 +663,6 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
 
 def _to_file_uri(value: str) -> str:
     """Convert absolute local paths to URIs for Remotion assets.
-    
-    If the file is inside the workspace, we return a relative path
-    starting with 'workspace/' so Remotion can use it via staticFile().
     """
     src = (value or "").strip()
     if not src:
@@ -674,14 +671,14 @@ def _to_file_uri(value: str) -> str:
     lowered = src.lower()
     if lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("data:"):
         return src
+    if lowered.startswith("file://"):
+        return src
     
-    # Resolve to absolute path
+    # Resolve to absolute local path. CinematicRenderer converts absolute
+    # paths into file:// URIs, avoiding fragile staticFile(public/workspace)
+    # lookups that can fail in bundled render temp dirs.
     try:
         path = Path(src).resolve()
-        workspace_dir = settings.workspace.resolve()
-        if path.is_relative_to(workspace_dir):
-            rel = path.relative_to(workspace_dir.parent)
-            return str(rel).replace("\\", "/")
         return str(path)
     except Exception:
         return src
