@@ -1,0 +1,31 @@
+{
+	"short_watermark": {
+		"inputs":{
+			"parameters": ["text"]
+		},
+		"type": "text",
+		"z": 3,
+		"parameters": {
+			"text": null,
+			"font_size": 100,
+			"font": "fonts/LuckiestGuy-Regular.ttf",
+			"color": "white",
+			"stroke_width": 1,
+			"stroke_color": "black",
+			"method": "caption",
+			"size":[900, 450]
+		},
+		"actions": [
+			{
+				"type": "screen_position",
+				"param": {
+					"pos": [
+						"center",
+						0.7
+					],
+					"relative": true
+				}
+			}
+		]
+	}
+}
