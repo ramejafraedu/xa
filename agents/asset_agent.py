@@ -93,6 +93,7 @@ class AssetAgent:
         """
         t0 = time.time()
         selector = ProviderSelector()
+        overrides = runtime_overrides or {}
         
         # Load playbook for niche (V16 Playbook System)
         playbook = None
@@ -109,12 +110,37 @@ class AssetAgent:
             "sfx_paths": [],
             "provider_orders": {},
             "provider_sources": {},
+            "ab_visual_split": {},
         }
+
+        ab_split_enabled = bool(overrides.get("ab_visual_split_enabled", settings.enable_ab_visual_split))
+        try:
+            ab_multiplier = int(overrides.get("ab_visual_multiplier", settings.ab_visual_split_multiplier))
+        except (TypeError, ValueError):
+            ab_multiplier = int(settings.ab_visual_split_multiplier)
+        ab_multiplier = max(2, min(3, ab_multiplier))
 
         # --- 1. Stock fallback for uncovered scenes ---
         clips_needed = nicho.num_clips
+        if ab_split_enabled:
+            scene_count = len(state.scenes) if state.scenes else max(1, nicho.num_clips)
+            base_clip_count = max(nicho.num_clips, scene_count)
+            # Fetch base_clip_count * ab_multiplier so we can split them
+            clips_needed = max(clips_needed, base_clip_count * ab_multiplier)
+            results["ab_visual_split"] = {
+                "enabled": True,
+                "multiplier": ab_multiplier,
+                "target_clips": clips_needed,
+            }
+        else:
+            results["ab_visual_split"] = {"enabled": False, "multiplier": 1, "target_clips": clips_needed}
         stock_candidates = strict_free_candidates(["pexels", "pixabay", "coverr"], usage="media")
         stock_order = selector.get_provider_order("stock_video", stock_candidates)
+        stock_order = self._merge_order_override(
+            stock_order,
+            stock_candidates,
+            overrides.get("provider_order_stock_video"),
+        )
         results["provider_orders"]["stock_video"] = stock_order
 
         if clips_needed > 0:
@@ -149,6 +175,11 @@ class AssetAgent:
         if not image_candidates:
             image_candidates = ["pixabay", "pollinations"]
         image_order = selector.get_provider_order("image_generation", image_candidates)
+        image_order = self._merge_order_override(
+            image_order,
+            image_candidates,
+            overrides.get("provider_order_image_generation"),
+        )
         results["provider_orders"]["image_generation"] = image_order
 
         image_payload = self._with_backoff(
@@ -166,6 +197,9 @@ class AssetAgent:
             max_attempts=2,
         )
         results["images"], image_stats = image_payload
+        if results["ab_visual_split"].get("enabled"):
+            results["ab_visual_split"]["generated_images"] = len(results["images"])
+            results["ab_visual_split"]["fetched_stock_clips"] = len(results["stock_clips"])
 
         if settings.enable_openmontage_free_tools and settings.openmontage_enable_enhancement:
             results["images"] = self._enhance_images_openmontage(results["images"], temp_dir, timestamp)
@@ -181,6 +215,11 @@ class AssetAgent:
         if settings.suno_api_key and settings.use_suno_music and "suno" not in music_candidates:
             music_candidates.insert(0, "suno")
         music_order = selector.get_provider_order("music_generation", music_candidates)
+        music_order = self._merge_order_override(
+            music_order,
+            music_candidates,
+            overrides.get("provider_order_music_generation"),
+        )
         results["provider_orders"]["music_generation"] = music_order
 
         music_payload = self._with_backoff(
@@ -617,7 +656,19 @@ class AssetAgent:
                 image_count = int(overrides.get("generated_images_count", settings.generated_images_count))
             except (TypeError, ValueError):
                 image_count = int(settings.generated_images_count)
-            image_count = max(4, min(10, image_count))
+
+            ab_split_enabled = bool(overrides.get("ab_visual_split_enabled", settings.enable_ab_visual_split))
+            try:
+                ab_multiplier = int(overrides.get("ab_visual_multiplier", settings.ab_visual_split_multiplier))
+            except (TypeError, ValueError):
+                ab_multiplier = int(settings.ab_visual_split_multiplier)
+            ab_multiplier = max(2, min(3, ab_multiplier))
+
+            if ab_split_enabled:
+                image_count *= ab_multiplier
+
+            max_images = 16 if ab_split_enabled else 10
+            image_count = max(4, min(max_images, image_count))
 
             images, stats = generate_images_with_stats(
                 prompt_base,
@@ -685,8 +736,8 @@ class AssetAgent:
             pass
 
         try:
-            from pipeline.music import fetch_music
-            ok, source = fetch_music(mood, music_path)
+            from pipeline.music import fetch_music_by_order
+            ok, source = fetch_music_by_order(mood, music_path, provider_order=provider_order)
             if music_path.exists() and music_path.stat().st_size > 1000:
                 return music_path, source if ok else "none"
         except Exception as e:
@@ -754,3 +805,40 @@ class AssetAgent:
                 return result
 
         return result
+
+    @staticmethod
+    def _normalize_provider_order_override(order: object) -> list[str]:
+        if not isinstance(order, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in order:
+            provider = str(item or "").strip().lower()
+            if not provider or provider in seen:
+                continue
+            seen.add(provider)
+            normalized.append(provider)
+        return normalized
+
+    def _merge_order_override(
+        self,
+        current_order: list[str],
+        allowed_candidates: list[str],
+        override: object,
+    ) -> list[str]:
+        preferred = self._normalize_provider_order_override(override)
+        if not preferred:
+            return current_order
+
+        allowed = {str(x).strip().lower() for x in allowed_candidates if str(x).strip()}
+        merged: list[str] = []
+        seen: set[str] = set()
+
+        for provider in preferred + current_order:
+            name = str(provider or "").strip().lower()
+            if not name or name in seen or name not in allowed:
+                continue
+            seen.add(name)
+            merged.append(name)
+
+        return merged or current_order

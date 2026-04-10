@@ -16,6 +16,7 @@ from loguru import logger
 
 from config import settings
 from core.state import ResearchBrief, StoryState
+from core.subtopic_manager import get_subtopic_manager
 from models.config_models import NichoConfig
 from services.llm_router import call_llm_primary_gemini
 
@@ -121,6 +122,9 @@ class ResearchAgent:
                 memoria = f"MEMORIA_LOCAL: {local_memory}"
 
         recent_topics = self._extract_recent_topics(memoria, state)
+        recent_subtopics = self._load_recent_subtopics(state.nicho_slug)
+        if recent_subtopics:
+            recent_topics = self._merge_unique(recent_subtopics + recent_topics)[:18]
         if recent_topics:
             brief.avoid_topics = self._merge_unique(brief.avoid_topics + recent_topics[:14])
 
@@ -471,3 +475,18 @@ class ResearchAgent:
                     candidates.append(piece)
 
         return cls._merge_unique(candidates)[: max(1, int(limit))]
+
+    @staticmethod
+    def _load_recent_subtopics(nicho_slug: str, limit: int = 12) -> list[str]:
+        """Load structured subtopic history recorded by the pipeline for this niche."""
+        slug = str(nicho_slug or "").strip()
+        if not slug:
+            return []
+
+        try:
+            subtopic_mgr = get_subtopic_manager()
+            used = subtopic_mgr.get_used_subtopics(slug)
+            return [str(item).strip() for item in used[: max(1, int(limit))] if str(item).strip()]
+        except Exception as exc:
+            logger.debug(f"Subtopic history load failed for {slug}: {exc}")
+            return []

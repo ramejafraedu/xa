@@ -63,6 +63,7 @@ def generate_tts(
     subs_vtt_path: Optional[Path] = None,
     enforce_provider_policy: bool = True,
     sync_subtitles: bool = True,  # NEW: Enable subtitle synchronization
+    provider_order: Optional[list[str]] = None,
 ) -> tuple[bool, str]:
     """Generate TTS audio. Returns (success, engine_used).
 
@@ -90,6 +91,7 @@ def generate_tts(
         )
 
     cascade = _get_tts_cascade()
+    provider_scores = _build_tts_provider_scores(provider_order, strict_free)
 
     # Define simple callable wrappers for each provider
     def wrap_piper():
@@ -112,7 +114,7 @@ def generate_tts(
         "piper",
         wrap_piper,
         tier="free",
-        base_score=100.0 if strict_free else 60.0,
+        base_score=provider_scores["piper"],
         enabled=settings.use_piper_tts
     )
 
@@ -125,7 +127,7 @@ def generate_tts(
         "elevenlabs",
         wrap_elevenlabs,
         tier="premium",
-        base_score=90.0,
+        base_score=provider_scores["elevenlabs"],
         enabled=bool(settings.elevenlabs_api_key) and eleven_allowed
     )
 
@@ -138,7 +140,7 @@ def generate_tts(
         "google_tts",
         wrap_google_tts,
         tier="premium",
-        base_score=85.0,
+        base_score=provider_scores["google_tts"],
         enabled=settings.use_google_tts and google_tts_allowed,
     )
 
@@ -151,7 +153,7 @@ def generate_tts(
         "gemini",
         wrap_gemini,
         tier="freemium",
-        base_score=80.0,
+        base_score=provider_scores["gemini"],
         enabled=bool(settings.get_gemini_keys()) and gemini_allowed
     )
 
@@ -160,11 +162,11 @@ def generate_tts(
         "edge-tts",
         wrap_edge,
         tier="free",
-        base_score=70.0,
+        base_score=provider_scores["edge-tts"],
         enabled=not _edge_is_temporarily_disabled()
     )
 
-    result = cascade.execute()
+    result = cascade.execute(provider_order=provider_order)
 
     if result.success:
         # Subtitles synchronization step
@@ -178,6 +180,44 @@ def generate_tts(
     
     logger.warning(f"All TTS providers failed: {result.error}")
     return False, "none"
+
+
+def _normalize_tts_provider(name: object) -> str:
+    value = str(name or "").strip().lower()
+    aliases = {
+        "edge_tts": "edge-tts",
+        "edge": "edge-tts",
+        "piper_tts": "piper",
+    }
+    return aliases.get(value, value)
+
+
+def _build_tts_provider_scores(provider_order: Optional[list[str]], strict_free: bool) -> dict[str, float]:
+    default_order = ["piper", "edge-tts", "gemini", "google_tts", "elevenlabs"]
+    if not strict_free:
+        default_order = ["elevenlabs", "google_tts", "gemini", "edge-tts", "piper"]
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for provider in (provider_order or []) + default_order:
+        normalized = _normalize_tts_provider(provider)
+        if normalized not in {"piper", "edge-tts", "gemini", "google_tts", "elevenlabs"}:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        merged.append(normalized)
+
+    # Highest-priority provider gets highest base score.
+    total = len(merged)
+    scores: dict[str, float] = {}
+    for idx, provider in enumerate(merged):
+        scores[provider] = float((total - idx) * 10)
+
+    for provider in ["piper", "edge-tts", "gemini", "google_tts", "elevenlabs"]:
+        scores.setdefault(provider, 10.0)
+
+    return scores
 
 
 def _generate_tts_legacy(

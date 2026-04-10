@@ -376,6 +376,77 @@ def _clean_manifest_for_save(manifest: dict) -> dict:
     return {k: v for k, v in manifest.items() if not str(k).startswith("_")}
 
 
+def _extract_ab_visual_split(manifest: dict) -> dict:
+    """Build a normalized A/B visual split snapshot from manifest + decision trail."""
+    summary: dict = {}
+
+    direct = manifest.get("ab_visual_split")
+    if isinstance(direct, dict):
+        summary.update(direct)
+
+    decision_events = []
+    trail = manifest.get("decision_trail")
+    if isinstance(trail, list):
+        for item in trail:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            split_meta = metadata.get("ab_visual_split")
+            if isinstance(split_meta, dict):
+                summary.update(split_meta)
+                decision_events.append(
+                    {
+                        "label": str(item.get("label", "") or ""),
+                        "detail": str(item.get("detail", "") or "")[:220],
+                        "timestamp": int(item.get("timestamp", 0) or 0),
+                        "severity": str(item.get("severity", "info") or "info"),
+                    }
+                )
+
+    enabled = bool(summary.get("enabled", False))
+    try:
+        multiplier = int(summary.get("multiplier", 1) or 1)
+    except (TypeError, ValueError):
+        multiplier = 1
+
+    try:
+        target_clips = int(summary.get("target_clips", 0) or 0)
+    except (TypeError, ValueError):
+        target_clips = 0
+
+    try:
+        fetched_stock_clips = int(
+            summary.get("fetched_stock_clips", summary.get("stock_clips", 0)) or 0
+        )
+    except (TypeError, ValueError):
+        fetched_stock_clips = 0
+
+    try:
+        generated_images = int(summary.get("generated_images", summary.get("images", 0)) or 0)
+    except (TypeError, ValueError):
+        generated_images = 0
+
+    try:
+        requested_images_count = int(summary.get("requested_images_count", 0) or 0)
+    except (TypeError, ValueError):
+        requested_images_count = 0
+
+    return {
+        "enabled": enabled,
+        "multiplier": multiplier,
+        "target_clips": target_clips,
+        "fetched_stock_clips": fetched_stock_clips,
+        "generated_images": generated_images,
+        "runtime_override_enabled": bool(summary.get("runtime_override_enabled", False)),
+        "runtime_override_multiplier": bool(summary.get("runtime_override_multiplier", False)),
+        "requested_images_count": requested_images_count,
+        "decision_events": sorted(decision_events, key=lambda x: x.get("timestamp", 0)),
+        "raw": summary,
+    }
+
+
 # ---------------------------------------------------------------------------
 # ffprobe helper (FREE — local FFmpeg)
 # ---------------------------------------------------------------------------
@@ -1076,6 +1147,18 @@ async def list_jobs(limit: int = 30, offset: int = 0):
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
 
+    def _ab_fields(data: dict) -> dict:
+        split = _extract_ab_visual_split(data)
+        return {
+            "ab_visual_split": {
+                "enabled": bool(split.get("enabled", False)),
+                "multiplier": int(split.get("multiplier", 1) or 1),
+                "target_clips": int(split.get("target_clips", 0) or 0),
+                "fetched_stock_clips": int(split.get("fetched_stock_clips", 0) or 0),
+                "generated_images": int(split.get("generated_images", 0) or 0),
+            }
+        }
+
     def _publish_fields(data: dict) -> dict:
         hashtags = data.get("publish_hashtags", [])
         if isinstance(hashtags, str):
@@ -1111,6 +1194,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
             j["reference_avg_cut_seconds"] = manifest.get("reference_avg_cut_seconds", 0.0)
             j["cost_actual_usd"] = manifest.get("cost_actual_usd", 0.0)
             j.update(_publish_fields(manifest))
+            j.update(_ab_fields(manifest))
         jobs.append(j)
 
     # Check output for completed
@@ -1142,6 +1226,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
                     "render_backend": data.get("render_backend", ""),
                     **_publish_fields(data),
+                    **_ab_fields(data),
                     "source": "output",
                 })
             except Exception:
@@ -1170,6 +1255,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
                     "render_backend": data.get("render_backend", ""),
                     **_publish_fields(data),
+                    **_ab_fields(data),
                     "source": "review",
                 })
             except Exception:
@@ -1323,8 +1409,26 @@ async def job_detail(job_id: str):
 
     # Add decision audit trail
     manifest["decision_trail"] = _get_decision_trail(manifest)
+    manifest["ab_visual_split"] = _extract_ab_visual_split(manifest)
 
     return manifest
+
+
+@app.get("/api/jobs/{job_id}/ab-visual-split")
+async def job_ab_visual_split(job_id: str):
+    """Return A/B visual split diagnostics for one job."""
+    manifest = _load_manifest_by_job_id(job_id)
+    if not manifest:
+        return {"error": f"Job {job_id} not found"}
+
+    split = _extract_ab_visual_split(manifest)
+    return {
+        "job_id": job_id,
+        "status": manifest.get("status", ""),
+        "nicho": manifest.get("nicho_slug", ""),
+        "ab_visual_split": split,
+        "decision_trail": _get_decision_trail(manifest),
+    }
 
 
 @app.get("/api/jobs/{job_id}/analysis")
@@ -1342,6 +1446,7 @@ async def job_analysis(job_id: str):
         "job_id": job_id,
         "video_path": video_path,
         "video_exists": bool(video_path and Path(video_path).exists()),
+        "ab_visual_split": _extract_ab_visual_split(manifest),
         "ffprobe": probe_data,
         "thumbnail": thumbnail,
         "render_backend": manifest.get("render_backend", ""),
@@ -1597,6 +1702,10 @@ async def operations_config():
         "prefer_stock_images": bool(settings.prefer_stock_images),
         "enable_image_cache": bool(settings.enable_image_cache),
         "generated_images_count": int(settings.generated_images_count),
+        "enable_ab_visual_split": bool(settings.enable_ab_visual_split),
+        "ab_visual_split_multiplier": int(settings.ab_visual_split_multiplier),
+        "enable_smart_silence_trim": bool(settings.enable_smart_silence_trim),
+        "enable_post_tts_loudnorm": bool(settings.enable_post_tts_loudnorm),
         "media_cache_ttl_days": int(settings.media_cache_ttl_days),
         "feature_flags": settings.active_feature_flags(),
     }
@@ -1652,6 +1761,33 @@ async def operations_config_update(payload: dict = Body(...)):
             env_updates["GENERATED_IMAGES_COUNT"] = str(value)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="generated_images_count must be an integer")
+
+    if "enable_ab_visual_split" in payload:
+        value = _as_bool(payload.get("enable_ab_visual_split"), default=settings.enable_ab_visual_split)
+        settings.enable_ab_visual_split = value
+        updates["enable_ab_visual_split"] = value
+        env_updates["ENABLE_AB_VISUAL_SPLIT"] = "true" if value else "false"
+
+    if "ab_visual_split_multiplier" in payload:
+        try:
+            value = max(2, min(3, int(payload.get("ab_visual_split_multiplier"))))
+            settings.ab_visual_split_multiplier = value
+            updates["ab_visual_split_multiplier"] = value
+            env_updates["AB_VISUAL_SPLIT_MULTIPLIER"] = str(value)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="ab_visual_split_multiplier must be an integer")
+
+    if "enable_smart_silence_trim" in payload:
+        value = _as_bool(payload.get("enable_smart_silence_trim"), default=settings.enable_smart_silence_trim)
+        settings.enable_smart_silence_trim = value
+        updates["enable_smart_silence_trim"] = value
+        env_updates["ENABLE_SMART_SILENCE_TRIM"] = "true" if value else "false"
+
+    if "enable_post_tts_loudnorm" in payload:
+        value = _as_bool(payload.get("enable_post_tts_loudnorm"), default=settings.enable_post_tts_loudnorm)
+        settings.enable_post_tts_loudnorm = value
+        updates["enable_post_tts_loudnorm"] = value
+        env_updates["ENABLE_POST_TTS_LOUDNORM"] = "true" if value else "false"
 
     if "media_cache_ttl_days" in payload:
         try:

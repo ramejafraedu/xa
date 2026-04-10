@@ -1,1 +1,1 @@
-"""Video generation, editing, and caption burning tools."""
+"""Video tools — generation providers, composition, stitching, and trimming."""

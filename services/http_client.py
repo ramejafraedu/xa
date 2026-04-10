@@ -159,6 +159,23 @@ def _safe_log_url(url: str) -> str:
     return masked[:120]
 
 
+def _is_unresolvable_host_error(exc: BaseException) -> bool:
+    """True if the error is DNS / unknown hostname (retries won't help)."""
+    msg = str(exc).lower()
+    if "name or service not known" in msg:
+        return True
+    if "nodename nor servname provided, or not known" in msg:
+        return True
+    if "getaddrinfo failed" in msg:
+        return True
+    if "[errno -2]" in msg or "errno -2" in msg:
+        return True
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None and cause is not exc:
+        return _is_unresolvable_host_error(cause)
+    return False
+
+
 def request_with_retry(
     method: str,
     url: str,
@@ -241,9 +258,14 @@ def request_with_retry(
 
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
             last_error = e
+            _breaker.record_failure(url)
+            if _is_unresolvable_host_error(e):
+                logger.warning(
+                    f"Connection error (host/DNS no resuelto, sin reintentos): {_safe_log_url(url)} — {e}"
+                )
+                raise e
             wait = backoff_base ** attempt + random.uniform(0, 1)
             logger.warning(f"Connection error: {e}. Waiting {wait:.1f}s. [{attempt}/{max_retries}]")
-            _breaker.record_failure(url)
             time.sleep(wait)
 
     # All retries exhausted

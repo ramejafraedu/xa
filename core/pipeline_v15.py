@@ -46,13 +46,16 @@ from config import NICHOS, app_config, settings
 from core.cost_governance import CostGovernance
 from core.director import CheckpointResult, Director, DirectorMode
 from core.feedback_loop import review_content, should_iterate
+from core.gemini_control_plane import get_gemini_control_plane
 from core.openmontage_free import (
-    apply_auto_reframe,
-    apply_color_grade,
-    apply_playbook_to_story,
-    apply_video_trim,
+    strict_free_candidates,
+    apply_bg_remove,
+    apply_upscale,
+    apply_face_restore,
 )
+from tools.tool_registry import ToolRegistry
 from core.reference_context import load_reference_context
+from core.subtopic_manager import get_subtopic_manager
 from core.state import StoryState, get_style_for_platform
 from models.content import (
     BlockScores,
@@ -131,6 +134,7 @@ def run_pipeline_v15(
         JobManifest with full audit trail.
     """
     from pipeline.tts_engine import generate_tts, get_audio_duration
+    from pipeline.audio_trim_smart import apply_post_tts_audio_processing
     from pipeline.subtitles_whisperx import generate_subtitles_with_fallback
     from pipeline.quality_gate import validate_and_score
     from pipeline.self_healer import attempt_healing
@@ -153,6 +157,28 @@ def run_pipeline_v15(
     job_id = f"{nicho_slug}_{timestamp}"
     director = Director(mode, job_id=job_id)
     state_mgr = StateManager(settings.temp_dir)
+    
+    # Initialize OpenMontage cost tracker
+    state_mgr.initialize_cost_tracker(
+        budget=float(settings.daily_budget_usd),
+        mode_str="warn"
+    )
+
+    # V16: Initialize Tool Registry
+    registry = ToolRegistry()
+    try:
+        from tools import video, audio, graphics, subtitle, enhancement, analysis, avatar, publishers
+        registry.register_module(video)
+        registry.register_module(audio)
+        registry.register_module(graphics)
+        registry.register_module(subtitle)
+        registry.register_module(enhancement)
+        registry.register_module(analysis)
+        registry.register_module(avatar)
+        registry.register_module(publishers)
+        logger.info(f"🔧 Loaded {len(registry._tools)} tools from OpenMontage suite")
+    except ImportError as e:
+        logger.warning(f"Failed to load some tools: {e}")
 
     manifest = JobManifest(
         job_id=job_id,
@@ -178,8 +204,27 @@ def run_pipeline_v15(
         "media_cache_ttl_days",
         "enable_image_cache",
         "disable_image_cache",
+        "ab_visual_split_enabled",
+        "ab_visual_multiplier",
+        "provider_order_stock_video",
+        "provider_order_image_generation",
+        "provider_order_music_generation",
+        "provider_order_tts",
     }
     runtime_overrides = {k: v for k, v in runtime_overrides.items() if k in allowed_override_keys}
+    try:
+        baseline_ab_multiplier = int(
+            runtime_overrides.get("ab_visual_multiplier", settings.ab_visual_split_multiplier)
+        )
+    except (TypeError, ValueError):
+        baseline_ab_multiplier = int(settings.ab_visual_split_multiplier)
+    manifest.ab_visual_split = {
+        "enabled": bool(runtime_overrides.get("ab_visual_split_enabled", settings.enable_ab_visual_split)),
+        "multiplier": max(2, min(3, baseline_ab_multiplier)),
+        "runtime_override_enabled": "ab_visual_split_enabled" in runtime_overrides,
+        "runtime_override_multiplier": "ab_visual_multiplier" in runtime_overrides,
+        "requested_images_count": runtime_overrides.get("generated_images_count", settings.generated_images_count),
+    }
     manifest.manual_ideas = manual_idea_lines
     manifest.niche_memory_snapshot = niche_memory_lines
     manifest.reference_url = (reference_url or "").strip()
@@ -381,6 +426,7 @@ def run_pipeline_v15(
                 "clip_count": len(manifest.clip_paths),
                 "image_count": len(manifest.image_paths),
                 "sfx_count": len(manifest.sfx_paths),
+                "ab_visual_split": manifest.ab_visual_split,
             }
         elif stage_key == "tts":
             artifacts["audio"] = {
@@ -467,6 +513,8 @@ def run_pipeline_v15(
             json.dumps(runtime_overrides, ensure_ascii=False)[:220],
             metadata={"runtime_overrides": runtime_overrides},
         )
+
+    control_plane_plan: dict[str, object] = {}
 
     # Agents
     research_agent = ResearchAgent()
@@ -599,6 +647,50 @@ def run_pipeline_v15(
                 )
                 script_feedback_notes = result.notes if hasattr(result, "notes") else ""
                 script_approved = result.approved
+
+                # V16.1: subtema no repetido (solo tras aprobación del director; continue pertenece a este while)
+                if script_approved and settings.force_subtopic_variety:
+                    subtopic_mgr = get_subtopic_manager()
+                    angle_candidate = ""
+                    if story.research and story.research.recommended_angles:
+                        angle_candidate = str(story.research.recommended_angles[0] or "").strip()
+
+                    script_seed = ""
+                    if story.script_full:
+                        script_seed = str(story.script_full).strip().split("\n", 1)[0][:140]
+
+                    candidate_parts = [
+                        angle_candidate,
+                        str(story.hook or "").strip(),
+                        script_seed,
+                    ]
+                    subtopic_candidate = " | ".join(part for part in candidate_parts if part)
+                    if not subtopic_candidate:
+                        subtopic_candidate = story.topic or "sin-subtema"
+
+                    is_duplicate, similarity = subtopic_mgr.is_subtopic_used(
+                        nicho_slug, subtopic_candidate
+                    )
+
+                    if is_duplicate:
+                        logger.warning(
+                            f"🔄 Subtema repetido detectado (similitud: {similarity:.2f}). "
+                            f"Regenerando con instrucciones de variedad..."
+                        )
+                        script_feedback_notes = (
+                            f"SUBTEMA REPETIDO (similitud {similarity:.0%}). "
+                            f"Elige un tema COMPLETAMENTE DIFERENTE. "
+                            f"Historial reciente: {subtopic_mgr.get_used_subtopics(nicho_slug)[:3]}"
+                        )
+                        script_approved = False
+                        continue
+
+                    subtopic_mgr.record_subtopic(
+                        nicho_slug=nicho_slug,
+                        subtopic=subtopic_candidate,
+                        video_id=manifest.job_id,
+                    )
+                    logger.info(f"✅ Subtema registrado: {subtopic_candidate[:80]}...")
 
             if not script_approved:
                 _stage_end("content_gen", "error", "Script not approved after retries")
@@ -814,21 +906,82 @@ def run_pipeline_v15(
                 notify_error(manifest)
                 return manifest
 
+            if settings.gemini_control_plane_enabled and settings.provider_selector_enabled:
+                try:
+                    requested_images = runtime_overrides.get("generated_images_count", settings.generated_images_count)
+                    requested_images = max(4, min(10, int(requested_images)))
+                    ab_split_enabled = bool(
+                        runtime_overrides.get("ab_visual_split_enabled", settings.enable_ab_visual_split)
+                    )
+                    try:
+                        ab_multiplier = int(
+                            runtime_overrides.get("ab_visual_multiplier", settings.ab_visual_split_multiplier)
+                        )
+                    except (TypeError, ValueError):
+                        ab_multiplier = int(settings.ab_visual_split_multiplier)
+                    if ab_split_enabled:
+                        requested_images = max(4, min(16, requested_images * max(2, min(3, ab_multiplier))))
+
+                    control_plane_plan = get_gemini_control_plane().plan_media(
+                        script_text=" ".join(filter(None, [manifest.gancho, manifest.guion, manifest.cta])) or story.script_full,
+                        execution_mode=manifest.execution_mode,
+                        image_count=requested_images,
+                        music_count=1,
+                    )
+                    for decision_event in control_plane_plan.get("decisions", []):
+                        if not isinstance(decision_event, dict):
+                            continue
+                        _add_decision(
+                            decision_event.get("stage", "policy"),
+                            decision_event.get("label", "Control plane decision"),
+                            decision_event.get("detail", ""),
+                            decision_event.get("severity", "info"),
+                            decision_event.get("metadata", {}),
+                        )
+                except Exception as cp_exc:
+                    _add_decision(
+                        "policy",
+                        "Gemini control plane skipped",
+                        str(cp_exc)[:180],
+                        severity="warning",
+                    )
+
+            stage_runtime_overrides = dict(runtime_overrides)
+            if settings.gemini_control_plane_enabled and settings.gemini_control_plane_enforce_orders:
+                for key in (
+                    "provider_order_stock_video",
+                    "provider_order_image_generation",
+                    "provider_order_music_generation",
+                    "provider_order_tts",
+                ):
+                    value = control_plane_plan.get(key)
+                    if isinstance(value, list) and value:
+                        stage_runtime_overrides[key] = value
+
             assets = asset_agent.run(
                 story,
                 nicho,
                 timestamp,
                 settings.temp_dir,
-                runtime_overrides=runtime_overrides,
+                runtime_overrides=stage_runtime_overrides,
             )
 
             stock_urls = assets.get("stock_clips", [])
             images = assets.get("images", [])
             music_path = assets.get("music_path")
             sfx_paths = assets.get("sfx_paths", [])
+            ab_visual_split = assets.get("ab_visual_split", {})
 
             manifest.image_paths = [str(p) for p in images]
             manifest.sfx_paths = [str(p) for p in sfx_paths]
+            if isinstance(ab_visual_split, dict):
+                merged_ab_split = dict(manifest.ab_visual_split or {})
+                merged_ab_split.update(ab_visual_split)
+                merged_ab_split["stock_clips"] = len(stock_urls)
+                merged_ab_split["images"] = len(images)
+                manifest.ab_visual_split = merged_ab_split
+            else:
+                manifest.ab_visual_split = dict(manifest.ab_visual_split or {})
 
             # Checkpoint: assets
             asset_summary = (
@@ -837,6 +990,11 @@ def run_pipeline_v15(
                 f"🎵 Music: {'✅' if music_path else '❌'}\n"
                 f"🔊 SFX: {len(sfx_paths)}"
             )
+            if isinstance(ab_visual_split, dict) and ab_visual_split.get("enabled"):
+                asset_summary += (
+                    f"\n🧩 A/B split: x{ab_visual_split.get('multiplier', 2)}"
+                    f" | target clips={ab_visual_split.get('target_clips', len(stock_urls))}"
+                )
             result = director.checkpoint("assets", asset_summary, story)
 
             assets_actual = 0.0 if manifest.execution_mode == "free" else est_assets
@@ -874,6 +1032,7 @@ def run_pipeline_v15(
                 "media",
                 f"Media selected: {len(clips)} clips, {len(images)} images",
                 f"music={'yes' if music_path else 'no'}",
+                metadata={"ab_visual_split": manifest.ab_visual_split},
             )
             progress.advance(main_task)
 
@@ -890,6 +1049,9 @@ def run_pipeline_v15(
                 preferred_tts_provider = "gemini"
             else:
                 preferred_tts_provider = "edge_tts"
+            tts_provider_order = stage_runtime_overrides.get("provider_order_tts", [])
+            if isinstance(tts_provider_order, list) and tts_provider_order:
+                preferred_tts_provider = str(tts_provider_order[0]).replace("-", "_")
             allowed_tts, reason_tts, _ = cost_governance.reserve_stage(
                 "tts",
                 provider=preferred_tts_provider,
@@ -922,6 +1084,7 @@ def run_pipeline_v15(
                 rate_tts=nicho.rate_tts,
                 pitch_tts=nicho.pitch_tts,
                 subs_vtt_path=vtt_path,
+                provider_order=tts_provider_order if isinstance(tts_provider_order, list) else None,
             )
 
             if not tts_ok:
@@ -948,6 +1111,7 @@ def run_pipeline_v15(
                         rate_tts=nicho.rate_tts,
                         pitch_tts=nicho.pitch_tts,
                         subs_vtt_path=vtt_path,
+                        provider_order=["edge-tts", "piper", "gemini", "google_tts", "elevenlabs"],
                     )
 
                 # Last-resort reliability fallback:
@@ -966,6 +1130,7 @@ def run_pipeline_v15(
                         pitch_tts=nicho.pitch_tts,
                         subs_vtt_path=vtt_path,
                         enforce_provider_policy=False,
+                        provider_order=["gemini", "edge-tts", "google_tts", "piper", "elevenlabs"],
                     )
                     if tts_ok:
                         _add_decision(
@@ -983,6 +1148,21 @@ def run_pipeline_v15(
                     state_mgr.save(manifest)
                     notify_error(manifest)
                     return manifest
+
+            processed_audio_path, audio_steps = apply_post_tts_audio_processing(
+                audio_path=audio_path,
+                timestamp=timestamp,
+                temp_dir=settings.temp_dir,
+            )
+            if processed_audio_path != audio_path:
+                audio_path = processed_audio_path
+            if audio_steps:
+                _add_decision(
+                    "tts",
+                    "Post-TTS audio processing applied",
+                    ", ".join(audio_steps),
+                    metadata={"audio_processing_steps": audio_steps},
+                )
 
             manifest.audio_path = str(audio_path)
             manifest.tts_engine_used = tts_engine

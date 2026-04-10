@@ -149,7 +149,7 @@ class ProviderCascade:
 
     # ── Execution ────────────────────────────────────────────────────────
 
-    def execute(self, **kwargs: Any) -> CascadeResult:
+    def execute(self, provider_order: Optional[list[str]] = None, **kwargs: Any) -> CascadeResult:
         """Execute the cascade: try providers in score order until one succeeds.
 
         All keyword arguments are forwarded to each provider's callable_fn.
@@ -157,7 +157,7 @@ class ProviderCascade:
         Returns:
             CascadeResult with success status, provider name, and result.
         """
-        ordered = self._get_ordered_providers()
+        ordered = self._get_ordered_providers(provider_order=provider_order)
         if not ordered:
             return CascadeResult(
                 success=False,
@@ -232,10 +232,24 @@ class ProviderCascade:
 
     # ── Scoring ──────────────────────────────────────────────────────────
 
-    def _get_ordered_providers(self) -> list[ProviderEntry]:
-        """Return enabled providers sorted by score (descending)."""
+    def _get_ordered_providers(self, provider_order: Optional[list[str]] = None) -> list[ProviderEntry]:
+        """Return enabled providers sorted by preferred order or score."""
         with self._lock:
             active = [p for p in self._providers.values() if p.enabled]
+
+        if provider_order:
+            index = {
+                str(name).strip().lower(): idx
+                for idx, name in enumerate(provider_order)
+                if str(name).strip()
+            }
+
+            def _sort_key(entry: ProviderEntry) -> tuple[int, float]:
+                explicit = index.get(entry.name.lower(), 10_000)
+                return (explicit, -entry.score)
+
+            return sorted(active, key=_sort_key)
+
         return sorted(active, key=lambda p: p.score, reverse=True)
 
     def _is_cooling_down(self, entry: ProviderEntry) -> bool:

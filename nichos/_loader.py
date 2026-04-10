@@ -53,8 +53,8 @@ def load_nichos_from_yaml_dir(
         return base_nichos
 
     yaml_files = sorted(directory.glob("*.yaml"))
-    # Exclude files starting with _ (like _loader.py companion)
-    yaml_files = [f for f in yaml_files if not f.stem.startswith("_")]
+    # Exclude files starting with _ (like _loader.py companion) and playbooks
+    yaml_files = [f for f in yaml_files if not f.stem.startswith("_") and not f.name.endswith(".playbook.yaml")]
 
     if not yaml_files:
         logger.debug(f"No .yaml niche files found in {directory} — using hardcoded nichos")

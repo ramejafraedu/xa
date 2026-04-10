@@ -163,6 +163,19 @@ class Settings(BaseSettings):
     tts_use_script_text: bool = True
     subtitles_use_script_text: bool = True
 
+    # SaarD00-style A/B visual split
+    enable_ab_visual_split: bool = False
+    ab_visual_split_multiplier: int = 2
+
+    # SaarD00-style post TTS processing
+    enable_smart_silence_trim: bool = False
+    audio_trim_silence_db: float = -40.0
+    audio_trim_min_silence_seconds: float = 0.20
+    enable_post_tts_loudnorm: bool = False
+    post_tts_loudnorm_i: float = -16.0
+    post_tts_loudnorm_lra: float = 11.0
+    post_tts_loudnorm_tp: float = -1.5
+
     # Piper (offline TTS fallback)
     use_piper_tts: bool = False
     piper_model_path: str = ""
@@ -251,6 +264,11 @@ class Settings(BaseSettings):
     provider_routing_config: str = "core/selector_logic.yaml"
     provider_show_decisions: bool = True
     provider_log_level: str = "info"  # debug | info | warning
+
+    # --- V16 Integration: Gemini Control Plane ---
+    gemini_control_plane_enabled: bool = True
+    gemini_control_plane_enforce_orders: bool = True
+    gemini_control_plane_quality_default: str = "balanced"  # budget | balanced | premium
     
     # Provider-specific toggles
     tts_smart_routing_enabled: bool = True
@@ -462,10 +480,16 @@ class Settings(BaseSettings):
             "enable_image_cache": self.enable_image_cache,
             "tts_use_script_text": self.tts_use_script_text,
             "subtitles_use_script_text": self.subtitles_use_script_text,
+            "enable_ab_visual_split": self.enable_ab_visual_split,
+            "enable_smart_silence_trim": self.enable_smart_silence_trim,
+            "enable_post_tts_loudnorm": self.enable_post_tts_loudnorm,
             "enable_web_research_plus": self.enable_web_research_plus,
             "enable_reference_driven": self.enable_reference_driven,
             "enable_cost_governance": self.enable_cost_governance,
             "enable_provider_cascade": self.enable_provider_cascade,
+            "gemini_control_plane_enabled": self.gemini_control_plane_enabled,
+            "gemini_control_plane_enforce_orders": self.gemini_control_plane_enforce_orders,
+            "gemini_control_plane_quality_default": bool(self.gemini_control_plane_quality_default),
             "enable_crew_quality_gate": self.enable_crew_quality_gate,
             "enable_manim_animations": self.enable_manim_animations,
             "gemini_usage_stats": self.gemini_enable_usage_stats,

@@ -21,7 +21,7 @@ visual_language:
     - name: "Electric Cyan"
       hex: "#00bfff"
       usage: "Secondary accent, graphics"
-  
+
   secondary_colors:
     - name: "Lime Green"
       hex: "#00ff00"
@@ -29,7 +29,7 @@ visual_language:
     - name: "Orange"
       hex: "#ff8c00"
       usage: "Warning, attention-grabbing"
-  
+
   composition:
     - rule: "Multiple colors per scene (controlled chaos)"
     - rule: "Bright, saturated colors only"
@@ -42,7 +42,7 @@ typography:
     size: "800px - 1200px on 1080p"
     color: "Neon Pink (#ff1493) or bright yellow"
     weight: "900"
-  
+
   body:
     font: "Comic Sans MS, Quicksand Bold, Poppins"
     size: "80px - 140px on 1080p"
@@ -53,7 +53,7 @@ motion:
   average_shot_hold: 0.8s
   transition_style: "Jump cuts, zoom, spin, optical flares"
   transition_duration: 0.2s - 0.4s
-  
+
   pacing_rules:
     - "Constant movement (no still moments longer than 0.5s)"
     - "Every 3-4 seconds introduce a new visual element"
@@ -63,7 +63,7 @@ motion:
 audio:
   voice_style: "Enthusiastic, playful, high-pitched optional"
   voice_pace: "Fast (140+ wpm)"
-  
+
   music:
     genre: "Upbeat electronic, pop, trap, bass-heavy"
     tempo: "130-150 BPM"
@@ -79,12 +79,12 @@ asset_generation:
     4K quality, digital illustration/3D preferred
 
 quality_rules:
-    - rule: "Saturated colors (no desaturated/gray tones)"
-      check: "Color saturation analysis"
-    - rule: "Frequent cuts (0.8-1.2s average shot)"
-      check: "Shot duration analysis"
-    - rule: "Text must pop (drop shadow, outline, color contrast)"
-      check: "Visual hierarchy check"
+  - rule: "Saturated colors (no desaturated/gray tones)"
+    check: "Color saturation analysis"
+  - rule: "Frequent cuts (0.8-1.2s average shot)"
+    check: "Shot duration analysis"
+  - rule: "Text must pop (drop shadow, outline, color contrast)"
+    check: "Visual hierarchy check"
 
 validation_scoring:
   color_vibrancy: 0.30
@@ -92,5 +92,5 @@ validation_scoring:
   typography_impact: 0.20
   audio_engagement: 0.15
   asset_quality: 0.10
-  
+
   acceptable_score: 7.5/10

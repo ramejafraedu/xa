@@ -28,13 +28,13 @@ visual_language:
     - name: "Coral Red"
       hex: "#e74c3c"
       usage: "Negative indicators (losses, risks)"
-  
+
   composition:
     - rule: "No soft pastel colors. Sharp, high-contrast imagery only"
     - rule: "Geometric layouts (grids, diagonal splits) preferred"
     - rule: "Every scene should have a gold accent (text, icon, or border)"
     - rule: "Dark scenes dominant (80% dark background)"
-  
+
   backgrounds:
     preferred: "Modern office, stock trading floors, blockchain visualizations, digital dashboards"
     avoid: "Soft gradients, nature, warm tones"
@@ -45,18 +45,18 @@ typography:
     size: "720px - 1080px on 1080p"
     color: "#ffd700 (gold) or #ffffff on dark"
     weight: "800+"
-  
+
   body:
     font: "Open Sans, Roboto"
     size: "60px - 120px on 1080p"
     color: "#ffffff"
     weight: "600+"
-  
+
   accent:
     font: "Courier New monospace (for numbers/charts)"
     color: "#27ae60 or #e74c3c"
     weight: "700"
-  
+
   rules:
     - "All caps for titles (CRYPTO BOOM, INVESTMENT HACK)"
     - "No script/cursive fonts"
@@ -67,13 +67,13 @@ motion:
   average_shot_hold: 1.2s
   transition_style: "Whip transitions, quick cuts, NO fade"
   transition_duration: 0.3s - 0.5s
-  
+
   pacing_rules:
     - "First 3 seconds MUST be hook (high energy cut)"
     - "Never hold still on single text for more than 1.5s"
     - "Use motion graphics/zoom for emphasis (not just pan)"
     - "Music cuts should align with visual cuts (tight sync)"
-  
+
   effects:
     preferred:
       - "Whip/swish transitions (80% of cuts)"
@@ -90,21 +90,21 @@ audio:
   voice_style: "Confident, energetic, no-nonsense"
   voice_pace: "Slightly fast (120-130 wpm, no breathiness)"
   voice_providers: ["google_tts", "elevenlabs_most_dynamic", "azure_voice_5"]
-  
+
   music:
     genre: "Dark synth, electronic, aggressive hip-hop"
     tempo: 120+ BPM
     energy: "High (8-9/10)"
     examples: ["Cyberpunk soundtrack", "Dark Techno", "Trap production"]
     licensing: "Epidemic Sound, Artlist, YouTube Audio Library"
-  
+
   music_rules:
     - "Bass-heavy drop in intro (0-2s)"
     - "Keep music 0.15 volume level when voice speaks"
     - "Hard cut to silence for emphasis (max 0.5s silence)"
     - "Build intensity through video (crescendo)"
     - "Outro drop must hit hard (last 2-3 seconds)"
-  
+
   sfx: "Digital beeps, notification sounds, coin/money jingles"
 
 asset_generation:
@@ -115,13 +115,13 @@ asset_generation:
     Colors: Navy #1a1a2e, Gold #ffd700, Slate #2d3436
     No soft colors. Geometric composition. Sharp details.
     4K quality, professional photography/3D rendering
-  
+
   image_rules:
     - "Every image MUST have at least one gold accent (text, icon, or border)"
     - "Dark tones dominant (80% of image)"
     - "High contrast (no muddy colors)"
     - "Geometric or futuristic style preferred"
-  
+
   quality_rules:
     - rule: "No more than 3 primary colors per scene"
       check: "Color histogram analysis"
@@ -143,7 +143,7 @@ color_harmony:
       check: "Disabled users, bright sunlight viewing"
     - rule: "No red/green color coding alone (use icons + color)"
       check: "Colorblind users (deuteranopia, protanopia)"
-  
+
   palette_combinations:
     - "Navy + Gold + Slate (professional)"
     - "Navy + Gold + Emerald (positive growth)"
@@ -155,7 +155,7 @@ validation_scoring:
   motion_pacing: 0.20
   audio_sync: 0.15
   asset_quality: 0.20
-  
+
   acceptable_score: 8.0/10
   premium_score: 9.0/10
 

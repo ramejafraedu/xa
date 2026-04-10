@@ -24,9 +24,13 @@ def fetch_music_by_order(
     provider_order: Optional[list[str]] = None,
 ) -> tuple[bool, str]:
     """Download music using a preferred provider order."""
-    if output_path.exists() and output_path.stat().st_size > 1000:
-        logger.info("Music already cached, skipping")
-        return True, "cached"
+    # V16.1: Skip cache if disabled
+    if not settings.disable_suno_cache and not settings.force_fresh_assets:
+        if output_path.exists() and output_path.stat().st_size > 1000:
+            logger.info("Music already cached, skipping")
+            return True, "cached"
+    else:
+        logger.info("🔄 Music cache disabled - fetching fresh music")
 
     provider_order = provider_order or ["pixabay", "jamendo"]
 

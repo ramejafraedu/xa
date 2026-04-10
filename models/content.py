@@ -418,6 +418,7 @@ class JobManifest(BaseModel):
     clip_paths: list[str] = Field(default_factory=list)
     music_path: str = ""
     sfx_paths: list[str] = Field(default_factory=list)
+    ab_visual_split: dict = Field(default_factory=dict)
     video_path: str = ""
     timeline_json_path: str = ""
     thumbnail_path: str = ""
@@ -454,6 +455,11 @@ class JobManifest(BaseModel):
     crew_quality_status: str = ""
     crew_debate_log: list[str] = Field(default_factory=list)
     manim_overlay_path: str = ""
+
+    @property
+    def id(self) -> str:  # noqa: A003
+        """Alias legado: algunos paths usaban manifest.id; el campo canónico es job_id."""
+        return self.job_id
 
     class Config:
         use_enum_values = True

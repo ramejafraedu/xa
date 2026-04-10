@@ -343,22 +343,49 @@ def fetch_music_with_fallback_source(
         ok, _ = fetch_music_by_order(mood, output_path, provider_order=["jamendo"])
         return ok
 
+    provider_scores = _build_music_provider_scores(provider_order)
+
     # Register providers
     suno_allowed = bool(settings.suno_api_key) and settings.use_suno_music and settings.provider_allowed("suno")
-    cascade.register("suno", wrap_suno, tier="premium", base_score=90.0, enabled=suno_allowed)
+    cascade.register("suno", wrap_suno, tier="premium", base_score=provider_scores["suno"], enabled=suno_allowed)
     
     lyria_allowed = bool(settings.get_gemini_keys()) and settings.use_lyria_music and settings.provider_allowed("lyria")
-    cascade.register("lyria", wrap_lyria, tier="freemium", base_score=80.0, enabled=lyria_allowed)
+    cascade.register("lyria", wrap_lyria, tier="freemium", base_score=provider_scores["lyria"], enabled=lyria_allowed)
     
-    cascade.register("pixabay", wrap_pixabay, tier="free", base_score=60.0, enabled=True)
-    cascade.register("jamendo", wrap_jamendo, tier="free", base_score=50.0, enabled=True)
+    cascade.register("pixabay", wrap_pixabay, tier="free", base_score=provider_scores["pixabay"], enabled=True)
+    cascade.register("jamendo", wrap_jamendo, tier="free", base_score=provider_scores["jamendo"], enabled=True)
     
-    res = cascade.execute()
+    res = cascade.execute(provider_order=provider_order)
     if res.success:
         return True, res.provider_name
         
     logger.warning(f"Music generation failed for all providers: {res.error}")
     return False, "none"
+
+
+def _build_music_provider_scores(provider_order: list[str] | None) -> dict[str, float]:
+    default_order = ["suno", "lyria", "pixabay", "jamendo"]
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for provider in (provider_order or []) + default_order:
+        name = str(provider or "").strip().lower()
+        if name not in {"suno", "lyria", "pixabay", "jamendo"}:
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        merged.append(name)
+
+    total = len(merged)
+    scores: dict[str, float] = {}
+    for idx, provider in enumerate(merged):
+        scores[provider] = float((total - idx) * 10)
+
+    for provider in ["suno", "lyria", "pixabay", "jamendo"]:
+        scores.setdefault(provider, 10.0)
+
+    return scores
 
 
 def _fetch_music_with_fallback_source_legacy(

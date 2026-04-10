@@ -21,7 +21,7 @@ visual_language:
     - name: "Slate Gray"
       hex: "#44546f"
       usage: "Text, secondary elements"
-  
+
   secondary_colors:
     - name: "Success Green"
       hex: "#1f8554"
@@ -29,7 +29,7 @@ visual_language:
     - name: "Warning Orange"
       hex: "#ff9500"
       usage: "Tips, important notes"
-  
+
   composition:
     - rule: "Minimalist, lots of whitespace"
     - rule: "Grid-based layout"
@@ -42,7 +42,7 @@ typography:
     size: "600px - 900px on 1080p"
     color: "#0066cc or #44546f"
     weight: "700-800"
-  
+
   body:
     font: "Inter, -apple-system, Segoe UI"
     size: "60px - 100px on 1080p"
@@ -53,7 +53,7 @@ motion:
   average_shot_hold: 2.0s - 2.5s
   transition_style: "Subtle slides, fade, wipes (directional)"
   transition_duration: 0.4s - 0.8s
-  
+
   pacing_rules:
     - "Each step gets equal time (predictable, instructional)"
     - "Demo animations are smooth and natural"
@@ -63,7 +63,7 @@ motion:
 audio:
   voice_style: "Clear, professional, helpful (not robotic)"
   voice_pace: "Natural (100-110 wpm), with short pauses between steps"
-  
+
   music:
     genre: "Minimal ambient, lo-fi beats, corporate background"
     tempo: "90-110 BPM"
@@ -80,14 +80,14 @@ asset_generation:
     4K quality, flat design or realistic UI rendering
 
 quality_rules:
-    - rule: "Text must be legible (min 50px on 1080p)"
-      check: "OCR confidence > 0.95"
-    - rule: "Color contrast minimum 7:1 (WCAG AAA)"
-      check: "Color contrast checker"
-    - rule: "No background busy (max 1 dominant visual element per scene)"
-      check: "Visual complexity score"
-    - rule: "Consistent UI element styling throughout"
-      check: "Icon/button style consistency"
+  - rule: "Text must be legible (min 50px on 1080p)"
+    check: "OCR confidence > 0.95"
+  - rule: "Color contrast minimum 7:1 (WCAG AAA)"
+    check: "Color contrast checker"
+  - rule: "No background busy (max 1 dominant visual element per scene)"
+    check: "Visual complexity score"
+  - rule: "Consistent UI element styling throughout"
+    check: "Icon/button style consistency"
 
 validation_scoring:
   clarity_information: 0.30
@@ -95,6 +95,6 @@ validation_scoring:
   pacing_pedagogy: 0.20
   typography_readability: 0.15
   audio_clarity: 0.10
-  
+
   acceptable_score: 8.2/10
   premium_score: 9.0/10

@@ -21,7 +21,7 @@ visual_language:
     - name: "Warm Sepia"
       hex: "#8b7355"
       usage: "Historical photography, vintage feel"
-  
+
   secondary_colors:
     - name: "Dusty Brown"
       hex: "#6d5d53"
@@ -29,7 +29,7 @@ visual_language:
     - name: "Cream"
       hex: "#f5f1de"
       usage: "Text, subtle highlights"
-  
+
   composition:
     - rule: "Monochromatic or limited palette (2-3 colors max)"
     - rule: "Subtle, understated use of color"
@@ -42,7 +42,7 @@ typography:
     size: "600px - 900px on 1080p"
     color: "#d4a574 (muted gold) or #f5f1de"
     weight: "600-700"
-  
+
   body:
     font: "Lora, Crimson Text, Source Serif Pro"
     size: "50px - 100px on 1080p"
@@ -53,7 +53,7 @@ motion:
   average_shot_hold: 3.0s - 4.0s
   transition_style: "Slow dissolves, fade to black, subtle wipes"
   transition_duration: 0.8s - 1.5s
-  
+
   pacing_rules:
     - "Silence is powerful (allow 1-2s silence for effect)"
     - "Slow pan/zoom for discovery (not quick movement)"
@@ -63,13 +63,13 @@ motion:
 audio:
   voice_style: "Deep, measured, authoritative, calm"
   voice_pace: "Slow (80-100 wpm), with dramatic pauses"
-  
+
   music:
     genre: "Classical, ambient, dark orchestral, cinema score"
     tempo: "60-90 BPM"
     energy: "Low (2-4/10), with emotional peaks"
     examples: ["Ólafur Arnalds style", "Hans Zimmer ambient", "Erik Satie"]
-  
+
   music_rules:
     - "Begin with silence (show the moment first)"
     - "Music enters gently, builds over 10-15 seconds"
@@ -86,14 +86,14 @@ asset_generation:
     4K quality, documentary photography/painting style
 
 quality_rules:
-    - rule: "Limited color palette (no more than 2-3 colors)"
-      check: "Color count analysis"
-    - rule: "High contrast not required (soft grading acceptable)"
-      check: "Manual review"
-    - rule: "Long holds on key frames (3+ seconds)"
-      check: "Shot duration analysis"
-    - rule: "No jarring transitions or effects"
-      check: "Effect type enumeration"
+  - rule: "Limited color palette (no more than 2-3 colors)"
+    check: "Color count analysis"
+  - rule: "High contrast not required (soft grading acceptable)"
+    check: "Manual review"
+  - rule: "Long holds on key frames (3+ seconds)"
+    check: "Shot duration analysis"
+  - rule: "No jarring transitions or effects"
+    check: "Effect type enumeration"
 
 validation_scoring:
   mood_consistency: 0.30
@@ -101,5 +101,5 @@ validation_scoring:
   typography_elegance: 0.20
   audio_narrative: 0.15
   asset_authenticity: 0.10
-  
+
   acceptable_score: 7.8/10

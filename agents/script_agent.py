@@ -227,9 +227,12 @@ class ScriptAgent:
             "NO escribas el guion completo — solo la estructura narrativa.\n\n"
             "Formato:\n"
             "HOOK: [concepto del gancho en 1 línea]\n"
+            "CONTEXT: [contexto y problema real que conecta con la audiencia]\n"
+            "MECHANISM: [explicacion causal clara de por que ocurre]\n"
             "BEAT 1: [primer punto de tensión]\n"
             "BEAT 2: [desarrollo/revelación]\n"
             "BEAT 3: [giro o dato impactante]\n"
+            "TWIST: [ruptura de expectativa o reencuadre contundente]\n"
             "PAYOFF: [cierre emocional]\n"
             "CTA: [llamada a acción]\n"
             + skills_block
@@ -326,6 +329,10 @@ REGLAS MAESTRAS Y NEGATIVE PROMPTS (MANDATORIO):
 - Incluye un mini-climax antes del cierre: sube tension, revela giro y entrega payoff claro.
 - ESTRUCTURA OBLIGATORIA: sigue esta plantilla del nicho de inicio a fin:
 {niche_template}
+- SECUENCIA NARRATIVA OBLIGATORIA: Hook → Context → Mechanism → Twist → Payoff → CTA.
+- CONTEXT debe enmarcar el problema en menos de 2 frases, sin relleno.
+- MECHANISM debe explicar causa/efecto con ejemplo verificable.
+- TWIST debe contradecir una intuicion comun o revelar una implicacion inesperada.
 - Escribe 3 variantes de gancho: shock, pregunta, promesa.
 - Longitud OBLIGATORIA para {platform}: STRICTAMENTE entre {word_min} y {word_max} palabras. SI ES MÁS CORTO, SERÁ RECHAZADO.
 - Frases cortas de 5 a 12 palabras. Cliffhangers cada 8-10 segundos.
