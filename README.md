@@ -16,7 +16,7 @@ Fabrica automatizada de videos verticales (formato short) para "Faceless Channel
 - Pipeline multi-agente: Research → Script → Verification → Scene → Assets → Editor
 - Checkpoints por etapa con aprobación manual opcional
 - 5 nichos pre-configurados: finanzas, historia, curiosidades, historias_reddit, ia_herramientas
-- TTS con fallback: ElevenLabs → Gemini → Edge TTS → Piper (offline)
+- TTS con fallback: ElevenLabs → Google Cloud TTS → Gemini → Edge TTS → Piper (offline)
 - Video stock: Pexels, Pixabay, Coverr con rotación y caché
 - Dashboard web con API REST
 - Scheduler 24/7 con APScheduler
@@ -137,6 +137,29 @@ Variables recomendadas para mejores resultados:
 - GEMINI_API_KEY
 - TELEGRAM_BOT_TOKEN
 - TELEGRAM_CHAT_ID
+
+### Google TTS + Vertex (opcional)
+
+Si quieres usar Google Cloud TTS en produccion:
+
+1. Habilita APIs en GCP:
+   - Generative Language API (Gemini)
+   - Cloud Text-to-Speech API
+2. Configura autenticacion:
+   - Opcion A: `GOOGLE_TTS_API_KEY`
+   - Opcion B: `GOOGLE_TTS_SERVICE_ACCOUNT_JSON` o `GOOGLE_APPLICATION_CREDENTIALS`
+   - Opcion C: ADC con `gcloud auth application-default login`
+3. Activa proveedor en `.env`:
+   - `USE_GOOGLE_TTS=true`
+4. Vertex se mantiene opt-in por defecto:
+   - `USE_VERTEX_AI=false` (cambiar a `true` solo si ya tienes proyecto/ADC/IAM listos)
+
+Variables de ajuste rapido:
+
+- `GOOGLE_TTS_VOICE_NAME`
+- `GOOGLE_TTS_LANGUAGE_CODE`
+- `GOOGLE_TTS_SPEAKING_RATE`
+- `GOOGLE_TTS_PITCH`
 
 ## Uso rapido (CLI)
 

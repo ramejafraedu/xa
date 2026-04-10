@@ -41,6 +41,19 @@ def cleanup_temp(timestamp: int) -> None:
 
     logger.info(f"Cleaned {removed} temp files for TS={timestamp}")
     cleanup_video_cache()
+    
+    # Aggressively kill zombies
+    try:
+        import os
+        import platform
+        if platform.system().lower() == "windows":
+            os.system("taskkill /F /IM node.exe >nul 2>&1")
+            os.system("taskkill /F /IM chrome.exe >nul 2>&1")
+        else:
+            os.system("pkill -9 -f node >/dev/null 2>&1")
+            os.system("pkill -9 -f chrome >/dev/null 2>&1")
+    except Exception:
+        pass
 
 
 def cleanup_old_outputs() -> None:

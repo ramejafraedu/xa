@@ -7,7 +7,9 @@ Uses existing V14 services (trends, supabase) internally.
 """
 from __future__ import annotations
 
+import re
 import time
+import unicodedata
 from typing import Optional
 
 from loguru import logger
@@ -118,13 +120,17 @@ class ResearchAgent:
             else:
                 memoria = f"MEMORIA_LOCAL: {local_memory}"
 
+        recent_topics = self._extract_recent_topics(memoria, state)
+        if recent_topics:
+            brief.avoid_topics = self._merge_unique(brief.avoid_topics + recent_topics[:14])
+
         if state.manual_ideas:
             manual_seed = self._merge_unique(state.manual_ideas)
             brief.recommended_angles = manual_seed[:3]
 
         # 3. LLM-powered angle recommendations
         try:
-            generated_angles = self._generate_angles(nicho, brief, memoria, state)
+            generated_angles = self._generate_angles(nicho, brief, memoria, state, recent_topics)
             if state.manual_ideas:
                 brief.recommended_angles = self._merge_unique(state.manual_ideas + generated_angles)[:4]
             else:
@@ -138,9 +144,22 @@ class ResearchAgent:
             seeded = self._angles_from_reference_signals(brief.reference_signals)
             brief.recommended_angles = self._merge_unique(seeded + brief.recommended_angles)[:4]
 
+        # Hard anti-repetition filter against recent topics and local memory.
+        filtered_angles = self._filter_repetitive_items(
+            brief.recommended_angles,
+            references=recent_topics,
+            limit=4,
+        )
+        brief.recommended_angles = filtered_angles or self._fallback_angles(nicho)[:4]
+
         # 4. Hook suggestions
         try:
-            brief.hook_suggestions = self._generate_hooks(nicho, brief, state)
+            raw_hooks = self._generate_hooks(nicho, brief, state, recent_topics)
+            brief.hook_suggestions = self._filter_repetitive_items(
+                raw_hooks,
+                references=recent_topics,
+                limit=6,
+            )
         except Exception as e:
             logger.debug(f"Hook generation failed: {e}")
 
@@ -180,6 +199,7 @@ class ResearchAgent:
         brief: ResearchBrief,
         memoria: str,
         state: StoryState,
+        recent_topics: list[str],
     ) -> list[str]:
         """Use LLM to suggest content angles based on trends + memory."""
         system = (
@@ -194,6 +214,7 @@ class ResearchAgent:
             f"TONO: {nicho.tono}\n"
             f"PRECEDENCIA: {brief.precedence_rule}\n"
             f"TRENDING: {brief.trending_context_raw[:300]}\n"
+            f"TEMAS_RECIENTES_A_EVITAR: {' | '.join(recent_topics[:12]) or 'N/A'}\n"
             f"SEÑALES_REFERENCIA: {' | '.join(brief.reference_signals[:4]) if brief.reference_signals else 'N/A'}\n"
             f"IDEAS_MANUALES: {' | '.join(state.manual_ideas[:6]) if state.manual_ideas else 'N/A'}\n"
             f"HISTORIAL: {str(memoria)[:300]}\n"
@@ -223,7 +244,13 @@ class ResearchAgent:
 
         return self._fallback_angles(nicho)
 
-    def _generate_hooks(self, nicho: NichoConfig, brief: ResearchBrief, state: StoryState) -> list[str]:
+    def _generate_hooks(
+        self,
+        nicho: NichoConfig,
+        brief: ResearchBrief,
+        state: StoryState,
+        recent_topics: list[str],
+    ) -> list[str]:
         """Generate viral hook suggestions using LLM and free APIs."""
         hooks = []
         
@@ -254,6 +281,7 @@ class ResearchAgent:
             f"NICHO: {nicho.nombre}\n"
             f"ÁNGULO: {angle}\n"
             f"PRECEDENCIA: {brief.precedence_rule}\n"
+            f"TEMAS_RECIENTES_A_EVITAR: {' | '.join(recent_topics[:12]) or 'N/A'}\n"
             f"IDEAS_MANUALES: {' | '.join(state.manual_ideas[:4]) if state.manual_ideas else 'N/A'}\n"
             f"REFERENCIA: {state.reference_summary[:180] if state.reference_summary else 'N/A'}\n"
             f"ESTILO: {nicho.estilo_narrativo[:100]}\n\n"
@@ -346,3 +374,100 @@ class ResearchAgent:
             seen.add(key)
             out.append(clean)
         return out
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        text = re.sub(r"[^a-z0-9\s]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    @classmethod
+    def _tokenize(cls, value: str) -> set[str]:
+        stop = {
+            "de", "la", "el", "los", "las", "un", "una", "unos", "unas", "y", "o",
+            "con", "sin", "para", "por", "que", "en", "del", "al", "se", "es",
+            "the", "and", "for", "with", "from", "that", "this", "your", "you",
+        }
+        normalized = cls._normalize_text(value)
+        return {tok for tok in normalized.split() if len(tok) >= 3 and tok not in stop}
+
+    @classmethod
+    def _similarity(cls, candidate: str, reference: str) -> float:
+        a = cls._normalize_text(candidate)
+        b = cls._normalize_text(reference)
+        if not a or not b:
+            return 0.0
+
+        if (a in b or b in a) and min(len(a), len(b)) >= 18:
+            return 0.95
+
+        ta = cls._tokenize(a)
+        tb = cls._tokenize(b)
+        if not ta or not tb:
+            return 0.0
+
+        inter = len(ta & tb)
+        if inter == 0:
+            return 0.0
+
+        union = len(ta | tb)
+        jaccard = inter / union if union else 0.0
+        overlap = inter / min(len(ta), len(tb))
+        return max(jaccard, overlap)
+
+    @classmethod
+    def _is_repetitive(cls, candidate: str, references: list[str], threshold: float = 0.72) -> bool:
+        return any(cls._similarity(candidate, ref) >= threshold for ref in references if str(ref).strip())
+
+    @classmethod
+    def _filter_repetitive_items(cls, items: list[str], references: list[str], limit: int = 4) -> list[str]:
+        """Filter candidate items against historical references and near-duplicates."""
+        out: list[str] = []
+        refs = [str(r).strip() for r in references if str(r).strip()]
+        for item in items:
+            clean = str(item or "").strip()
+            if not clean:
+                continue
+            if cls._is_repetitive(clean, refs):
+                continue
+            if cls._is_repetitive(clean, out, threshold=0.8):
+                continue
+            out.append(clean)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
+
+    @classmethod
+    def _extract_recent_topics(cls, memoria: str, state: StoryState, limit: int = 18) -> list[str]:
+        """Extract recent titles/topics from Supabase memory string + local memory entries."""
+        candidates: list[str] = []
+
+        for line in state.niche_memory_entries[: max(1, int(limit))]:
+            text = str(line or "").strip()
+            if text:
+                candidates.append(text)
+
+        mem_text = str(memoria or "")
+        if mem_text and mem_text.strip().lower() != "sin memoria previa":
+            for chunk in re.split(r"[|\n]+", mem_text):
+                piece = str(chunk or "").strip()
+                if not piece:
+                    continue
+                # Supabase memory commonly returns "title - hook" entries.
+                if " - " in piece:
+                    piece = piece.split(" - ", 1)[0].strip()
+                piece = re.sub(
+                    r"^(tema_publicado|hook_ganador|angulo_ganador|titulo|tema)\s*[:\-]\s*",
+                    "",
+                    piece,
+                    flags=re.IGNORECASE,
+                ).strip()
+                if piece:
+                    candidates.append(piece)
+
+        return cls._merge_unique(candidates)[: max(1, int(limit))]

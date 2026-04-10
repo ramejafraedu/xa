@@ -1,4 +1,4 @@
-"""TTS Engine — Gemini TTS primary, Edge-TTS fallback.
+"""TTS Engine — Multi-provider TTS with scored fallback.
 
 Replaces n8n nodes: 🗣️ Gemini-TTS + 🗣️ Edge-TTS Fallback.
 Audio processing with identical FFmpeg filters as MASTER V13.
@@ -66,7 +66,8 @@ def generate_tts(
 ) -> tuple[bool, str]:
     """Generate TTS audio. Returns (success, engine_used).
 
-    Uses ProviderCascade for scored fallback (ElevenLabs > Gemini > Edge-TTS > Piper).
+    Uses ProviderCascade for scored fallback
+    (ElevenLabs > Google Cloud TTS > Gemini > Edge-TTS > Piper).
     If sync_subtitles is True and TTS doesn't provide timing,
     uses AudioSubtitleSynchronizer to force-align text with audio.
     """
@@ -96,6 +97,9 @@ def generate_tts(
     
     def wrap_elevenlabs():
         return _elevenlabs_tts(text, output_mp3)
+
+    def wrap_google_tts():
+        return _google_cloud_tts(text, output_mp3)
         
     def wrap_gemini():
         return _gemini_tts(text, output_mp3, voz_gemini)
@@ -123,6 +127,19 @@ def generate_tts(
         tier="premium",
         base_score=90.0,
         enabled=bool(settings.elevenlabs_api_key) and eleven_allowed
+    )
+
+    # Register Google Cloud TTS
+    google_tts_allowed = (
+        settings.provider_allowed("google_tts", usage="media")
+        if enforce_provider_policy else True
+    )
+    cascade.register(
+        "google_tts",
+        wrap_google_tts,
+        tier="premium",
+        base_score=85.0,
+        enabled=settings.use_google_tts and google_tts_allowed,
     )
 
     # Register Gemini
@@ -206,13 +223,29 @@ def _generate_tts_legacy(
                     subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "elevenlabs"
 
+    # Try Google Cloud TTS
+    google_tts_allowed = (
+        settings.provider_allowed("google_tts", usage="media")
+        if enforce_provider_policy
+        else True
+    )
+    if settings.use_google_tts and google_tts_allowed:
+        success = _google_cloud_tts(text, output_mp3)
+        if success:
+            if subs_vtt_path:
+                if sync_subtitles:
+                    _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
+                else:
+                    subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+            return True, "google_tts"
+
     # Try Gemini TTS
     gemini_allowed = (
         settings.provider_allowed("gemini", usage="media")
         if enforce_provider_policy
         else True
     )
-    if settings.gemini_api_key and gemini_allowed:
+    if settings.get_gemini_keys() and gemini_allowed:
         success = _gemini_tts(text, output_mp3, voz_gemini)
         if success:
             if subs_vtt_path:
@@ -405,6 +438,88 @@ def _elevenlabs_tts(text: str, output_mp3: Path) -> bool:
         return False
 
 
+def _google_cloud_tts(text: str, output_mp3: Path) -> bool:
+    """Generate TTS via Google Cloud Text-to-Speech API."""
+    if not settings.use_google_tts:
+        return False
+
+    try:
+        from google.api_core.client_options import ClientOptions
+        from google.cloud import texttospeech
+        from google.oauth2 import service_account
+    except ImportError:
+        logger.debug("google-cloud-texttospeech not installed; skipping Google TTS")
+        return False
+
+    clean_text = (text or "").strip()
+    if not clean_text:
+        return False
+
+    raw_mp3 = output_mp3.with_name(f"google_raw_{output_mp3.stem}.mp3")
+
+    try:
+        client_kwargs = {}
+
+        api_key = (settings.google_tts_api_key or "").strip()
+        if api_key:
+            client_kwargs["client_options"] = ClientOptions(api_key=api_key)
+
+        credentials_cfg = (settings.google_tts_service_account_json or "").strip()
+        if credentials_cfg:
+            credentials_path = settings.resolved_google_tts_service_account_path()
+            if not credentials_path.exists():
+                logger.warning(f"Google TTS service account file not found: {credentials_path}")
+                return False
+            client_kwargs["credentials"] = service_account.Credentials.from_service_account_file(
+                str(credentials_path)
+            )
+
+        client = texttospeech.TextToSpeechClient(**client_kwargs)
+
+        voice_name = (settings.google_tts_voice_name or "").strip()
+        language_code = (settings.google_tts_language_code or "es-US").strip()
+
+        if voice_name:
+            voice = texttospeech.VoiceSelectionParams(
+                language_code=language_code,
+                name=voice_name,
+            )
+        else:
+            voice = texttospeech.VoiceSelectionParams(language_code=language_code)
+
+        audio_config = texttospeech.AudioConfig(
+            audio_encoding=texttospeech.AudioEncoding.MP3,
+            speaking_rate=max(0.25, min(4.0, float(settings.google_tts_speaking_rate))),
+            pitch=max(-20.0, min(20.0, float(settings.google_tts_pitch))),
+        )
+
+        response = client.synthesize_speech(
+            request={
+                "input": texttospeech.SynthesisInput(text=clean_text),
+                "voice": voice,
+                "audio_config": audio_config,
+            },
+            timeout=max(5, int(settings.google_tts_timeout_seconds or 45)),
+        )
+
+        raw_mp3.write_bytes(response.audio_content or b"")
+        if not raw_mp3.exists() or raw_mp3.stat().st_size < 1000:
+            logger.warning("Google TTS produced empty audio")
+            raw_mp3.unlink(missing_ok=True)
+            return False
+
+        success = _apply_audio_filters(raw_mp3, output_mp3)
+        raw_mp3.unlink(missing_ok=True)
+        if success:
+            logger.info("✅ Google Cloud TTS generated")
+        return success
+    except Exception as exc:
+        msg = str(exc)
+        logger.warning(f"Google Cloud TTS error: {msg[:180]}")
+        raw_mp3.unlink(missing_ok=True)
+        return False
+
+
 def _gemini_tts(text: str, output_mp3: Path, voice: str) -> bool:
     """Generate TTS via Gemini API con rotación de las 4 keys."""
     all_keys = settings.get_gemini_keys()
@@ -412,11 +527,13 @@ def _gemini_tts(text: str, output_mp3: Path, voice: str) -> bool:
         logger.warning("Gemini TTS: no keys configured")
         return False
 
+    model_name = (settings.gemini_tts_model or "gemini-2.5-flash-preview-tts").strip()
+
     for key_idx, api_key in enumerate(all_keys):
         try:
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/"
-                f"models/gemini-2.5-flash-preview-tts:generateContent"
+                f"models/{model_name}:generateContent"
                 f"?key={api_key}"
             )
 

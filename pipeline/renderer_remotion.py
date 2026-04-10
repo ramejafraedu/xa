@@ -130,7 +130,7 @@ def render_with_remotion(
             output_path_str,
             "--props", props_json,
             "--codec", "h264",
-            "--concurrency", "2",
+            "--concurrency", "1",
         ]
 
         result = subprocess.run(
@@ -398,7 +398,7 @@ def _build_legacy_props(
 ) -> dict:
     """Build baseline CinematicRenderer props when no timeline exists."""
     duration = float(metadata.get("duration", 30.0) or 30.0)
-    valid_clips = [p for p in clips if p.exists()]
+    valid_clips = [p for p in clips if p.exists() and p.stat().st_size > 1000]
     scenes: list[dict] = []
 
     if valid_clips:
@@ -503,6 +503,15 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
         src = str(raw.get("src", "")).strip()
         if not src:
             continue
+
+        raw_path = src.replace("file://", "").replace("file:///", "").split("?")[0]
+        try:
+            p = Path(raw_path)
+            if p.exists() and p.stat().st_size < 100:
+                logger.warning(f"Discarding empty media file: {src}")
+                continue
+        except Exception:
+            pass
 
         scene: dict = {
             "id": scene_id,

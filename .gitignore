@@ -39,9 +39,16 @@ desktop.ini
 .env.*
 !.env.example
 
+# Google Cloud service account keys
+google_credentials.json
+gcp_credentials.json
+*service-account*.json
+inductive-actor-492816-j2-*.json
+
 # Local SSH keys
 id_rsa
 id_rsa.pub
+id_rsa_*
 
 # Logs and runtime files
 *.log
@@ -60,3 +67,7 @@ workspace/music_cache/
 remotion-composer/node_modules/
 remotion-composer/out/
 remotion-composer/.cache/
+remotion-composer/public/workspace/
+
+# Local deployment packages
+*.tgz

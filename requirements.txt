@@ -41,6 +41,9 @@ yt-dlp>=2025.1
 
 # Gemini API (Veo 3.1, Lyria 3, Imagen, TTS)
 google-genai>=1.14
+google-cloud-aiplatform>=1.60.0
+google-cloud-texttospeech>=2.17.2
+google-auth>=2.36.0
 
 # WhisperX — word-level subtitles (optional, heavy install)
 # pip install whisperx  (requires torch, ~2GB)

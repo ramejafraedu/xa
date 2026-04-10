@@ -81,6 +81,7 @@ class AssetAgent:
         nicho: NichoConfig,
         timestamp: int,
         temp_dir: Path,
+        runtime_overrides: Optional[dict] = None,
     ) -> dict:
         """Generate all assets for the video.
 
@@ -148,6 +149,7 @@ class AssetAgent:
                 timestamp,
                 temp_dir,
                 provider_order=image_order,
+                runtime_overrides=runtime_overrides,
             ),
             is_success=lambda value: len(value[0]) > 0,
             max_attempts=2,
@@ -549,6 +551,7 @@ class AssetAgent:
         timestamp: int,
         temp_dir: Path,
         provider_order: Optional[list[str]] = None,
+        runtime_overrides: Optional[dict] = None,
     ) -> tuple[list[Path], dict[str, dict[str, int]]]:
         """Generate images with visual direction from StoryState."""
         try:
@@ -572,14 +575,31 @@ class AssetAgent:
 
             ab_variant = raw_content.get("_ab_variant", "A")
 
+            overrides = runtime_overrides or {}
+            prefer_stock_images = overrides.get("prefer_stock_images")
+            cache_ttl_days = overrides.get("media_cache_ttl_days")
+
+            enable_cache = overrides.get("enable_image_cache")
+            if "disable_image_cache" in overrides:
+                enable_cache = not bool(overrides.get("disable_image_cache"))
+
+            try:
+                image_count = int(overrides.get("generated_images_count", settings.generated_images_count))
+            except (TypeError, ValueError):
+                image_count = int(settings.generated_images_count)
+            image_count = max(4, min(10, image_count))
+
             images, stats = generate_images_with_stats(
                 prompt_base,
                 nicho.direccion_visual,
                 ab_variant,
                 timestamp,
                 temp_dir,
-                count=max(4, min(10, int(settings.generated_images_count))),
+                count=image_count,
                 provider_order=provider_order,
+                prefer_stock_images=prefer_stock_images,
+                cache_ttl_days=cache_ttl_days,
+                enable_cache=enable_cache,
             )
             return images, stats
 

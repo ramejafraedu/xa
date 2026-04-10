@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -73,7 +74,7 @@ class VerificationAgent:
         Returns:
             VerificationReport with all findings
         """
-        t0 = logger.time()
+        t0 = time.perf_counter()
         
         # 1. Extract all verifiable entities
         entities = self._extract_entities(script_text, hook)
@@ -96,7 +97,7 @@ class VerificationAgent:
         # 5. Build human-readable summary
         summary = self._build_summary(results, score, recommendation)
         
-        elapsed = logger.time() - t0
+        elapsed = time.perf_counter() - t0
         logger.info(f"✅ Verification complete: {score:.0f}% score, {unverified} unverified, {elapsed:.1f}s")
         
         return VerificationReport(

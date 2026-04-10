@@ -398,11 +398,16 @@ def _fetch_music_with_fallback_source_legacy(
 
 
 def _suno_cache_path(mood: str, duration_seconds: float, nicho: str) -> Path:
+    import random
+    # Maintain a pool of up to 3 variations per mood+niche+duration
+    # This guarantees the music isn't exactly the same every single time.
+    pool_index = random.randint(1, 3)
     payload = {
         "provider": "suno",
         "mood": str(mood or "").strip().lower(),
         "nicho": str(nicho or "").strip().lower(),
         "duration": int(max(8, min(180, round(duration_seconds)))),
+        "pool_index": pool_index,
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:18]
     return settings.music_cache_dir / f"suno_{digest}.mp3"

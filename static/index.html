@@ -316,6 +316,87 @@
             gap: 8px;
         }
 
+        .ops-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .ops-check-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .ops-number-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .ops-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .theme-proposals-list {
+            display: grid;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .theme-proposal-card {
+            border: 1px solid rgba(146, 178, 213, 0.24);
+            border-radius: 11px;
+            padding: 10px;
+            background: rgba(8, 15, 26, 0.72);
+            display: grid;
+            gap: 8px;
+        }
+
+        .theme-proposal-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            align-items: flex-start;
+            font-size: 0.8rem;
+        }
+
+        .theme-proposal-title {
+            font-weight: 700;
+            color: var(--text-0);
+            line-height: 1.3;
+        }
+
+        .theme-proposal-score {
+            font-family: "IBM Plex Mono", monospace;
+            color: var(--accent-a);
+            font-size: 0.78rem;
+            white-space: nowrap;
+        }
+
+        .theme-proposal-angle {
+            color: var(--text-1);
+            font-size: 0.8rem;
+            line-height: 1.4;
+        }
+
+        .theme-proposal-hook {
+            color: var(--text-2);
+            font-size: 0.76rem;
+            line-height: 1.35;
+        }
+
+        .theme-proposal-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
         .btn {
             border: 1px solid transparent;
             border-radius: 11px;
@@ -1184,6 +1265,12 @@
                 grid-template-columns: 1fr;
             }
 
+            .ops-grid,
+            .ops-check-grid,
+            .ops-number-grid {
+                grid-template-columns: 1fr;
+            }
+
             .memory-toolbar {
                 grid-template-columns: 1fr;
             }
@@ -1382,6 +1469,10 @@
                             <input id="run-checkpoints" type="checkbox" />
                             Activar checkpoints WEB
                         </label>
+                        <label class="control-check">
+                            <input id="run-disable-image-cache" type="checkbox" />
+                            Desactivar cache de imagenes en esta corrida
+                        </label>
                         <button class="btn btn-ghost" onclick="clearRunContext()">Limpiar contexto</button>
                     </div>
                 </div>
@@ -1419,6 +1510,79 @@
                     <div class="empty-state">
                         <div class="empty-state-icon">⏳</div>
                         <div>Loading costs...</div>
+                    </div>
+                </div>
+
+                <div class="section-header" style="margin-top: 14px;">
+                    <span class="section-title">🎛 Control operativo</span>
+                </div>
+                <div class="ops-grid">
+                    <div class="detail-panel">
+                        <h3>🎞 Renderer + imágenes</h3>
+                        <div class="ops-check-grid">
+                            <label class="control-check">
+                                <input id="cfg-use-remotion" type="checkbox" />
+                                Habilitar Remotion
+                            </label>
+                            <label class="control-check">
+                                <input id="cfg-force-ffmpeg" type="checkbox" />
+                                Forzar FFmpeg
+                            </label>
+                            <label class="control-check">
+                                <input id="cfg-prefer-stock" type="checkbox" />
+                                Preferir stock (si no, IA primero)
+                            </label>
+                            <label class="control-check">
+                                <input id="cfg-image-cache" type="checkbox" />
+                                Habilitar cache de imagenes
+                            </label>
+                        </div>
+                        <div class="ops-number-grid">
+                            <div class="control-field">
+                                <label class="control-label" for="cfg-generated-images">Imagenes por job</label>
+                                <input id="cfg-generated-images" class="control-input" type="number" min="1" max="20" />
+                            </div>
+                            <div class="control-field">
+                                <label class="control-label" for="cfg-cache-ttl">TTL cache imagenes (dias)</label>
+                                <input id="cfg-cache-ttl" class="control-input" type="number" min="0" max="30" />
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="saveOpsConfig()">Guardar cambios</button>
+                            <button class="btn btn-secondary" onclick="loadOpsConfig()">Recargar estado</button>
+                            <button class="btn btn-ghost" onclick="loadRemotionDiagnostics()">Diagnosticar Remotion</button>
+                        </div>
+                        <div class="meta-line" id="ops-config-result">Cargando configuracion operativa...</div>
+                        <div class="manifest-box" id="remotion-diagnostics-box" style="max-height: 220px; margin-top: 8px;">Sin diagnostico aun.</div>
+                    </div>
+
+                    <div class="detail-panel">
+                        <h3>🤖 Gemini propone 5 temas</h3>
+                        <div class="memory-toolbar">
+                            <select id="theme-nicho-select" class="control-input"></select>
+                            <input id="theme-context-input" class="control-input" type="text" placeholder="Contexto opcional: enfoque, audiencia, tono..." />
+                            <button class="btn btn-primary" onclick="proposeThemesForSelectedNicho()">Generar temas</button>
+                        </div>
+                        <div class="meta-line" id="theme-proposal-meta">Genera propuestas y elige 1 para arrancar pipeline con ese enfoque.</div>
+                        <div class="theme-proposals-list" id="theme-proposals-list">
+                            <div class="empty-state" style="padding: 14px 10px;">
+                                <div>Aun no hay propuestas para este nicho.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-header" style="margin-top: 14px;">
+                    <span class="section-title">🧠 Memoria de nicho</span>
+                </div>
+                <div class="detail-panel">
+                    <div class="memory-toolbar">
+                        <select id="memory-nicho-select" class="control-input"></select>
+                        <input id="memory-new-text" class="control-input" type="text" placeholder="Agregar nota de memoria para evitar repeticiones..." />
+                        <button class="btn btn-primary" onclick="addMemoryNote()">Agregar nota</button>
+                    </div>
+                    <div class="memory-list" id="memory-list">
+                        <div class="empty-state" style="padding:14px 10px;"><div>Cargando memoria...</div></div>
                     </div>
                 </div>
             </section>
@@ -1565,6 +1729,7 @@
         let isEditMode = false;
         const TOAST_MAX_ITEMS = 4;
         let memoryItemsBySlug = {};
+        let themeProposalsBySlug = {};
 
         function initNavigation() {
             document.querySelectorAll("[data-page]").forEach((button) => {
@@ -1624,10 +1789,12 @@
             const referenceNode = document.getElementById("run-reference-url");
             const ideasNode = document.getElementById("run-manual-ideas");
             const checkpointsNode = document.getElementById("run-checkpoints");
+            const disableImageCacheNode = document.getElementById("run-disable-image-cache");
             return {
                 referenceUrl: referenceNode ? String(referenceNode.value || "").trim() : "",
                 manualIdeas: ideasNode ? String(ideasNode.value || "").trim() : "",
                 checkpoints: checkpointsNode ? Boolean(checkpointsNode.checked) : false,
+                disableImageCache: disableImageCacheNode ? Boolean(disableImageCacheNode.checked) : false,
             };
         }
 
@@ -1661,6 +1828,13 @@
                 params.set("manual_ideas", manualIdeas);
             }
 
+            const disableImageCache = Object.prototype.hasOwnProperty.call(options, "disableImageCache")
+                ? Boolean(options.disableImageCache)
+                : context.disableImageCache;
+            if (disableImageCache) {
+                params.set("disable_image_cache", "true");
+            }
+
             const query = params.toString();
             return query ? "?" + query : "";
         }
@@ -1669,9 +1843,11 @@
             const referenceNode = document.getElementById("run-reference-url");
             const ideasNode = document.getElementById("run-manual-ideas");
             const checkpointsNode = document.getElementById("run-checkpoints");
+            const disableImageCacheNode = document.getElementById("run-disable-image-cache");
             if (referenceNode) referenceNode.value = "";
             if (ideasNode) ideasNode.value = "";
             if (checkpointsNode) checkpointsNode.checked = false;
+            if (disableImageCacheNode) disableImageCacheNode.checked = false;
             toast("Contexto de ejecucion limpiado", "info");
         }
 
@@ -1758,13 +1934,112 @@
                 const data = await fetchJson("/api/execution-mode");
                 const monthSpend = Number(data.month_spend_usd || 0).toFixed(4);
                 const monthBudget = Number(data.monthly_budget_usd || 0).toFixed(4);
-                const text = (data.mode || "normal") + " | month $" + monthSpend + "/$" + monthBudget;
+                const flags = data.feature_flags || {};
+                const renderState = flags.force_ffmpeg_renderer
+                    ? "ffmpeg-forced"
+                    : (flags.use_remotion ? "remotion-on" : "remotion-off");
+                const imageState = flags.prefer_stock_images ? "img-stock" : "img-ia";
+                const text = (data.mode || "normal") + " | " + renderState + " | " + imageState + " | month $" + monthSpend + "/$" + monthBudget;
                 const node = document.getElementById("status-mode");
                 if (node) {
                     node.textContent = text;
                 }
             } catch (error) {
                 console.error(error);
+            }
+        }
+
+        async function loadOpsConfig() {
+            try {
+                const data = await fetchJson("/api/config/operations");
+                const useRemotionNode = document.getElementById("cfg-use-remotion");
+                const forceFfmpegNode = document.getElementById("cfg-force-ffmpeg");
+                const preferStockNode = document.getElementById("cfg-prefer-stock");
+                const imageCacheNode = document.getElementById("cfg-image-cache");
+                const generatedNode = document.getElementById("cfg-generated-images");
+                const ttlNode = document.getElementById("cfg-cache-ttl");
+                const resultNode = document.getElementById("ops-config-result");
+
+                if (useRemotionNode) useRemotionNode.checked = Boolean(data.use_remotion);
+                if (forceFfmpegNode) forceFfmpegNode.checked = Boolean(data.force_ffmpeg_renderer);
+                if (preferStockNode) preferStockNode.checked = Boolean(data.prefer_stock_images);
+                if (imageCacheNode) imageCacheNode.checked = Boolean(data.enable_image_cache);
+                if (generatedNode) generatedNode.value = String(data.generated_images_count != null ? data.generated_images_count : 6);
+                if (ttlNode) ttlNode.value = String(data.media_cache_ttl_days != null ? data.media_cache_ttl_days : 7);
+
+                if (resultNode) {
+                    resultNode.textContent = "Config cargada: remotion=" + Boolean(data.use_remotion) +
+                        ", ffmpeg_forced=" + Boolean(data.force_ffmpeg_renderer) +
+                    ", stock_first=" + Boolean(data.prefer_stock_images) +
+                    ", image_cache=" + Boolean(data.enable_image_cache);
+                }
+
+                await loadRemotionDiagnostics();
+            } catch (error) {
+                toast("No se pudo cargar configuracion operativa: " + error.message, "error");
+            }
+        }
+
+        async function saveOpsConfig() {
+            const useRemotionNode = document.getElementById("cfg-use-remotion");
+            const forceFfmpegNode = document.getElementById("cfg-force-ffmpeg");
+            const preferStockNode = document.getElementById("cfg-prefer-stock");
+            const imageCacheNode = document.getElementById("cfg-image-cache");
+            const generatedNode = document.getElementById("cfg-generated-images");
+            const ttlNode = document.getElementById("cfg-cache-ttl");
+
+            const payload = {
+                use_remotion: useRemotionNode ? Boolean(useRemotionNode.checked) : true,
+                force_ffmpeg_renderer: forceFfmpegNode ? Boolean(forceFfmpegNode.checked) : false,
+                prefer_stock_images: preferStockNode ? Boolean(preferStockNode.checked) : true,
+                enable_image_cache: imageCacheNode ? Boolean(imageCacheNode.checked) : true,
+                generated_images_count: generatedNode ? Number(generatedNode.value || 6) : 6,
+                media_cache_ttl_days: ttlNode ? Number(ttlNode.value || 7) : 7,
+                persist: true,
+            };
+
+            try {
+                const data = await fetchJson("/api/config/operations", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                const resultNode = document.getElementById("ops-config-result");
+                if (resultNode) {
+                    resultNode.textContent = "Configuracion guardada. Persistido=" + Boolean(data.persisted);
+                }
+                toast("Configuracion operativa actualizada", "success");
+                await fetchExecutionMode();
+                await loadRemotionDiagnostics();
+            } catch (error) {
+                toast("No se pudo guardar configuracion: " + error.message, "error");
+            }
+        }
+
+        async function loadRemotionDiagnostics() {
+            const boxNode = document.getElementById("remotion-diagnostics-box");
+            if (!boxNode) {
+                return;
+            }
+
+            boxNode.textContent = "Cargando diagnostico...";
+            try {
+                const data = await fetchJson("/api/config/remotion-diagnostics");
+                const checks = data.checks || {};
+                const missing = Array.isArray(data.missing_requirements) ? data.missing_requirements : [];
+                const lines = [
+                    "available=" + Boolean(data.overall_available),
+                    "node=" + (data.node_version || (checks.node_available ? "present" : "missing")),
+                    "npx=" + (checks.npx_available ? "ok" : "missing"),
+                    "node_modules=" + (checks.node_modules_exists ? "ok" : "missing"),
+                    "recommendation=" + (data.recommendation || ""),
+                ];
+                if (missing.length) {
+                    lines.push("missing=" + missing.join(", "));
+                }
+                boxNode.textContent = lines.join("\n");
+            } catch (error) {
+                boxNode.textContent = "Error de diagnostico: " + error.message;
             }
         }
 
@@ -1813,7 +2088,9 @@
                 });
 
                 setupMemoryNichoSelect(nichos);
+                setupThemeNichoSelect(nichos);
                 refreshMemoryList();
+                loadThemeProposalsForSelectedNicho();
             } catch (error) {
                 toast("No se pudo cargar nichos: " + error.message, "error");
             }
@@ -1838,6 +2115,156 @@
             if (!select.dataset.bound) {
                 select.addEventListener("change", refreshMemoryList);
                 select.dataset.bound = "true";
+            }
+        }
+
+        function setupThemeNichoSelect(nichos) {
+            const select = document.getElementById("theme-nicho-select");
+            if (!select) {
+                return;
+            }
+
+            const currentValue = String(select.value || "").trim();
+            const options = Array.isArray(nichos) ? nichos : [];
+            select.innerHTML = options
+                .map((n) => '<option value="' + escapeHtml(n.slug || "") + '">' + escapeHtml((n.slug || "").toUpperCase()) + '</option>')
+                .join("");
+
+            if (currentValue && options.some((n) => n.slug === currentValue)) {
+                select.value = currentValue;
+            }
+
+            if (!select.dataset.bound) {
+                select.addEventListener("change", loadThemeProposalsForSelectedNicho);
+                select.dataset.bound = "true";
+            }
+        }
+
+        function getSelectedThemeNicho() {
+            const select = document.getElementById("theme-nicho-select");
+            return select ? String(select.value || "").trim() : "";
+        }
+
+        async function loadThemeProposalsForSelectedNicho() {
+            const slug = getSelectedThemeNicho();
+            const listNode = document.getElementById("theme-proposals-list");
+            const metaNode = document.getElementById("theme-proposal-meta");
+
+            if (!slug || !listNode) {
+                return;
+            }
+
+            listNode.innerHTML = '<div class="empty-state" style="padding:14px 10px;"><div>Cargando propuestas...</div></div>';
+            try {
+                const data = await fetchJson("/api/themes/proposals/" + encodeURIComponent(slug));
+                const proposals = Array.isArray(data && data.proposals) ? data.proposals : [];
+                themeProposalsBySlug[slug] = proposals;
+                if (metaNode) {
+                    const source = data.source ? String(data.source) : "cache";
+                    const model = data.model_used ? String(data.model_used) : "";
+                    metaNode.textContent = "Fuente: " + source + (model ? " | Modelo: " + model : "") + " | Propuestas: " + proposals.length;
+                }
+                renderThemeProposals(slug, proposals);
+            } catch (error) {
+                listNode.innerHTML = '<div class="empty-state" style="padding:14px 10px;"><div>Error cargando propuestas: ' + escapeHtml(error.message) + '</div></div>';
+            }
+        }
+
+        function renderThemeProposals(slug, proposals) {
+            const listNode = document.getElementById("theme-proposals-list");
+            if (!listNode) {
+                return;
+            }
+
+            if (!Array.isArray(proposals) || !proposals.length) {
+                listNode.innerHTML = '<div class="empty-state" style="padding:14px 10px;"><div>Aun no hay propuestas para este nicho.</div></div>';
+                return;
+            }
+
+            listNode.innerHTML = "";
+            proposals.forEach((proposal) => {
+                const id = String(proposal.id || "");
+                const title = String(proposal.title || "");
+                const angle = String(proposal.angle || "");
+                const hook = String(proposal.hook || "");
+                const score = Number(proposal.viral_score || 0).toFixed(1);
+
+                const node = document.createElement("article");
+                node.className = "theme-proposal-card";
+                node.innerHTML =
+                    '<div class="theme-proposal-head">' +
+                        '<div class="theme-proposal-title">' + escapeHtml(title || "Tema") + '</div>' +
+                        '<div class="theme-proposal-score">🔥 ' + escapeHtml(score) + '/10</div>' +
+                    '</div>' +
+                    '<div class="theme-proposal-angle"><strong>Angulo:</strong> ' + escapeHtml(angle || "-") + '</div>' +
+                    '<div class="theme-proposal-hook"><strong>Hook:</strong> ' + escapeHtml(hook || "-") + '</div>' +
+                    '<div class="theme-proposal-actions">' +
+                        '<button class="btn btn-primary" onclick="startPipelineWithTheme(\'' + escapeHtml(slug) + '\', \'' + escapeHtml(id) + '\')">Usar este tema y correr</button>' +
+                    '</div>';
+                listNode.appendChild(node);
+            });
+        }
+
+        async function proposeThemesForSelectedNicho() {
+            const slug = getSelectedThemeNicho();
+            const contextInput = document.getElementById("theme-context-input");
+            const context = contextInput ? String(contextInput.value || "").trim() : "";
+            if (!slug) {
+                toast("Selecciona un nicho para proponer temas", "warn");
+                return;
+            }
+
+            try {
+                const data = await fetchJson("/api/themes/proposals/" + encodeURIComponent(slug), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ count: 5, context: context }),
+                });
+                const proposals = Array.isArray(data && data.proposals) ? data.proposals : [];
+                themeProposalsBySlug[slug] = proposals;
+                renderThemeProposals(slug, proposals);
+
+                const metaNode = document.getElementById("theme-proposal-meta");
+                if (metaNode) {
+                    const source = data.source ? String(data.source) : "gemini";
+                    const model = data.model_used ? String(data.model_used) : "";
+                    metaNode.textContent = "Fuente: " + source + (model ? " | Modelo: " + model : "") + " | Propuestas: " + proposals.length;
+                }
+
+                toast("Propuestas generadas para " + slug, "success");
+            } catch (error) {
+                toast("No se pudieron generar propuestas: " + error.message, "error");
+            }
+        }
+
+        async function startPipelineWithTheme(slug, proposalId) {
+            if (!slug || !proposalId) {
+                toast("Falta propuesta para iniciar", "warn");
+                return;
+            }
+
+            const context = getRunContext();
+            try {
+                const data = await fetchJson("/api/themes/start/" + encodeURIComponent(slug), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        proposal_id: proposalId,
+                        checkpoints: Boolean(context.checkpoints),
+                        reference_url: context.referenceUrl,
+                        manual_ideas: context.manualIdeas,
+                        disable_image_cache: Boolean(context.disableImageCache),
+                        dry_run: false,
+                    }),
+                });
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                toast("Pipeline iniciado con tema seleccionado en " + slug, "success");
+                setTimeout(fetchNichos, 900);
+                setTimeout(fetchJobs, 1100);
+            } catch (error) {
+                toast("No se pudo iniciar con tema: " + error.message, "error");
             }
         }
 
@@ -2645,6 +3072,7 @@
             await Promise.allSettled([
                 fetchStatus(),
                 fetchExecutionMode(),
+                loadOpsConfig(),
                 fetchNichos(),
                 fetchJobs(),
                 fetchVideos(),
@@ -2799,12 +3227,6 @@
         setInterval(() => {
             const monitorPage = document.getElementById("page-monitor");
             if (monitorPage && monitorPage.classList.contains("active")) {
-                fetchResources();
-            }
-        }, 4000);
-    </script>
-</body>
-</html>            if (monitorPage && monitorPage.classList.contains("active")) {
                 fetchResources();
             }
         }, 4000);

@@ -6,6 +6,7 @@ Uses pathlib for all paths — Windows/Linux portable.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 from pathlib import Path
@@ -27,6 +28,28 @@ _ENV_FILE = _THIS_DIR / ".env"
 if not _ENV_FILE.exists():
     _ENV_FILE = _THIS_DIR.parent / ".env"  # fallback: parent dir
 load_dotenv(_ENV_FILE, override=False)
+
+
+def _normalize_google_application_credentials() -> None:
+    """Resolve GOOGLE_APPLICATION_CREDENTIALS to absolute path when possible.
+
+    This avoids ADC failures when the process runs from a different cwd.
+    """
+    raw = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    if not raw:
+        return
+
+    path = Path(raw)
+    if path.is_absolute():
+        return
+
+    for candidate in [(_THIS_DIR / path).resolve(), (_THIS_DIR.parent / path).resolve()]:
+        if candidate.exists():
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(candidate)
+            return
+
+
+_normalize_google_application_credentials()
 
 
 # Module-level counter for Gemini key rotation (mutable list trick)
@@ -54,7 +77,12 @@ class Settings(BaseSettings):
     gemini_api_key2: str = ""
     gemini_api_key3: str = ""
     gemini_api_key4: str = ""
-    gemini_chat_models: str = "gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash,gemini-3-flash"
+    gemini_chat_models: str = "gemini-3.1-pro-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash-001"
+    # PRIMARY_LLM is accepted as compatibility alias when GEMINI_TEXT_MODEL is not set.
+    gemini_text_model: str = os.getenv("PRIMARY_LLM", "gemini-3.1-pro-preview")
+    gemini_vision_model: str = "gemini-2.5-pro"
+    gemini_tts_model: str = "gemini-2.5-flash-preview-tts"
+    image_generation_model: str = "gemini-2.0-flash-preview-image-generation"
     gemini_key_cooldown_seconds: int = 25
     gemini_model_cooldown_seconds: int = 600
     gemini_enable_usage_stats: bool = True
@@ -66,6 +94,16 @@ class Settings(BaseSettings):
     elevenlabs_model_id: str = "eleven_multilingual_v2"
     elevenlabs_stability: float = 0.45
     elevenlabs_similarity_boost: float = 0.75
+
+    # Google Cloud TTS (premium provider)
+    use_google_tts: bool = False
+    google_tts_api_key: str = ""
+    google_tts_service_account_json: str = ""
+    google_tts_voice_name: str = "es-US-Neural2-A"
+    google_tts_language_code: str = "es-US"
+    google_tts_speaking_rate: float = 1.0
+    google_tts_pitch: float = 0.0
+    google_tts_timeout_seconds: int = 45
 
     # Pexels (up to 4 keys)
     pexels_api_key: str = ""
@@ -162,10 +200,10 @@ class Settings(BaseSettings):
     fact_verification_skip_for_nichos: str = ""  # Comma-separated slugs to skip
     
     # Memory management (RAM limit disabled - use full available memory)
-    max_ram_percent_per_job: float = 100.0  # Use all available RAM (no limit)
-    enable_memory_streaming: bool = False   # Disabled - keep everything in RAM
-    frame_buffer_seconds: int = 300       # Large buffer for full videos
-    force_gc_between_stages: bool = False   # Disabled - let Python manage memory
+    max_ram_percent_per_job: float = 85.0
+    enable_memory_streaming: bool = False
+    frame_buffer_seconds: int = 120
+    force_gc_between_stages: bool = False
 
     # OpenMontage free-tools rollout (V15)
     enable_openmontage_free_tools: bool = True
@@ -198,6 +236,12 @@ class Settings(BaseSettings):
     output_retention_days: int = 0
     min_disk_space_gb: float = 2.0
     niches_config_path: str = ""
+    
+    # Vertex AI (Enterprise)
+    use_vertex_ai: bool = False
+    vertex_project_id: str = ""
+    vertex_location: str = "global"
+    enable_image_cache: bool = True
     media_cache_ttl_days: int = 7
     generated_images_count: int = 6
 
@@ -233,10 +277,11 @@ class Settings(BaseSettings):
     def get_gemini_chat_models(self) -> list[str]:
         """Return ordered Gemini chat models allowed for this deployment."""
         default_models = [
-            "gemini-3.1-flash-lite",
-            "gemini-2.5-flash-lite",
+            self.gemini_text_model or os.getenv("PRIMARY_LLM") or "gemini-3.1-pro-preview",
+            "gemini-3.1-pro-preview",
+            "gemini-2.5-pro",
             "gemini-2.5-flash",
-            "gemini-3-flash",
+            "gemini-2.0-flash-001",
         ]
         configured = [m.strip() for m in (self.gemini_chat_models or "").split(",") if m.strip()]
         models = configured or default_models
@@ -286,8 +331,48 @@ class Settings(BaseSettings):
         """Whether Piper offline TTS is configured and model file exists."""
         if not self.use_piper_tts:
             return False
+        if not (self.piper_model_path or "").strip():
+            return False
         model_path = self.resolved_piper_model_path()
-        return bool(model_path and model_path.exists())
+        return model_path.exists() and model_path.is_file()
+
+    def resolved_google_tts_service_account_path(self) -> Path:
+        """Return Google TTS service account path resolved against project base dir."""
+        cfg = (self.google_tts_service_account_json or "").strip()
+        if not cfg:
+            return Path("")
+        path = Path(cfg)
+        if not path.is_absolute():
+            path = self.base_dir / path
+        return path
+
+    def google_tts_service_account_configured(self) -> bool:
+        """Whether a valid local service account JSON path is configured."""
+        if not (self.google_tts_service_account_json or "").strip():
+            return False
+        path = self.resolved_google_tts_service_account_path()
+        return path.exists() and path.is_file()
+
+    def google_tts_effective_enabled(self) -> bool:
+        """Google TTS can run when enabled and has at least one auth path hint.
+
+        Auth hints accepted:
+        - GOOGLE_TTS_API_KEY
+        - GOOGLE_TTS_SERVICE_ACCOUNT_JSON
+        - GOOGLE_APPLICATION_CREDENTIALS (external env)
+        - Vertex mode with project configured
+        """
+        if not self.use_google_tts:
+            return False
+        if self.google_tts_api_key:
+            return True
+        if self.google_tts_service_account_configured():
+            return True
+        if (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip():
+            return True
+        if self.use_vertex_ai and bool(self.vertex_project_id):
+            return True
+        return False
 
     # --- Rollout / policy helpers ---
 
@@ -299,7 +384,11 @@ class Settings(BaseSettings):
             "use_remotion": self.use_remotion,
             "force_ffmpeg_renderer": self.force_ffmpeg_renderer,
             "use_piper_tts": self.use_piper_tts,
+            "use_google_tts": self.use_google_tts,
+            "google_tts_effective_enabled": self.google_tts_effective_enabled(),
+            "use_vertex_ai": self.use_vertex_ai,
             "prefer_stock_images": self.prefer_stock_images,
+            "enable_image_cache": self.enable_image_cache,
             "tts_use_script_text": self.tts_use_script_text,
             "subtitles_use_script_text": self.subtitles_use_script_text,
             "enable_web_research_plus": self.enable_web_research_plus,
@@ -432,6 +521,8 @@ class Settings(BaseSettings):
             "azure_openai",
             "openrouter",
             "elevenlabs",
+            "google_tts",
+            "google-cloud-tts",
             "veo",
         }
 
@@ -600,8 +691,14 @@ class Settings(BaseSettings):
         missing = []
         if not self.github_token:
             missing.append("GITHUB_TOKEN")
-        if not self.gemini_api_key and not self.elevenlabs_api_key and not self.piper_ready():
-            missing.append("GEMINI_API_KEY or ELEVENLABS_API_KEY")
+        if (
+            not self.get_gemini_keys()
+            and not (self.use_vertex_ai and bool(self.vertex_project_id))
+            and not self.elevenlabs_api_key
+            and not self.piper_ready()
+            and not self.use_google_tts
+        ):
+            missing.append("GEMINI_API_KEY or ELEVENLABS_API_KEY or enable USE_GOOGLE_TTS")
         if not self.pexels_keys:
             missing.append("PEXELS_API_KEY (at least one)")
         if not self.telegram_bot_token:
@@ -619,9 +716,16 @@ class Settings(BaseSettings):
             critical_missing.append("GITHUB_TOKEN (needed for AI content generation via Azure)")
         if not self.pexels_keys:
             critical_missing.append("PEXELS_API_KEY (needed for stock videos — at least 1 of 4)")
-        if not self.get_gemini_keys() and not self.elevenlabs_api_key and not self.piper_ready():
+        if (
+            not self.get_gemini_keys()
+            and not (self.use_vertex_ai and bool(self.vertex_project_id))
+            and not self.elevenlabs_api_key
+            and not self.piper_ready()
+            and not self.use_google_tts
+        ):
             critical_missing.append(
                 "GEMINI_API_KEY (at least 1 of 4) or ELEVENLABS_API_KEY (TTS) "
+                "or enable USE_GOOGLE_TTS "
                 "or enable USE_PIPER_TTS with a valid PIPER_MODEL_PATH"
             )
 

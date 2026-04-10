@@ -68,14 +68,14 @@ def _script_profile(platform: str) -> tuple[int, int, str]:
     """Return target script length profile by platform."""
     p = (platform or "").lower()
     if p == "facebook":
-        return 170, 260, "70-120 segundos"
+        return 190, 240, "70-120 segundos"
     if p == "reels":
-        return 130, 200, "50-90 segundos"
+        return 180, 220, "60-90 segundos"
     if p == "shorts":
-        return 120, 185, "45-75 segundos"
+        return 180, 220, "60-90 segundos"
     if p == "tiktok":
-        return 130, 200, "50-90 segundos"
-    return 120, 180, "45-75 segundos"
+        return 180, 220, "60-90 segundos"
+    return 180, 220, "60-90 segundos"
 
 
 def _script_word_count(data: dict) -> int:
@@ -223,15 +223,15 @@ class ScriptAgent:
             )
             
         few_shot_examples = """
-EJEMPLOS DE GUIONES DE ALTA RETENCIÓN (COPIA ESTE RITMO):
+EJEMPLOS DE TONO DE ALTA RETENCIÓN (Tu guion DEBE ser mucho más largo que estos ejemplos, profundizando en la explicación):
 
 EJEMPLO 1 (Misterio/Psicología):
 "gancho": "Esta es la razón por la que te sientes cansado todo el tiempo...",
-"guion": "Y no, no es por falta de sueño. Se llama 'fatiga de decisión'. Tu cerebro toma más de 35,000 decisiones al día. Al llegar a las 4 PM, tu corteza prefrontal está literalmente frita. Por eso pides comida chatarra en lugar de cocinar. El truco militar para evitarlo: planea tu día la noche anterior. Aplícalo hoy y verás la diferencia."
+"guion": "Y no, no es por falta de sueño. Se llama 'fatiga de decisión'. Tu cerebro toma más de 35,000 decisiones al día. Al llegar a las 4 PM, tu corteza prefrontal está literalmente frita. Por eso pides comida chatarra en lugar de cocinar. (Aquí continuas desarrollando el problema con datos reales, estudios, y un cierre mucho más extenso...)"
 
 EJEMPLO 2 (Finanzas/Éxito):
 "gancho": "Si ganas menos de $2000 al mes, deja de hacer esto...",
-"guion": "Ahorrar el 10% no te hará rico. Te están mintiendo. La inflación está en 4%, el banco te da 1%. Pierdes dinero todos los días. Lo que necesitas no es ahorrar, es multiplicar. Aprender a vender o programar te dará un ROI del 1000%. Cambia tu mentalidad de consumidor a productor."
+"guion": "Ahorrar el 10% no te hará rico. Te están mintiendo. La inflación está en 4%, el banco te da 1%. Pierdes dinero todos los días. Lo que necesitas no es ahorrar, es multiplicar. Aprender a vender o programar te dará un ROI del 1000%. Cambia tu mentalidad de consumidor a productor. (El guion real debe seguir profundizando y dar pasos aplicables reales...)"
 """
 
         # V16: Load all script skills
@@ -251,24 +251,20 @@ OUTLINE APROBADO:
 {few_shot_examples}
 {skills_block}
 
-REGLAS MAESTRAS:
-- Gancho en <=1.8 segundos con polarización real.
-- En los primeros 3 segundos rompe una creencia popular o revela una trampa oculta.
-- Si existen IDEAS_MANUALES_PRIORITARIAS, deben guiar el angulo principal del guion.
+REGLAS MAESTRAS Y NEGATIVE PROMPTS (MANDATORIO):
+- PROHIBIDO: No saludes ("Hola a todos"), no te presentes ("Soy tu presentador").
+- PROHIBIDO: Estilo Wikipedia o ensayo escolar. Ve directo al problema, controversia o punto de fricción.
+- Gancho en <=1.8 segundos con polarización real. En los primeros 3s rompe una creencia popular.
 - Incluye un mini-climax antes del cierre: sube tension, revela giro y entrega payoff claro.
-- Usa polemica controlada: cuestiona creencias comunes sin inventar datos ni difamar.
 - Escribe 3 variantes de gancho: shock, pregunta, promesa.
-- Longitud objetivo para {platform}: {word_min}-{word_max} palabras (~{target_duration}) con claridad explicativa.
-- Frases cortas de 5 a 12 palabras.
-- Cliffhangers cada 8-10 segundos.
-- Evita tono enciclopédico; usa conflicto, fricción y consecuencia directa.
-- Incluir 2 a 4 muletillas humanas naturales (mira, o sea, te digo algo, ...).
+- Longitud OBLIGATORIA para {platform}: STRICTAMENTE entre {word_min} y {word_max} palabras. SI ES MÁS CORTO, SERÁ RECHAZADO.
+- Frases cortas de 5 a 12 palabras. Cliffhangers cada 8-10 segundos.
+- Usa conflicto, fricción y consecuencia directa. No seas genérico ("aplica esto a tu vida").
+- Incluir 2 a 4 muletillas humanas naturales (mira, o sea, seamos sinceros, la verdad es que).
 - PROHIBIDO: No uses comillas dobles en los textos generados.
-- El CTA debe existir SOLO en el campo cta. No lo repitas dentro del campo guion.
-- NO incluyas frases de despedida ni de "guarda este video" al final del campo guion. El guion debe terminar en el clímax narrativo. El campo cta se encargará del cierre.
-- Si el guion termina con un "comenta..." o "sígueme...", SERÁ CONSIDERADO UN ERROR.
-- Mantener coherencia total con el OUTLINE y el CONTEXTO NARRATIVO.
-- Si hay conflicto de fuentes, respeta estrictamente: {state.precedence_rule}.
+- NO incluyas frases de despedida, ni pidas "like", ni pidas "guarda este video" en el campo guion. El guion debe terminar en el clímax narrativo. El campo cta es otra cosa.
+- Las 'palabras_clave' DEBEN ser traducciones a INTENCIONES VISUALES en INGLÉS (ej. "red stock chart falling", "person worried laptop"). NO repitas el guion literalmente.
+- Mantener coherencia total con el OUTLINE. Si hay conflicto de fuentes, respeta estrictamente: {state.precedence_rule}.
 
 RUBRICA OBLIGATORIA (0-10):
 - hook_score: fuerza de apertura y curiosidad inmediata.
@@ -307,7 +303,7 @@ Devuelve EXACTAMENTE este JSON:
   "cta": "cta breve natural de una oración",
   "caption": "caption max 160 caracteres con 3 hashtags",
   "key_points": ["punto clave 1", "punto clave 2", "punto clave 3"],
-  "palabras_clave": ["kw1","kw2","kw3","kw4","kw5","kw6","kw7","kw8"],
+  "palabras_clave": ["visual concept 1", "aesthetic scene 2", "b-roll action 3", "cinematic shot 4"],
   "mood_musica": "cinematic|motivational|dark|ambient|epic",
   "velocidad_cortes": "ultra_rapido|rapido|mixto|cinematografico",
   "prompt_imagen": "thumbnail prompt in English with {nicho.direccion_visual}",

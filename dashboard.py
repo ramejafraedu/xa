@@ -16,11 +16,13 @@ import asyncio
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from urllib.parse import quote
 from datetime import date, datetime
 from pathlib import Path
@@ -41,6 +43,7 @@ from models.content import JobManifest, JobStatus
 from services.niche_memory import (
     add_niche_memory_entry,
     delete_niche_memory_entry,
+    get_niche_memory_lines,
     list_niche_memory,
     move_niche_memory_entry,
     update_niche_memory_entry,
@@ -84,6 +87,178 @@ app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 # Active pipeline runs
 _active_runs: dict[str, dict] = {}
+_theme_proposals_path = settings.temp_dir / "theme_proposals.json"
+
+
+def _read_theme_proposals_store() -> dict:
+    data = _read_json_file(_theme_proposals_path)
+    return data if isinstance(data, dict) else {}
+
+
+def _write_theme_proposals_store(data: dict) -> None:
+    settings.ensure_dirs()
+    _theme_proposals_path.parent.mkdir(parents=True, exist_ok=True)
+    _theme_proposals_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _persist_env_updates(updates: dict[str, str]) -> str:
+    """Persist a small whitelist of runtime ops flags to .env."""
+    env_path = settings.base_dir / ".env"
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = []
+
+    for key, value in updates.items():
+        replaced = False
+        pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+        for idx, line in enumerate(lines):
+            if pattern.match(line):
+                lines[idx] = f"{key}={value}"
+                replaced = True
+                break
+        if not replaced:
+            lines.append(f"{key}={value}")
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(env_path)
+
+
+def _as_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "si", "s"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "n"}:
+            return False
+    return default
+
+
+def _recent_titles_for_nicho(nicho_slug: str, limit: int = 14) -> list[str]:
+    titles: list[str] = []
+    seen: set[str] = set()
+    for manifest in _collect_recent_manifests(limit=120):
+        if str(manifest.get("nicho_slug", "")).strip().lower() != nicho_slug:
+            continue
+        title = str(manifest.get("titulo", "") or manifest.get("publish_title", "")).strip()
+        if not title:
+            continue
+        key = title.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        titles.append(title)
+        if len(titles) >= max(1, int(limit)):
+            break
+    return titles
+
+
+def _extract_json_payload(text: str) -> object:
+    """Best-effort extraction of JSON object/array from LLM text output."""
+    clean = re.sub(r"```json\s*", "", str(text or ""), flags=re.IGNORECASE)
+    clean = re.sub(r"```\s*", "", clean).strip()
+
+    try:
+        return json.loads(clean)
+    except Exception:
+        pass
+
+    # Try array first
+    start_arr = clean.find("[")
+    end_arr = clean.rfind("]")
+    if start_arr != -1 and end_arr > start_arr:
+        candidate = clean[start_arr:end_arr + 1]
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    # Try object next
+    start_obj = clean.find("{")
+    end_obj = clean.rfind("}")
+    if start_obj != -1 and end_obj > start_obj:
+        candidate = clean[start_obj:end_obj + 1]
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    return []
+
+
+def _normalize_theme_proposals(raw: object, count: int) -> list[dict]:
+    proposals_raw = raw
+    if isinstance(raw, dict):
+        proposals_raw = raw.get("proposals", [])
+
+    if not isinstance(proposals_raw, list):
+        proposals_raw = []
+
+    proposals: list[dict] = []
+    for idx, item in enumerate(proposals_raw):
+        if idx >= count:
+            break
+
+        if isinstance(item, str):
+            title = item.strip()
+            angle = ""
+            hook = ""
+            score = 7.0
+        elif isinstance(item, dict):
+            title = str(item.get("title") or item.get("tema") or "").strip()
+            angle = str(item.get("angle") or item.get("angulo") or "").strip()
+            hook = str(item.get("hook") or item.get("gancho") or "").strip()
+            try:
+                score = float(item.get("viral_score", item.get("score", 7.0)) or 7.0)
+            except (TypeError, ValueError):
+                score = 7.0
+        else:
+            continue
+
+        if not title:
+            continue
+
+        score = max(0.0, min(10.0, float(score)))
+        proposals.append({
+            "id": uuid.uuid4().hex[:12],
+            "title": title[:120],
+            "angle": angle[:180],
+            "hook": hook[:180],
+            "viral_score": round(score, 1),
+        })
+
+    return proposals
+
+
+def _fallback_theme_proposals(nicho_slug: str, count: int, seed_topics: list[str]) -> list[dict]:
+    proposals: list[dict] = []
+    for idx, topic in enumerate(seed_topics[:count]):
+        clean_topic = str(topic or "").strip()
+        if not clean_topic:
+            continue
+        proposals.append({
+            "id": uuid.uuid4().hex[:12],
+            "title": clean_topic[:120],
+            "angle": f"Revelar una perspectiva contraintuitiva sobre {clean_topic}"[:180],
+            "hook": f"Esto cambia cómo entiendes {clean_topic}"[:180],
+            "viral_score": round(max(6.5, 8.6 - (idx * 0.3)), 1),
+        })
+
+    while len(proposals) < count:
+        n = len(proposals) + 1
+        proposals.append({
+            "id": uuid.uuid4().hex[:12],
+            "title": f"Tema nuevo {n} para {nicho_slug}",
+            "angle": "Contarlo con conflicto, evidencia y giro final",
+            "hook": "Lo que casi nadie te explicó de este tema",
+            "viral_score": 7.0,
+        })
+
+    return proposals[:count]
 
 
 def _read_json_file(path: Path) -> Optional[dict]:
@@ -928,6 +1103,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
         manifest = _load_manifest_by_job_id(j.get("job_id", ""))
         if manifest:
             j["execution_mode"] = manifest.get("execution_mode", settings.execution_mode_label())
+            j["render_backend"] = manifest.get("render_backend", "")
             j["reference_url"] = manifest.get("reference_url", "")
             j["manual_ideas"] = manifest.get("manual_ideas", [])
             j["reference_delivery_promise"] = manifest.get("reference_delivery_promise", "")
@@ -964,6 +1140,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
                     "timeline_json_path": data.get("timeline_json_path", ""),
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
+                    "render_backend": data.get("render_backend", ""),
                     **_publish_fields(data),
                     "source": "output",
                 })
@@ -991,6 +1168,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
                     "timeline_json_path": data.get("timeline_json_path", ""),
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
+                    "render_backend": data.get("render_backend", ""),
                     **_publish_fields(data),
                     "source": "review",
                 })
@@ -1009,6 +1187,7 @@ async def run_niche(
     checkpoints: bool = False,
     reference_url: str = "",
     manual_ideas: str = "",
+    disable_image_cache: bool = False,
 ):
     """Trigger a pipeline run for a niche."""
     if nicho_slug not in NICHOS:
@@ -1022,6 +1201,7 @@ async def run_niche(
         "reference_url": reference_url,
         "manual_ideas": manual_ideas,
         "checkpoint_mode": "web" if checkpoints else "auto",
+        "disable_image_cache": bool(disable_image_cache),
     }
     background_tasks.add_task(
         _run_pipeline_bg,
@@ -1031,6 +1211,7 @@ async def run_niche(
         reference_url,
         manual_ideas,
         checkpoints,
+        disable_image_cache,
     )
     return {
         "status": "started",
@@ -1039,6 +1220,7 @@ async def run_niche(
         "checkpoints": checkpoints,
         "reference_url": reference_url,
         "manual_ideas": manual_ideas,
+        "disable_image_cache": bool(disable_image_cache),
     }
 
 
@@ -1048,15 +1230,17 @@ async def run_all(
     checkpoints: bool = False,
     reference_url: str = "",
     manual_ideas: str = "",
+    disable_image_cache: bool = False,
 ):
     """Trigger all 5 nichos sequentially."""
-    background_tasks.add_task(_run_all_bg, checkpoints, reference_url, manual_ideas)
+    background_tasks.add_task(_run_all_bg, checkpoints, reference_url, manual_ideas, disable_image_cache)
     return {
         "status": "started",
         "nichos": list(NICHOS.keys()),
         "checkpoints": checkpoints,
         "reference_url": reference_url,
         "manual_ideas": manual_ideas,
+        "disable_image_cache": bool(disable_image_cache),
     }
 
 
@@ -1066,6 +1250,7 @@ async def resume_job(
     background_tasks: BackgroundTasks,
     checkpoints: bool = False,
     manual_ideas: str = "",
+    disable_image_cache: bool = False,
 ):
     """Resume a crashed job."""
     state = StateManager(settings.temp_dir)
@@ -1083,6 +1268,7 @@ async def resume_job(
         "reference_url": getattr(manifest, "reference_url", ""),
         "manual_ideas": resume_manual_ideas,
         "checkpoint_mode": "web" if checkpoints else "auto",
+        "disable_image_cache": bool(disable_image_cache),
     }
     background_tasks.add_task(
         _run_pipeline_bg,
@@ -1092,12 +1278,14 @@ async def resume_job(
         getattr(manifest, "reference_url", ""),
         resume_manual_ideas,
         checkpoints,
+        disable_image_cache,
     )
     return {
         "status": "resuming",
         "job_id": job_id,
         "checkpoints": checkpoints,
         "manual_ideas": resume_manual_ideas,
+        "disable_image_cache": bool(disable_image_cache),
     }
 
 
@@ -1398,6 +1586,332 @@ async def execution_mode_status():
     }
 
 
+@app.get("/api/config/operations")
+async def operations_config():
+    """Return runtime-editable operational config used by dashboard controls."""
+    return {
+        "use_remotion": bool(settings.use_remotion),
+        "force_ffmpeg_renderer": bool(settings.force_ffmpeg_renderer),
+        "prefer_stock_images": bool(settings.prefer_stock_images),
+        "enable_image_cache": bool(settings.enable_image_cache),
+        "generated_images_count": int(settings.generated_images_count),
+        "media_cache_ttl_days": int(settings.media_cache_ttl_days),
+        "feature_flags": settings.active_feature_flags(),
+    }
+
+
+@app.post("/api/config/operations")
+async def operations_config_update(payload: dict = Body(...)):
+    """Update a safe whitelist of operational flags at runtime (and persist to .env)."""
+    updates: dict[str, object] = {}
+    env_updates: dict[str, str] = {}
+
+    if "use_remotion" in payload:
+        value = _as_bool(payload.get("use_remotion"), default=settings.use_remotion)
+        settings.use_remotion = value
+        updates["use_remotion"] = value
+        env_updates["USE_REMOTION"] = "true" if value else "false"
+
+    if "force_ffmpeg_renderer" in payload:
+        value = _as_bool(payload.get("force_ffmpeg_renderer"), default=settings.force_ffmpeg_renderer)
+        settings.force_ffmpeg_renderer = value
+        updates["force_ffmpeg_renderer"] = value
+        env_updates["FORCE_FFMPEG_RENDERER"] = "true" if value else "false"
+
+    if "prefer_stock_images" in payload:
+        value = _as_bool(payload.get("prefer_stock_images"), default=settings.prefer_stock_images)
+        settings.prefer_stock_images = value
+        updates["prefer_stock_images"] = value
+        env_updates["PREFER_STOCK_IMAGES"] = "true" if value else "false"
+
+    if "enable_image_cache" in payload:
+        value = _as_bool(payload.get("enable_image_cache"), default=settings.enable_image_cache)
+        settings.enable_image_cache = value
+        updates["enable_image_cache"] = value
+        env_updates["ENABLE_IMAGE_CACHE"] = "true" if value else "false"
+
+    if "generated_images_count" in payload:
+        try:
+            value = max(1, min(20, int(payload.get("generated_images_count"))))
+            settings.generated_images_count = value
+            updates["generated_images_count"] = value
+            env_updates["GENERATED_IMAGES_COUNT"] = str(value)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="generated_images_count must be an integer")
+
+    if "media_cache_ttl_days" in payload:
+        try:
+            value = max(0, min(30, int(payload.get("media_cache_ttl_days"))))
+            settings.media_cache_ttl_days = value
+            updates["media_cache_ttl_days"] = value
+            env_updates["MEDIA_CACHE_TTL_DAYS"] = str(value)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="media_cache_ttl_days must be an integer")
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid operation keys received")
+
+    persisted_path = ""
+    if _as_bool(payload.get("persist", True), default=True):
+        persisted_path = _persist_env_updates(env_updates)
+
+    return {
+        "status": "updated",
+        "updated": updates,
+        "persisted": bool(persisted_path),
+        "env_path": persisted_path,
+        "feature_flags": settings.active_feature_flags(),
+    }
+
+
+@app.get("/api/config/remotion-diagnostics")
+async def remotion_diagnostics():
+    """Deep diagnostics to explain why Remotion is or is not available."""
+    from pipeline.renderer_remotion import REMOTION_DIR, is_remotion_available
+
+    package_json = REMOTION_DIR / "package.json"
+    node_modules = REMOTION_DIR / "node_modules"
+    npx_path = shutil.which("npx") or shutil.which("npx.cmd")
+    node_path = shutil.which("node")
+
+    node_version = ""
+    if node_path:
+        try:
+            probe = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=6)
+            if probe.returncode == 0:
+                node_version = probe.stdout.strip()
+        except Exception:
+            node_version = ""
+
+    checks = {
+        "use_remotion_flag": bool(settings.use_remotion),
+        "force_ffmpeg_renderer_flag": bool(settings.force_ffmpeg_renderer),
+        "composer_dir_exists": REMOTION_DIR.exists(),
+        "package_json_exists": package_json.exists(),
+        "node_modules_exists": node_modules.exists(),
+        "npx_available": bool(npx_path),
+        "node_available": bool(node_path),
+    }
+    missing = [k for k, ok in checks.items() if not ok]
+
+    recommendation = "Remotion available"
+    if not checks["node_available"]:
+        recommendation = "Instala Node.js LTS y npm en el servidor"
+    elif not checks["npx_available"]:
+        recommendation = "Asegura npm en PATH para exponer npx"
+    elif not checks["node_modules_exists"]:
+        recommendation = "Ejecuta: cd remotion-composer && npm install"
+    elif checks["force_ffmpeg_renderer_flag"]:
+        recommendation = "Desactiva FORCE_FFMPEG_RENDERER para usar Remotion"
+    elif not checks["use_remotion_flag"]:
+        recommendation = "Activa USE_REMOTION=true para usar Remotion"
+
+    return {
+        "checks": checks,
+        "missing_requirements": missing,
+        "node_version": node_version,
+        "node_path": node_path or "",
+        "npx_path": npx_path or "",
+        "composer_dir": str(REMOTION_DIR),
+        "overall_available": bool(is_remotion_available()),
+        "recommendation": recommendation,
+    }
+
+
+@app.get("/api/themes/proposals/{nicho_slug}")
+async def get_theme_proposals(nicho_slug: str):
+    """Return latest generated theme proposals for one niche."""
+    slug = nicho_slug.strip().lower()
+    if slug not in NICHOS:
+        raise HTTPException(status_code=400, detail=f"Unknown niche: {nicho_slug}")
+
+    store = _read_theme_proposals_store()
+    entry = store.get(slug, {}) if isinstance(store.get(slug, {}), dict) else {}
+    return {
+        "nicho_slug": slug,
+        "updated_at": int(entry.get("updated_at", 0) or 0),
+        "count": len(entry.get("proposals", []) if isinstance(entry.get("proposals", []), list) else []),
+        "model_used": str(entry.get("model_used", "") or ""),
+        "source": str(entry.get("source", "") or ""),
+        "proposals": entry.get("proposals", []) if isinstance(entry.get("proposals", []), list) else [],
+        "avoid_topics": entry.get("avoid_topics", []) if isinstance(entry.get("avoid_topics", []), list) else [],
+    }
+
+
+@app.post("/api/themes/proposals/{nicho_slug}")
+async def generate_theme_proposals(nicho_slug: str, payload: dict = Body(default={})):
+    """Generate theme proposals with Gemini so user can pick one before running pipeline."""
+    slug = nicho_slug.strip().lower()
+    if slug not in NICHOS:
+        raise HTTPException(status_code=400, detail=f"Unknown niche: {nicho_slug}")
+
+    try:
+        count = max(1, min(8, int(payload.get("count", 5) or 5)))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="count must be an integer")
+
+    context_hint = str(payload.get("context", "") or "").strip()
+    recent_titles = _recent_titles_for_nicho(slug, limit=12)
+    local_memory = get_niche_memory_lines(slug, limit=10)
+
+    seed_topics: list[str] = []
+    try:
+        from services.trends import get_trending_signals
+
+        signals = get_trending_signals(NICHOS[slug].nombre, settings.rapidapi_key)
+        seed_topics = [str(t) for t in signals.get("merged_topics", []) if str(t).strip()]
+    except Exception as exc:
+        logger.debug(f"Theme proposals: trends fetch failed ({slug}): {exc}")
+
+    model_used = ""
+    raw_text = ""
+    try:
+        from services.llm_router import call_llm_primary_gemini
+
+        system_prompt = (
+            "Eres un estratega de contenido viral en espanol. "
+            "Genera propuestas de tema NO repetidas y listas para producir video. "
+            "Devuelve SOLO JSON valido con formato: "
+            "{\"proposals\":[{\"title\":\"...\",\"angle\":\"...\",\"hook\":\"...\",\"viral_score\":8.5}]}."
+        )
+        user_prompt = (
+            f"NICHO: {NICHOS[slug].nombre}\n"
+            f"COUNT: {count}\n"
+            f"CONTEXTO_ADICIONAL: {context_hint or 'N/A'}\n"
+            f"TENDENCIAS: {' | '.join(seed_topics[:10]) or 'N/A'}\n"
+            f"TEMAS_RECIENTES_A_EVITAR: {' | '.join(recent_titles[:12]) or 'N/A'}\n"
+            f"MEMORIA_LOCAL: {' | '.join(local_memory[:10]) or 'N/A'}\n"
+            "Reglas: titulos concretos (<=12 palabras), angulo narrativo claro, gancho potente."
+        )
+
+        raw_text, model_used = call_llm_primary_gemini(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.9,
+            timeout=45,
+            max_retries=1,
+            purpose="dashboard_theme_proposals",
+        )
+    except Exception as exc:
+        logger.warning(f"Theme proposals generation failed ({slug}): {exc}")
+
+    parsed = _extract_json_payload(raw_text)
+    proposals = _normalize_theme_proposals(parsed, count=count)
+
+    avoid_set = {x.strip().lower() for x in recent_titles if str(x).strip()}
+    filtered: list[dict] = []
+    for item in proposals:
+        title = str(item.get("title", "")).strip()
+        if not title:
+            continue
+        if title.lower() in avoid_set:
+            continue
+        filtered.append(item)
+    proposals = filtered
+
+    source = "gemini"
+    if not proposals:
+        proposals = _fallback_theme_proposals(slug, count=count, seed_topics=seed_topics or recent_titles)
+        source = "fallback"
+
+    store = _read_theme_proposals_store()
+    store[slug] = {
+        "updated_at": int(time.time()),
+        "model_used": model_used,
+        "source": source,
+        "context": context_hint,
+        "avoid_topics": recent_titles[:12],
+        "proposals": proposals,
+    }
+    _write_theme_proposals_store(store)
+
+    return {
+        "nicho_slug": slug,
+        "count": len(proposals),
+        "model_used": model_used,
+        "source": source,
+        "avoid_topics": recent_titles[:12],
+        "proposals": proposals,
+    }
+
+
+@app.post("/api/themes/start/{nicho_slug}")
+async def start_with_theme_selection(
+    nicho_slug: str,
+    background_tasks: BackgroundTasks,
+    payload: dict = Body(...),
+):
+    """Start a pipeline run using one selected proposal as manual ideas."""
+    slug = nicho_slug.strip().lower()
+    if slug not in NICHOS:
+        return {"error": f"Unknown niche: {nicho_slug}"}
+
+    if slug in _active_runs:
+        return {"error": f"{slug} is already running", "job_id": _active_runs[slug].get("job_id")}
+
+    proposal_id = str(payload.get("proposal_id", "") or "").strip()
+    checkpoints = _as_bool(payload.get("checkpoints", False), default=False)
+    dry_run = _as_bool(payload.get("dry_run", False), default=False)
+    reference_url = str(payload.get("reference_url", "") or "").strip()
+    extra_manual = str(payload.get("manual_ideas", "") or "").strip()
+    disable_image_cache = _as_bool(payload.get("disable_image_cache", False), default=False)
+
+    store = _read_theme_proposals_store()
+    proposals = store.get(slug, {}).get("proposals", []) if isinstance(store.get(slug, {}), dict) else []
+    selected = next((p for p in proposals if str(p.get("id", "")) == proposal_id), None)
+
+    if not selected and payload.get("proposal") and isinstance(payload.get("proposal"), dict):
+        selected = payload.get("proposal")
+
+    if not selected:
+        return {"error": "proposal_id not found for niche"}
+
+    manual_parts = [
+        str(selected.get("title", "") or "").strip(),
+        str(selected.get("angle", "") or "").strip(),
+        str(selected.get("hook", "") or "").strip(),
+    ]
+    if extra_manual:
+        manual_parts.append(extra_manual)
+    manual_ideas = " | ".join([p for p in manual_parts if p])
+
+    if isinstance(store.get(slug, {}), dict):
+        store[slug]["selected_proposal_id"] = proposal_id
+        store[slug]["selected_at"] = int(time.time())
+        _write_theme_proposals_store(store)
+
+    _active_runs[slug] = {
+        "started": time.time(),
+        "job_id": "starting...",
+        "reference_url": reference_url,
+        "manual_ideas": manual_ideas,
+        "checkpoint_mode": "web" if checkpoints else "auto",
+        "theme_proposal_id": proposal_id,
+        "disable_image_cache": disable_image_cache,
+    }
+    background_tasks.add_task(
+        _run_pipeline_bg,
+        slug,
+        dry_run,
+        "",
+        reference_url,
+        manual_ideas,
+        checkpoints,
+        disable_image_cache,
+    )
+
+    return {
+        "status": "started",
+        "nicho": slug,
+        "dry_run": dry_run,
+        "checkpoints": checkpoints,
+        "reference_url": reference_url,
+        "manual_ideas": manual_ideas,
+        "selected_proposal": selected,
+        "disable_image_cache": disable_image_cache,
+    }
+
+
 @app.get("/api/providers/status")
 async def provider_status():
     """Return provider health/scoring state used by ProviderSelector."""
@@ -1636,11 +2150,15 @@ def _run_pipeline_bg(
     reference_url: str = "",
     manual_ideas: str = "",
     checkpoints: bool = False,
+    disable_image_cache: bool = False,
 ):
     """Run pipeline in background thread (AUTO by default; WEB only when requested)."""
     try:
         from core.pipeline_v15 import run_pipeline_v15
         mode = DirectorMode.WEB if checkpoints else DirectorMode.AUTO
+        runtime_overrides: dict[str, object] = {}
+        if disable_image_cache:
+            runtime_overrides["disable_image_cache"] = True
         logger.info(f"🚀 Starting V15 {mode.value.upper()} Pipeline for {nicho_slug}")
         result = run_pipeline_v15(
             nicho_slug,
@@ -1649,6 +2167,7 @@ def _run_pipeline_bg(
             mode=mode,
             reference_url=reference_url,
             manual_ideas=manual_ideas,
+            runtime_overrides=runtime_overrides,
         )
         if result:
             _active_runs[nicho_slug] = {
@@ -1657,6 +2176,7 @@ def _run_pipeline_bg(
                 "finished": time.time(),
                 "checkpoint_mode": mode.value,
                 "manual_ideas": list(getattr(result, "manual_ideas", []) or []),
+                "disable_image_cache": bool(disable_image_cache),
             }
     except Exception as e:
         logger.error(f"Background run failed for {nicho_slug}: {e}")
@@ -1668,6 +2188,7 @@ def _run_all_bg(
     checkpoints: bool = False,
     reference_url: str = "",
     manual_ideas: str = "",
+    disable_image_cache: bool = False,
 ):
     """Run all nichos sequentially."""
     for slug in NICHOS:
@@ -1676,6 +2197,7 @@ def _run_all_bg(
             checkpoints=checkpoints,
             reference_url=reference_url,
             manual_ideas=manual_ideas,
+            disable_image_cache=disable_image_cache,
         )
 
 

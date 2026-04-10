@@ -63,6 +63,7 @@ from models.content import (
     VideoContent,
 )
 from services.niche_memory import get_niche_memory_lines, normalize_manual_ideas
+from services.niche_memory import add_niche_memory_entry
 from state_manager import StateManager
 
 console = Console()
@@ -112,6 +113,7 @@ def run_pipeline_v15(
     resume_job_id: str = "",
     reference_url: str = "",
     manual_ideas: str | list[str] | None = None,
+    runtime_overrides: Optional[dict] = None,
 ) -> JobManifest:
     """Execute the V15 multi-agent pipeline.
 
@@ -169,6 +171,15 @@ def run_pipeline_v15(
     manifest.budget_monthly_usd = float(settings.monthly_budget_usd)
     manual_idea_lines = normalize_manual_ideas(manual_ideas)
     niche_memory_lines = get_niche_memory_lines(nicho_slug, limit=10)
+    runtime_overrides = dict(runtime_overrides or {})
+    allowed_override_keys = {
+        "prefer_stock_images",
+        "generated_images_count",
+        "media_cache_ttl_days",
+        "enable_image_cache",
+        "disable_image_cache",
+    }
+    runtime_overrides = {k: v for k, v in runtime_overrides.items() if k in allowed_override_keys}
     manifest.manual_ideas = manual_idea_lines
     manifest.niche_memory_snapshot = niche_memory_lines
     manifest.reference_url = (reference_url or "").strip()
@@ -181,6 +192,11 @@ def run_pipeline_v15(
             if manifest.reference_notes
             else "manual_ideas_received"
         )
+
+    if "disable_image_cache" in runtime_overrides:
+        manifest.feature_flags["disable_image_cache"] = bool(runtime_overrides.get("disable_image_cache"))
+    if "enable_image_cache" in runtime_overrides:
+        manifest.feature_flags["enable_image_cache"] = bool(runtime_overrides.get("enable_image_cache"))
 
     precedence_rule = "RESEARCH > NICHO_DEFAULT"
     if manual_idea_lines and manifest.reference_url:
@@ -287,6 +303,51 @@ def run_pipeline_v15(
             "metadata": metadata or {},
         })
 
+    def _merge_unique_strings(items: list[str], limit: int = 12) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            clean = str(item or "").strip()
+            if not clean:
+                continue
+            key = clean.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(clean)
+            if len(merged) >= max(1, int(limit)):
+                break
+        return merged
+
+    def _apply_research_edit_notes(notes: str) -> None:
+        """Inject checkpoint edit notes back into research context before script stage."""
+        clean_notes = str(notes or "").strip()
+        if not clean_notes:
+            return
+
+        parsed_lines = normalize_manual_ideas(clean_notes, limit=6)
+        story.manual_ideas = _merge_unique_strings(story.manual_ideas + parsed_lines, limit=12)
+        manifest.manual_ideas = list(story.manual_ideas)
+
+        if parsed_lines:
+            story.research.recommended_angles = _merge_unique_strings(
+                parsed_lines + list(story.research.recommended_angles),
+                limit=5,
+            )
+            story.research.hook_suggestions = _merge_unique_strings(
+                list(story.research.hook_suggestions) + parsed_lines,
+                limit=6,
+            )
+            research_context = " | ".join(parsed_lines)
+            if story.research.trending_context_raw:
+                story.research.trending_context_raw = (
+                    f"{story.research.trending_context_raw} | RESEARCH_EDIT: {research_context}"
+                )
+            else:
+                story.research.trending_context_raw = f"RESEARCH_EDIT: {research_context}"
+
+        story.revision_notes.append(clean_notes[:220])
+
     def _checkpoint_artifacts(stage_key: str) -> dict:
         artifacts: dict[str, dict] = {}
         if stage_key == "content_gen":
@@ -387,6 +448,14 @@ def run_pipeline_v15(
             metadata={"memory_count": len(story.niche_memory_entries)},
         )
 
+    if runtime_overrides:
+        _add_decision(
+            "policy",
+            "Runtime overrides received",
+            json.dumps(runtime_overrides, ensure_ascii=False)[:220],
+            metadata={"runtime_overrides": runtime_overrides},
+        )
+
     # Agents
     research_agent = ResearchAgent()
     reference_agent = ReferenceAgent()
@@ -469,6 +538,18 @@ def run_pipeline_v15(
                 manifest.status = JobStatus.DRAFT.value
                 state_mgr.save(manifest)
                 return manifest
+
+            if result.edited:
+                _apply_research_edit_notes(result.notes)
+                # Re-run research with injected edit notes so script stage consumes corrected intent.
+                research_agent.run(nicho, story)
+                _add_decision(
+                    "content_gen",
+                    "Research checkpoint edits applied",
+                    (result.notes or "")[:180],
+                    metadata={"edited": True},
+                )
+
             progress.advance(main_task)
 
             # ── Stage 2: Script Generation (prompt chaining) ─────────
@@ -477,11 +558,10 @@ def run_pipeline_v15(
 
             script_approved = False
             script_attempts = 0
+            script_feedback_notes = ""
 
             while not script_approved and script_attempts < 3:
-                correction = ""
-                if script_attempts > 0:
-                    correction = result.notes if hasattr(result, 'notes') else ""
+                correction = script_feedback_notes if script_attempts > 0 else ""
 
                 script_agent.run(story, nicho, correction_notes=correction)
                 script_attempts += 1
@@ -505,7 +585,14 @@ def run_pipeline_v15(
                     severity="warning" if result.decision.value == "reject" else "info",
                     metadata={"attempt": script_attempts},
                 )
-                script_approved = result.approved or result.edited
+                script_feedback_notes = result.notes if hasattr(result, "notes") else ""
+                script_approved = result.approved
+
+            if not script_approved:
+                _stage_end("content_gen", "error", "Script not approved after retries")
+                manifest.status = JobStatus.DRAFT.value
+                state_mgr.save(manifest)
+                return manifest
 
             manifest.timings["script"] = round(time.time() - t, 2)
             progress.advance(main_task)
@@ -715,7 +802,13 @@ def run_pipeline_v15(
                 notify_error(manifest)
                 return manifest
 
-            assets = asset_agent.run(story, nicho, timestamp, settings.temp_dir)
+            assets = asset_agent.run(
+                story,
+                nicho,
+                timestamp,
+                settings.temp_dir,
+                runtime_overrides=runtime_overrides,
+            )
 
             stock_urls = assets.get("stock_clips", [])
             images = assets.get("images", [])
@@ -779,6 +872,8 @@ def run_pipeline_v15(
 
             if settings.elevenlabs_api_key and settings.provider_allowed("elevenlabs", usage="media"):
                 preferred_tts_provider = "elevenlabs"
+            elif settings.use_google_tts and settings.provider_allowed("google_tts", usage="media"):
+                preferred_tts_provider = "google_tts"
             elif settings.provider_allowed("gemini", usage="media"):
                 preferred_tts_provider = "gemini"
             else:
@@ -848,7 +943,7 @@ def run_pipeline_v15(
                 if (
                     not tts_ok
                     and settings.v15_strict_free_media_tools
-                    and bool(settings.gemini_api_key)
+                    and bool(settings.get_gemini_keys())
                 ):
                     logger.warning("V15 TTS strict-free path failed; trying Gemini rescue fallback")
                     tts_ok, tts_engine = generate_tts(
@@ -882,7 +977,7 @@ def run_pipeline_v15(
             audio_duration = get_audio_duration(audio_path)
             manifest.duration_seconds = audio_duration
 
-            tts_actual = settings.est_cost_tts_usd if tts_engine in {"gemini", "elevenlabs"} else 0.0
+            tts_actual = settings.est_cost_tts_usd if tts_engine in {"gemini", "elevenlabs", "google_tts"} else 0.0
             cost_governance.record_stage_actual("tts", tts_actual)
 
             manifest.timings["tts"] = round(time.time() - t, 2)
@@ -1297,6 +1392,33 @@ def run_pipeline_v15(
                 healing_count=len(manifest.healing_attempts),
                 timestamp=timestamp,
             )
+
+            # Feed successful outputs back into local niche memory to reduce future repetition.
+            try:
+                memory_candidates = [
+                    f"TEMA_PUBLICADO: {manifest.titulo}".strip(),
+                    f"HOOK_GANADOR: {manifest.gancho[:140]}".strip() if manifest.gancho else "",
+                ]
+                if story.research.recommended_angles:
+                    memory_candidates.append(
+                        f"ANGULO_GANADOR: {story.research.recommended_angles[0][:160]}".strip()
+                    )
+
+                existing_memory = [m.strip().lower() for m in get_niche_memory_lines(nicho_slug, limit=40) if str(m).strip()]
+                for candidate in memory_candidates:
+                    text = str(candidate or "").strip()
+                    if not text:
+                        continue
+
+                    normalized = text.lower()
+                    # Skip near-duplicates by containment to keep memory compact.
+                    if any(normalized in line or line in normalized for line in existing_memory if line):
+                        continue
+
+                    add_niche_memory_entry(nicho_slug, text, source="auto_publish")
+                    existing_memory.append(normalized)
+            except Exception as exc:
+                logger.debug(f"Local memory writeback skipped: {exc}")
 
             # Notifications
             if manifest.status == JobStatus.MANUAL_REVIEW.value:

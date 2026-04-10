@@ -14,13 +14,6 @@ from loguru import logger
 
 from config import settings
 from services.http_client import request_with_retry
-
-_DEFAULT_GEMINI_CHAT_MODELS = [
-    "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-3-flash",
-]
 _gemini_key_cooldowns: dict[int, float] = {}
 _gemini_model_cooldowns: dict[str, float] = {}
 
@@ -49,7 +42,9 @@ def _set_model_cooldown(model_name: str) -> None:
 
 def _gemini_models_order() -> list[str]:
     configured = settings.get_gemini_chat_models()
-    return configured or list(_DEFAULT_GEMINI_CHAT_MODELS)
+    if settings.gemini_text_model:
+        return [settings.gemini_text_model] + [m for m in configured if m != settings.gemini_text_model]
+    return configured
 
 
 def _classify_gemini_error(error_text: str) -> str:
@@ -222,9 +217,9 @@ def _call_gemini_chat(
     temperature: float,
 ) -> tuple[str, str, str]:
     """Try Gemini models with key rotation and lightweight cooldown guards."""
-    keys = settings.get_gemini_keys()
+    keys = ["vertex"] if settings.use_vertex_ai else settings.get_gemini_keys()
     if not keys:
-        return "", "", "No GEMINI_API_KEY configured"
+        return "", "", "No GEMINI_API_KEY configured and use_vertex_ai is False"
 
     genai, types, import_error = _import_genai()
     if genai is None or types is None:
@@ -248,7 +243,14 @@ def _call_gemini_chat(
             attempted_any = True
             started = _now_ts()
             try:
-                client = genai.Client(api_key=api_key)
+                if settings.use_vertex_ai:
+                    client = genai.Client(
+                        vertexai=True,
+                        project=settings.vertex_project_id or None,
+                        location=settings.vertex_location,
+                    )
+                else:
+                    client = genai.Client(api_key=api_key)
                 response = client.models.generate_content(
                     model=model_name,
                     contents=[user_prompt],

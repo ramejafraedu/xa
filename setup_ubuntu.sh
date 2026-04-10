@@ -68,6 +68,19 @@ sudo apt install -y \
 print_status "Dependencias del sistema instaladas"
 
 # ============================================
+# 2.5 INSTALAR NODE.JS / NPM (REQUERIDO POR REMOTION)
+# ============================================
+echo ""
+echo "🧩 2.5. Instalando Node.js LTS y npm..."
+
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt install -y nodejs
+
+NODE_VERSION=$(node --version 2>/dev/null || echo "not-installed")
+NPM_VERSION=$(npm --version 2>/dev/null || echo "not-installed")
+print_status "Node.js: $NODE_VERSION | npm: $NPM_VERSION"
+
+# ============================================
 # 3. VERIFICAR FFMPEG
 # ============================================
 echo ""
@@ -110,6 +123,15 @@ pip install --upgrade pip setuptools wheel
 
 print_status "Entorno virtual creado"
 
+# Instalar deps de Remotion si el composer existe en el repo.
+if [ -d "$PROJECT_DIR/remotion-composer" ]; then
+    echo ""
+    echo "🎬 Instalando dependencias Remotion..."
+    cd "$PROJECT_DIR/remotion-composer"
+    npm install || print_warning "npm install en remotion-composer fallo (se puede reintentar manualmente)"
+    cd "$PROJECT_DIR"
+fi
+
 # ============================================
 # 6. INSTALAR DEPENDENCIAS PYTHON
 # ============================================
@@ -143,7 +165,9 @@ Pillow>=10.0.0
 ffmpeg-python>=0.2.0
 
 # LLM/AI
-google-generativeai>=0.3.0
+google-genai>=1.14.0
+google-cloud-texttospeech>=2.17.2
+google-cloud-aiplatform>=1.60.0
 openai>=1.0.0
 
 # Data Processing
@@ -190,6 +214,18 @@ GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_API_KEY2=optional_backup_key
 GEMINI_API_KEY3=optional_backup_key
 GEMINI_API_KEY4=optional_backup_key
+PRIMARY_LLM=gemini-3.1-pro-preview
+GEMINI_CHAT_MODELS=gemini-3.1-pro-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash-001
+GEMINI_TEXT_MODEL=gemini-3.1-pro-preview
+GEMINI_VISION_MODEL=gemini-2.5-pro
+GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
+IMAGE_GENERATION_MODEL=gemini-2.0-flash-preview-image-generation
+
+# Vertex AI (opt-in)
+USE_VERTEX_AI=false
+VERTEX_PROJECT_ID=
+VERTEX_LOCATION=global
+GOOGLE_APPLICATION_CREDENTIALS=
 
 # OpenRouter (Fallback LLM)
 OPENROUTER_API_KEY=your_openrouter_key_here
@@ -201,6 +237,16 @@ ELEVENLABS_VOICE_ID=EXAVITQu4vr4xnSDxMaL
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
 ELEVENLABS_STABILITY=0.45
 ELEVENLABS_SIMILARITY_BOOST=0.75
+
+# Google Cloud TTS (fallback after ElevenLabs)
+USE_GOOGLE_TTS=false
+GOOGLE_TTS_API_KEY=
+GOOGLE_TTS_SERVICE_ACCOUNT_JSON=
+GOOGLE_TTS_VOICE_NAME=es-US-Neural2-A
+GOOGLE_TTS_LANGUAGE_CODE=es-US
+GOOGLE_TTS_SPEAKING_RATE=1.0
+GOOGLE_TTS_PITCH=0.0
+GOOGLE_TTS_TIMEOUT_SECONDS=45
 
 # === VIDEO STOCK PROVIDERS ===
 # Pexels (200 requests/hour free)

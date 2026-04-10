@@ -37,6 +37,9 @@ def generate_images(
     temp_dir: Path,
     count: int = 4,
     provider_order: Optional[list[str]] = None,
+    prefer_stock_images: Optional[bool] = None,
+    cache_ttl_days: Optional[int] = None,
+    enable_cache: Optional[bool] = None,
 ) -> list[Path]:
     """Generate images for the video (stock-first when enabled).
 
@@ -50,6 +53,9 @@ def generate_images(
         temp_dir,
         count=count,
         provider_order=provider_order,
+        prefer_stock_images=prefer_stock_images,
+        cache_ttl_days=cache_ttl_days,
+        enable_cache=enable_cache,
     )
     return results
 
@@ -62,6 +68,9 @@ def generate_images_with_stats(
     temp_dir: Path,
     count: int = 4,
     provider_order: Optional[list[str]] = None,
+    prefer_stock_images: Optional[bool] = None,
+    cache_ttl_days: Optional[int] = None,
+    enable_cache: Optional[bool] = None,
 ) -> tuple[list[Path], dict[str, dict[str, int]]]:
     """Generate images and return per-provider stats.
 
@@ -79,11 +88,19 @@ def generate_images_with_stats(
         else "centered composition, bold foreground separation"
     )
 
+    stock_first = settings.prefer_stock_images if prefer_stock_images is None else bool(prefer_stock_images)
+    cache_enabled = settings.enable_image_cache if enable_cache is None else bool(enable_cache)
+    try:
+        ttl_days = int(settings.media_cache_ttl_days if cache_ttl_days is None else cache_ttl_days)
+    except (TypeError, ValueError):
+        ttl_days = int(settings.media_cache_ttl_days)
+    ttl_days = max(0, ttl_days)
+
     if provider_order is None:
-        provider_order = ["pexels", "pixabay", "leonardo", "pollinations"] if settings.prefer_stock_images else ["leonardo", "pollinations"]
+        provider_order = ["pexels", "pixabay", "leonardo", "pollinations"] if stock_first else ["leonardo", "pollinations", "pexels", "pixabay"]
 
     settings.ensure_dirs()
-    ttl_seconds = max(0, int(settings.media_cache_ttl_days)) * 86400
+    ttl_seconds = ttl_days * 86400
     stats = {
         "pexels": {"ok": 0, "fail": 0},
         "pixabay": {"ok": 0, "fail": 0},
@@ -105,7 +122,7 @@ def generate_images_with_stats(
         cache_file = settings.image_cache_dir / f"img_{cache_key}.jpg"
 
         # Reuse cached image when still fresh.
-        if _is_fresh_file(cache_file, ttl_seconds):
+        if cache_enabled and _is_fresh_file(cache_file, ttl_seconds):
             try:
                 shutil.copy2(cache_file, output)
                 results.append(output)
@@ -126,7 +143,8 @@ def generate_images_with_stats(
 
                 if _download_pexels_image(full_prompt, output):
                     results.append(output)
-                    _save_image_cache(output, cache_file)
+                    if cache_enabled:
+                        _save_image_cache(output, cache_file)
                     stats["pexels"]["ok"] += 1
                     logger.info(f"Image {idx}/{count} OK (Pexels Stock)")
                     generated = True
@@ -144,7 +162,8 @@ def generate_images_with_stats(
 
                 if _download_pixabay_image(full_prompt, output):
                     results.append(output)
-                    _save_image_cache(output, cache_file)
+                    if cache_enabled:
+                        _save_image_cache(output, cache_file)
                     stats["pixabay"]["ok"] += 1
                     logger.info(f"Image {idx}/{count} OK (Pixabay Stock)")
                     generated = True
@@ -162,7 +181,8 @@ def generate_images_with_stats(
 
                 if _download_leonardo(full_prompt, output):
                     results.append(output)
-                    _save_image_cache(output, cache_file)
+                    if cache_enabled:
+                        _save_image_cache(output, cache_file)
                     stats["leonardo"]["ok"] += 1
                     logger.info(f"Image {idx}/{count} OK (Leonardo)")
                     generated = True
@@ -174,7 +194,8 @@ def generate_images_with_stats(
             if normalized_provider == "pollinations":
                 if _download_pollinations(full_prompt, output):
                     results.append(output)
-                    _save_image_cache(output, cache_file)
+                    if cache_enabled:
+                        _save_image_cache(output, cache_file)
                     stats["pollinations"]["ok"] += 1
                     logger.info(f"Image {idx}/{count} OK (Pollinations Fallback)")
                     generated = True

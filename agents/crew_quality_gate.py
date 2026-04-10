@@ -52,18 +52,35 @@ class CrewQualityGate:
             return self._fallback_result(script_data)
 
         # 1. Setup LLM backend using LiteLLM wrapper (native to CrewAI)
-        # We use a single Gemini API key from rotation
-        api_key = settings.get_gemini_key()
-        if not api_key:
-            logger.error("No Gemini API key available for CrewAI.")
-            return self._fallback_result(script_data)
+        if settings.use_vertex_ai:
+            import os
+            if settings.vertex_project_id:
+                os.environ["VERTEX_PROJECT"] = settings.vertex_project_id
+            if settings.vertex_location:
+                os.environ["VERTEX_LOCATION"] = settings.vertex_location
+            
+            try:
+                import google.auth
+                import google.auth.transport.requests
+            except ImportError:
+                logger.error("google-auth missing, required for Vertex AI in LiteLLM")
+                return self._fallback_result(script_data)
 
-        # Prefer 2.5-flash for complex reasoning in CrewAI
-        llm = LLM(
-            model="gemini/gemini-2.5-flash",
-            api_key=api_key,
-            temperature=0.7
-        )
+            llm = LLM(
+                model=f"vertex_ai/{settings.gemini_text_model}",
+                temperature=0.7
+            )
+        else:
+            api_key = settings.get_gemini_key()
+            if not api_key:
+                logger.error("No Gemini API key available for CrewAI.")
+                return self._fallback_result(script_data)
+
+            llm = LLM(
+                model=f"gemini/{settings.gemini_text_model}",
+                api_key=api_key,
+                temperature=0.7
+            )
 
         class VerifiedScriptOutput(BaseModel):
             guion: str = Field(description="El guion corregido y verificado")
