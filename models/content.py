@@ -421,6 +421,7 @@ class JobManifest(BaseModel):
     ab_visual_split: dict = Field(default_factory=dict)
     video_path: str = ""
     timeline_json_path: str = ""
+    edit_decisions_path: str = ""
     director_json_path: str = ""
     director_meta_path: str = ""
     thumbnail_path: str = ""

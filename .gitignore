@@ -49,6 +49,14 @@ inductive-actor-492816-j2-*.json
 id_rsa
 id_rsa.pub
 id_rsa_*
+id_ed25519
+id_ed25519.pub
+id_ed25519_*
+
+# Generic private key/certificate files
+*.pem
+*.key
+*.p12
 
 # Logs and runtime files
 *.log
@@ -56,6 +64,7 @@ id_rsa_*
 logs/
 
 # Generated workspace artifacts (videos, temp, caches)
+workspace/
 workspace/temp/
 workspace/output/
 workspace/review_manual/
@@ -71,3 +80,8 @@ remotion-composer/public/workspace/
 
 # Local deployment packages
 *.tgz
+*.tar.gz
+
+# Generated media artifacts (avoid accidental commits at repo root)
+*.mp4
+*.mov

@@ -37,9 +37,16 @@ def _sample_manifest(job_id: str) -> dict:
             "requested_images_count": 4,
             "selected_variant": "A",
             "selection_decision": "promote",
-            "selection_mode": "single_run_scoring",
+            "selection_mode": "saar_ab_scoring",
             "selection_score": 8.12,
             "selection_reason": "quality=8.10, viral=8.20, qa=pass",
+            "saar_enabled": True,
+            "saar_use_winner": False,
+            "saar_winner_applied": False,
+            "saar_candidate_count": 2,
+            "saar_selected_variant": "A",
+            "saar_selection_mode": "size_bytes_desc",
+            "saar_selection_reason": "winner=max_file_size_bytes",
             "qa_gate_passed": True,
             "qa_skipped": False,
             "qa_penalty": 0.0,
@@ -80,8 +87,13 @@ def test_extract_ab_visual_split():
     assert split["requested_images_count"] == 4
     assert split["selected_variant"] == "A"
     assert split["selection_decision"] == "promote"
-    assert split["selection_mode"] == "single_run_scoring"
+    assert split["selection_mode"] == "saar_ab_scoring"
     assert abs(split["selection_score"] - 8.12) < 0.01
+    assert split["saar_enabled"] is True
+    assert split["saar_use_winner"] is False
+    assert split["saar_candidate_count"] == 2
+    assert split["saar_selected_variant"] == "A"
+    assert split["saar_selection_mode"] == "size_bytes_desc"
     assert split["qa_gate_passed"] is True
     assert split["qa_skipped"] is False
     assert abs(split["qa_penalty"] - 0.0) < 0.01
@@ -95,6 +107,8 @@ def test_dashboard_ab_routes_and_operations():
     original_workspace_dir = dashboard.settings.workspace_dir
     original_enable_ab = dashboard.settings.enable_ab_visual_split
     original_ab_multiplier = dashboard.settings.ab_visual_split_multiplier
+    original_saar_enabled = dashboard.settings.enable_saar_composer
+    original_saar_use_winner = dashboard.settings.saar_composer_use_winner
     original_silence_trim = dashboard.settings.enable_smart_silence_trim
     original_post_tts = dashboard.settings.enable_post_tts_loudnorm
 
@@ -139,8 +153,10 @@ def test_dashboard_ab_routes_and_operations():
             assert split_payload.get("target_clips") == 8
             assert split_payload.get("selected_variant") == "A"
             assert split_payload.get("selection_decision") == "promote"
-            assert split_payload.get("selection_mode") == "single_run_scoring"
+            assert split_payload.get("selection_mode") == "saar_ab_scoring"
             assert abs(float(split_payload.get("selection_score", 0.0)) - 8.12) < 0.01
+            assert split_payload.get("saar_enabled") is True
+            assert split_payload.get("saar_candidate_count") == 2
 
             jobs = client.get("/api/jobs?limit=20")
             assert jobs.status_code == 200
@@ -156,6 +172,8 @@ def test_dashboard_ab_routes_and_operations():
             cfg_body = cfg.json()
             assert "enable_ab_visual_split" in cfg_body
             assert "ab_visual_split_multiplier" in cfg_body
+            assert "enable_saar_composer" in cfg_body
+            assert "saar_composer_use_winner" in cfg_body
             assert "enable_smart_silence_trim" in cfg_body
             assert "enable_post_tts_loudnorm" in cfg_body
 
@@ -164,6 +182,8 @@ def test_dashboard_ab_routes_and_operations():
                 json={
                     "enable_ab_visual_split": True,
                     "ab_visual_split_multiplier": 3,
+                    "enable_saar_composer": True,
+                    "saar_composer_use_winner": False,
                     "enable_smart_silence_trim": True,
                     "enable_post_tts_loudnorm": True,
                     "persist": False,
@@ -173,12 +193,16 @@ def test_dashboard_ab_routes_and_operations():
             updated = upd.json().get("updated", {})
             assert updated.get("enable_ab_visual_split") is True
             assert updated.get("ab_visual_split_multiplier") == 3
+            assert updated.get("enable_saar_composer") is True
+            assert updated.get("saar_composer_use_winner") is False
             assert updated.get("enable_smart_silence_trim") is True
             assert updated.get("enable_post_tts_loudnorm") is True
         finally:
             dashboard.settings.workspace_dir = original_workspace_dir
             dashboard.settings.enable_ab_visual_split = original_enable_ab
             dashboard.settings.ab_visual_split_multiplier = original_ab_multiplier
+            dashboard.settings.enable_saar_composer = original_saar_enabled
+            dashboard.settings.saar_composer_use_winner = original_saar_use_winner
             dashboard.settings.enable_smart_silence_trim = original_silence_trim
             dashboard.settings.enable_post_tts_loudnorm = original_post_tts
 

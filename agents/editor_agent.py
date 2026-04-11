@@ -127,7 +127,7 @@ class EditorAgent:
         subtitles_path: Optional[Path] = None,
         narration_audio_path: Optional[Path] = None,
         music_path: Optional[Path] = None,
-        composition_id: str = "CinematicRenderer",
+        composition_id: str = "UniversalCommercial",
     ) -> dict:
         """Build and persist a Remotion-compatible timeline JSON.
 
@@ -143,7 +143,7 @@ class EditorAgent:
             music_path=music_path,
         )
 
-        resolved_composition = str(composition_id or "CinematicRenderer").strip() or "CinematicRenderer"
+        resolved_composition = str(composition_id or "UniversalCommercial").strip() or "UniversalCommercial"
         timeline["composition_id"] = resolved_composition
         meta = timeline.get("meta") if isinstance(timeline.get("meta"), dict) else {}
         meta["composition_id"] = resolved_composition
@@ -160,6 +160,74 @@ class EditorAgent:
             f"({len(timeline.get('scenes', []))} escenas)"
         )
         return timeline
+
+    def build_incremental_eml_seed(
+        self,
+        state: StoryState,
+        media_paths: list[Path],
+        decisions: list[EditDecision],
+        audio_duration: float,
+    ) -> dict:
+        """Build an incremental edit_decisions seed from editor decisions.
+
+        This seed is consumed as a fallback mapper when timeline-derived cuts are
+        unavailable for specific compositions.
+        """
+        valid_media = [p for p in media_paths if p and p.exists()]
+        cuts: list[dict] = []
+
+        working_decisions = list(decisions)
+        if not working_decisions and valid_media:
+            fallback_dur = max(1.2, audio_duration / max(len(valid_media), 1))
+            working_decisions = [
+                EditDecision(clip_index=i, duration=fallback_dur)
+                for i in range(len(valid_media))
+            ]
+
+        for idx, media_path in enumerate(valid_media):
+            if not working_decisions:
+                decision = EditDecision(clip_index=idx, duration=max(1.2, audio_duration / max(len(valid_media), 1)))
+            else:
+                decision = working_decisions[min(idx, len(working_decisions) - 1)]
+
+            duration = max(0.8, float(decision.duration or 0.0))
+            transform: dict = {
+                "scale": 1.0,
+                "position": "center",
+            }
+            animation = self._zoom_to_transform_animation(decision.zoom_type)
+            if animation:
+                transform["animation"] = animation
+
+            transition_out = self._normalize_transition_for_eml(decision.transition_out)
+            scene_text = state.scenes[idx].text if idx < len(state.scenes) else ""
+
+            cuts.append(
+                {
+                    "id": f"editor_cut_{idx + 1}",
+                    "source": str(media_path.resolve().as_posix()),
+                    "in_seconds": 0.0,
+                    "out_seconds": round(duration, 3),
+                    "speed": max(0.1, float(decision.speed_factor or 1.0)),
+                    "layer": "primary",
+                    "transform": transform,
+                    "transition_in": "cut",
+                    "transition_out": transition_out,
+                    "transition_duration": round(max(0.0, float(decision.fade_out or 0.0)), 3),
+                    "reason": (scene_text or f"Editor mapped cut {idx + 1}")[:180],
+                }
+            )
+
+        return {
+            "version": "1.0",
+            "mapper": "editor_incremental_v1",
+            "cuts": cuts,
+            "metadata": {
+                "scene_count": len(state.scenes),
+                "media_count": len(valid_media),
+                "audio_duration_seconds": round(float(audio_duration or 0.0), 3),
+            },
+        }
 
     def _build_timeline_payload(
         self,
@@ -304,6 +372,32 @@ class EditorAgent:
             "default": "contrast(1.06) saturate(0.90) brightness(0.98)",
         }
         return mapping.get(grade, mapping["default"])
+
+    @staticmethod
+    def _zoom_to_transform_animation(zoom_type: str) -> str:
+        clean = str(zoom_type or "").strip().lower()
+        mapping = {
+            "ken_burns": "ken-burns-slow-zoom",
+            "zoom_in": "zoom-in",
+            "zoom_out": "zoom-out",
+        }
+        return mapping.get(clean, "")
+
+    @staticmethod
+    def _normalize_transition_for_eml(value: str) -> str:
+        clean = str(value or "cut").strip().lower().replace("-", "_").replace(" ", "_")
+        mapping = {
+            "cut": "cut",
+            "hard_cut": "cut",
+            "none": "cut",
+            "fade": "fade",
+            "crossfade": "dissolve",
+            "dissolve": "dissolve",
+            "wipe": "wipe",
+            "whip": "wipe",
+            "zoom_cut": "cut",
+        }
+        return mapping.get(clean, "cut")
 
     def _parse_ass_word_captions(self, subtitles_path: Optional[Path]) -> list[dict]:
         """Parse ASS dialogue events into word-level caption timing."""

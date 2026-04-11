@@ -166,6 +166,8 @@ class Settings(BaseSettings):
     # SaarD00-style A/B visual split
     enable_ab_visual_split: bool = False
     ab_visual_split_multiplier: int = 2
+    enable_saar_composer: bool = False
+    saar_composer_use_winner: bool = False
 
     # SaarD00-style post TTS processing
     enable_smart_silence_trim: bool = False
@@ -226,7 +228,7 @@ class Settings(BaseSettings):
     remotion_timeout_seconds: int = 900
     remotion_quality: int = 80
     remotion_preset: str = "ultrafast"
-    remotion_composition_id: str = "CinematicRenderer"
+    remotion_composition_id: str = "UniversalCommercial"
     
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True
@@ -483,6 +485,8 @@ class Settings(BaseSettings):
             "tts_use_script_text": self.tts_use_script_text,
             "subtitles_use_script_text": self.subtitles_use_script_text,
             "enable_ab_visual_split": self.enable_ab_visual_split,
+            "enable_saar_composer": self.enable_saar_composer,
+            "saar_composer_use_winner": self.saar_composer_use_winner,
             "enable_smart_silence_trim": self.enable_smart_silence_trim,
             "enable_post_tts_loudnorm": self.enable_post_tts_loudnorm,
             "enable_web_research_plus": self.enable_web_research_plus,

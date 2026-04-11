@@ -15,6 +15,9 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
     script,
     audio
 }) => {
+    const { width, height } = useVideoConfig();
+    const isPortrait = height >= width;
+
     // Theme Styles
     const getBgColor = () => {
         switch (style.theme) {
@@ -38,8 +41,12 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
     const textColor = getTextColor();
     const accentColor = style.accentColor;
     const fontFamily = style.fontFamily || 'Space Grotesk, sans-serif';
+    const hookFontSize = isPortrait ? 64 : 80;
+    const projectNameSize = isPortrait ? 32 : 40;
+    const solutionFontSize = isPortrait ? 56 : 70;
+    const ctaFontSize = isPortrait ? 76 : 100;
+    const buttonFontSize = isPortrait ? 24 : 30;
 
-    // Scene Timings
     // Scene Timings
     const HOOK_DURATION = 150; // Increased from 90
     const SOLUTION_DURATION = 150; // Increased from 90
@@ -58,14 +65,19 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
                     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
                         <KineticText
                             text={script.hook}
-                            style={{ fontSize: 80, fontWeight: 'bold' }}
+                            style={{
+                                fontSize: hookFontSize,
+                                fontWeight: 'bold',
+                                maxWidth: isPortrait ? '88%' : '80%',
+                                textAlign: 'center',
+                            }}
                             color={textColor}
                         />
-                        <div style={{ marginTop: 20 }}>
+                        <div style={{ marginTop: isPortrait ? 28 : 20 }}>
                             <KineticText
                                 text={projectInfo.name}
                                 delay={10}
-                                style={{ fontSize: 40, opacity: 0.8 }}
+                                style={{ fontSize: projectNameSize, opacity: 0.8 }}
                                 color={accentColor}
                             />
                         </div>
@@ -82,7 +94,12 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
                     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
                         <KineticText
                             text={script.solution}
-                            style={{ fontSize: 70, fontWeight: 'bold', maxWidth: '80%', textAlign: 'center' }}
+                            style={{
+                                fontSize: solutionFontSize,
+                                fontWeight: 'bold',
+                                maxWidth: isPortrait ? '90%' : '80%',
+                                textAlign: 'center',
+                            }}
                             color={accentColor}
                         />
                     </AbsoluteFill>
@@ -124,16 +141,21 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
                     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
                         <KineticText
                             text={script.cta}
-                            style={{ fontSize: 100, fontWeight: '900' }}
+                            style={{
+                                fontSize: ctaFontSize,
+                                fontWeight: '900',
+                                maxWidth: isPortrait ? '88%' : '80%',
+                                textAlign: 'center',
+                            }}
                             color={accentColor}
                         />
                         <div style={{
-                            marginTop: 40,
-                            padding: '20px 60px',
+                            marginTop: isPortrait ? 28 : 40,
+                            padding: isPortrait ? '16px 42px' : '20px 60px',
                             border: `4px solid ${textColor}`,
                             borderRadius: 50,
                             color: textColor,
-                            fontSize: 30,
+                            fontSize: buttonFontSize,
                             fontWeight: 'bold'
                         }}>
                             Get Started
@@ -154,10 +176,15 @@ const FeatureScene: React.FC<{
     theme: "cyberpunk" | "minimal" | "playful";
 }> = ({ feature, textColor, accentColor, fontFamily, theme }) => {
     const frame = useCurrentFrame();
-    const { fps } = useVideoConfig();
+    const { fps, width, height } = useVideoConfig();
+    const isPortrait = height >= width;
 
     const scale = spring({ frame, fps, config: { damping: 12 } });
     const y = interpolate(frame, [0, 30], [50, 0], { extrapolateRight: 'clamp' });
+    const mediaWidth = isPortrait ? Math.min(Math.floor(width * 0.86), 860) : 800;
+    const mediaHeight = isPortrait ? Math.min(Math.floor(height * 0.34), 620) : 500;
+    const placeholderWidth = isPortrait ? Math.min(Math.floor(width * 0.76), 720) : 600;
+    const placeholderHeight = isPortrait ? Math.min(Math.floor(height * 0.28), 520) : 400;
 
     // --- Theme Specific Styles ---
     const isCyberpunk = theme === 'cyberpunk';
@@ -174,16 +201,25 @@ const FeatureScene: React.FC<{
         <AbsoluteFill style={{
             justifyContent: 'center',
             alignItems: 'center',
-            flexDirection: 'row',
-            gap: 60,
+            flexDirection: isPortrait ? 'column' : 'row',
+            gap: isPortrait ? 28 : 60,
             fontFamily,
             opacity: isMinimal ? minimalOpacity : 1
         }}>
             {/* Text Side */}
-            <div style={{ flex: 1, paddingLeft: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <div style={{
+                flex: isPortrait ? '0 0 auto' : 1,
+                width: isPortrait ? '88%' : 'auto',
+                paddingLeft: isPortrait ? 0 : 100,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: isPortrait ? 'center' : 'flex-start',
+                textAlign: isPortrait ? 'center' : 'left',
+            }}>
                 <h2 style={{
                     color: accentColor,
-                    fontSize: 60,
+                    fontSize: isPortrait ? 52 : 60,
                     margin: 0,
                     transform: `translateY(${y}px) skewX(${skew}deg)`,
                     textShadow: isCyberpunk ? `2px 2px 0px ${textColor}` : 'none',
@@ -193,8 +229,8 @@ const FeatureScene: React.FC<{
                 </h2>
                 <h3 style={{
                     color: textColor,
-                    fontSize: 40,
-                    margin: '20px 0 0 0',
+                    fontSize: isPortrait ? 34 : 40,
+                    margin: isPortrait ? '14px 0 0 0' : '20px 0 0 0',
                     opacity: 0.8,
                     fontWeight: isMinimal ? 300 : 700
                 }}>
@@ -203,15 +239,22 @@ const FeatureScene: React.FC<{
             </div>
 
             {/* Image Side */}
-            <div style={{ flex: 1.5, display: 'flex', justifyContent: 'center', alignItems: 'center', paddingRight: 100 }}>
+            <div style={{
+                flex: isPortrait ? '0 0 auto' : 1.5,
+                width: isPortrait ? '100%' : 'auto',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                paddingRight: isPortrait ? 0 : 100,
+            }}>
                 {feature.imagePath ? (
                     <div style={{
                         transform: `scale(${scale}) rotate(${isMinimal ? 0 : -2}deg)`,
                         filter: isCyberpunk ? 'contrast(1.2) brightness(1.1)' : 'none'
                     }}>
                         <MacWindow title={feature.title} style={{
-                            width: 800,
-                            height: 500,
+                            width: mediaWidth,
+                            height: mediaHeight,
                             boxShadow: isCyberpunk ? `0 0 40px ${accentColor}88` : '0 30px 60px rgba(0,0,0,0.3)',
                             borderRadius: isMinimal ? 4 : 12
                         }}>
@@ -220,8 +263,8 @@ const FeatureScene: React.FC<{
                     </div>
                 ) : (
                     <div style={{
-                        width: 600,
-                        height: 400,
+                        width: placeholderWidth,
+                        height: placeholderHeight,
                         backgroundColor: 'rgba(255,255,255,0.1)',
                         borderRadius: 20,
                         border: `2px dashed ${textColor}`,

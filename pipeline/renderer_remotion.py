@@ -23,6 +23,8 @@ from config import settings
 
 
 REMOTION_DIR = Path(__file__).resolve().parent.parent / "remotion-composer"
+ALLOWED_REMOTION_COMPOSITIONS = {"CinematicRenderer", "UniversalCommercial"}
+DEFAULT_REMOTION_COMPOSITION = "UniversalCommercial"
 
 
 def _resolve_remotion_runner() -> tuple[list[str], str]:
@@ -135,7 +137,7 @@ def render_with_remotion(
     timeline_path: Optional[Path] = None,
     timeline_payload: Optional[dict] = None,
 ) -> bool:
-    """Render video using Remotion (CinematicRenderer composition)."""
+    """Render video using the selected Remotion composition."""
     if not is_remotion_available():
         logger.info("Remotion not available, falling back to FFmpeg")
         return False
@@ -178,7 +180,7 @@ def render_with_remotion(
                 music_path=music_path,
                 metadata=metadata,
             )
-            composition_id = str(metadata.get("composition_id", "CinematicRenderer") or "CinematicRenderer")
+            composition_id = _resolve_composition_id(metadata, None)
 
         _materialize_workspace_assets(props)
 
@@ -326,19 +328,27 @@ def render_video_with_fallback(
             output_dir.mkdir(parents=True, exist_ok=True)
             final_name = f"{_slugify(nicho_slug, 24)}_{_slugify(gancho, 38)}_{timestamp}.mp4"
             remotion_output = output_dir / final_name
+            requested_composition = _resolve_composition_id(
+                {"composition_id": str(getattr(settings, "remotion_composition_id", DEFAULT_REMOTION_COMPOSITION))},
+                timeline_payload,
+            )
             remotion_meta = {
                 "timestamp": timestamp,
                 "titulo": titulo,
                 "nicho": nicho_slug,
                 "duration": duracion_audio,
                 "transition": "crossfade",
-                "composition_id": "CinematicRenderer",
+                "composition_id": requested_composition,
             }
 
             # Build a timeline dynamically for image-only jobs so Remotion can render
             # cinematic image scenes instead of falling back immediately to FFmpeg.
             if not timeline_payload and not clips and images:
-                timeline_payload = _build_image_timeline(images, duracion_audio)
+                timeline_payload = _build_image_timeline(
+                    images,
+                    duracion_audio,
+                    composition_id=requested_composition,
+                )
 
             if render_with_remotion(
                 clips=clips,
@@ -386,7 +396,11 @@ def render_video_with_fallback(
     return ff_video, ff_thumb, ff_error, "ffmpeg"
 
 
-def _build_image_timeline(images: list[Path], duration: float) -> dict:
+def _build_image_timeline(
+    images: list[Path],
+    duration: float,
+    composition_id: str = DEFAULT_REMOTION_COMPOSITION,
+) -> dict:
     """Build a Remotion timeline for images using Parallax/Ken Burns."""
     valid_images = [img for img in images if img.exists()]
     if not valid_images:
@@ -416,7 +430,11 @@ def _build_image_timeline(images: list[Path], duration: float) -> dict:
         })
         cursor += scene_dur
 
-    return {"scenes": scenes}
+    return {
+        "composition_id": composition_id,
+        "meta": {"composition_id": composition_id},
+        "scenes": scenes,
+    }
 
 
 def render_with_fallback(
@@ -591,7 +609,7 @@ def _normalize_timeline_props(
     timeline_payload: dict,
     metadata: dict,
     subtitles_path: Optional[Path] = None,
-    composition_id: str = "CinematicRenderer",
+    composition_id: str = DEFAULT_REMOTION_COMPOSITION,
 ) -> dict:
     """Normalize timeline payload into strict composition-specific props."""
     props = dict(timeline_payload or {})
@@ -810,6 +828,419 @@ def build_director_artifacts(
     return director_path, director_meta_path, director_payload, director_meta
 
 
+def build_edit_decisions_artifact(
+    timeline_payload: dict,
+    metadata: dict,
+    artifacts_dir: Path,
+    *,
+    subtitles_path: Optional[Path] = None,
+    narration_audio_path: Optional[Path] = None,
+    music_path: Optional[Path] = None,
+    incremental_eml_seed: Optional[dict] = None,
+) -> tuple[Path, dict]:
+    """Build, validate, and persist an OpenMontage-compatible edit_decisions artifact."""
+    payload = dict(timeline_payload or {})
+    composition_id = _resolve_composition_id(metadata, payload)
+    normalized_props = _normalize_timeline_props(
+        payload,
+        metadata,
+        subtitles_path=subtitles_path,
+        composition_id=composition_id,
+    )
+
+    try:
+        timestamp = int(metadata.get("timestamp") or int(time.time() * 1000))
+    except (TypeError, ValueError, AttributeError):
+        timestamp = int(time.time() * 1000)
+
+    cuts = _build_edit_decision_cuts(normalized_props, composition_id)
+    mapper_name = "timeline"
+    mapper_fallback = False
+
+    if not cuts:
+        seed_cuts = _extract_incremental_seed_cuts(incremental_eml_seed)
+        if seed_cuts:
+            cuts = seed_cuts
+            mapper_name = "editor_incremental"
+            mapper_fallback = True
+
+    seed_cut_count = 0
+    if isinstance(incremental_eml_seed, dict) and isinstance(incremental_eml_seed.get("cuts"), list):
+        seed_cut_count = len(incremental_eml_seed.get("cuts") or [])
+
+    edit_decisions: dict = {
+        "version": "1.0",
+        "cuts": cuts,
+        "renderer_family": "animation-first",
+        "metadata": {
+            "composition_id": composition_id,
+            "timestamp": timestamp,
+            "job_id": str(metadata.get("job_id") or ""),
+            "generated_by": "renderer_remotion.build_edit_decisions_artifact",
+            "render_item_count": int(_render_item_count(normalized_props, composition_id)),
+            "asset_reference_count": int(_count_asset_references(normalized_props, composition_id)),
+            "cut_mapper": mapper_name,
+            "cut_mapper_fallback": mapper_fallback,
+            "incremental_seed_cut_count": int(seed_cut_count),
+        },
+    }
+
+    subtitles_payload = _build_edit_decisions_subtitles(
+        subtitles_path=subtitles_path,
+        normalized_props=normalized_props,
+    )
+    if subtitles_payload:
+        edit_decisions["subtitles"] = subtitles_payload
+
+    audio_payload, legacy_music = _build_edit_decisions_audio(
+        normalized_props=normalized_props,
+        composition_id=composition_id,
+        narration_audio_path=narration_audio_path,
+        music_path=music_path,
+    )
+    if audio_payload:
+        edit_decisions["audio"] = audio_payload
+    if legacy_music:
+        edit_decisions["music"] = legacy_music
+
+    from schemas.artifacts import validate_artifact
+
+    validate_artifact("edit_decisions", edit_decisions)
+
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    edit_decisions_path = artifacts_dir / f"edit_decisions_{timestamp}.json"
+    edit_decisions_path.write_text(
+        json.dumps(edit_decisions, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return edit_decisions_path, edit_decisions
+
+
+def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> list[dict]:
+    """Map composition-specific props to edit_decisions.cuts format."""
+    if composition_id == "UniversalCommercial":
+        script = normalized_props.get("script") if isinstance(normalized_props.get("script"), dict) else {}
+        features = script.get("features") if isinstance(script.get("features"), list) else []
+        cuts: list[dict] = []
+        for idx, feature in enumerate(features):
+            if not isinstance(feature, dict):
+                continue
+            image_path = str(feature.get("imagePath") or "").strip()
+            if not image_path:
+                continue
+
+            duration = 6.0
+            title = str(feature.get("title") or f"Feature {idx + 1}")
+            cuts.append(
+                {
+                    "id": f"feature_{idx + 1}",
+                    "source": _to_file_uri(image_path),
+                    "in_seconds": 0.0,
+                    "out_seconds": duration,
+                    "layer": "primary",
+                    "transform": {
+                        "scale": 1.0,
+                        "position": "center",
+                        "animation": "ken-burns-slow-zoom",
+                    },
+                    "transition_in": "cut",
+                    "transition_out": "cut",
+                    "transition_duration": 0.15,
+                    "reason": f"Feature visual: {title[:120]}",
+                }
+            )
+        return cuts
+
+    scenes = normalized_props.get("scenes") if isinstance(normalized_props.get("scenes"), list) else []
+    cuts = []
+    for idx, scene in enumerate(scenes):
+        if not isinstance(scene, dict):
+            continue
+
+        src = str(scene.get("src") or "").strip()
+        if not src:
+            continue
+
+        try:
+            duration = max(0.8, float(scene.get("durationSeconds", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            duration = 0.8
+
+        try:
+            speed = max(0.1, float(scene.get("speedFactor", 1.0) or 1.0))
+        except (TypeError, ValueError):
+            speed = 1.0
+
+        zoom_animation = _zoom_to_transform_animation(str(scene.get("zoomType") or ""))
+        transform: dict = {
+            "scale": 1.0,
+            "position": "center",
+        }
+        if zoom_animation:
+            transform["animation"] = zoom_animation
+
+        try:
+            fade_out_frames = int(scene.get("fadeOutFrames", 0) or 0)
+        except (TypeError, ValueError):
+            fade_out_frames = 0
+
+        cut = {
+            "id": str(scene.get("id") or f"cut_{idx + 1}"),
+            "source": _to_file_uri(src),
+            "in_seconds": 0.0,
+            "out_seconds": round(duration, 3),
+            "speed": speed,
+            "layer": "primary",
+            "transform": transform,
+            "transition_in": "cut",
+            "transition_out": _normalize_cut_transition(str(scene.get("transitionOut") or "cut")),
+            "transition_duration": round(max(0.0, fade_out_frames / 30.0), 3),
+        }
+
+        reason = str(scene.get("sceneText") or "").strip()
+        if reason:
+            cut["reason"] = reason[:180]
+
+        cuts.append(cut)
+
+    return cuts
+
+
+def _extract_incremental_seed_cuts(incremental_eml_seed: Optional[dict]) -> list[dict]:
+    """Extract schema-safe cuts from editor incremental EML seed payload."""
+    if not isinstance(incremental_eml_seed, dict):
+        return []
+
+    raw_cuts = incremental_eml_seed.get("cuts")
+    if not isinstance(raw_cuts, list):
+        return []
+
+    cuts: list[dict] = []
+    for idx, item in enumerate(raw_cuts):
+        if not isinstance(item, dict):
+            continue
+
+        source = str(item.get("source") or "").strip()
+        if not source:
+            continue
+
+        try:
+            in_seconds = max(0.0, float(item.get("in_seconds", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            in_seconds = 0.0
+
+        try:
+            out_seconds = max(0.0, float(item.get("out_seconds", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            out_seconds = 0.0
+
+        if out_seconds <= in_seconds:
+            out_seconds = round(in_seconds + 0.8, 3)
+
+        cut: dict = {
+            "id": str(item.get("id") or f"seed_cut_{idx + 1}"),
+            "source": _to_file_uri(source),
+            "in_seconds": round(in_seconds, 3),
+            "out_seconds": round(out_seconds, 3),
+        }
+
+        try:
+            speed = max(0.1, float(item.get("speed", 1.0) or 1.0))
+            cut["speed"] = speed
+        except (TypeError, ValueError):
+            pass
+
+        layer = str(item.get("layer") or "").strip().lower()
+        if layer in {"primary", "overlay", "background"}:
+            cut["layer"] = layer
+
+        transform = item.get("transform") if isinstance(item.get("transform"), dict) else None
+        if transform:
+            clean_transform: dict = {}
+            if "scale" in transform:
+                try:
+                    clean_transform["scale"] = max(0.0, float(transform.get("scale") or 0.0))
+                except (TypeError, ValueError):
+                    pass
+            if "position" in transform:
+                clean_transform["position"] = str(transform.get("position") or "center")
+            if "animation" in transform:
+                clean_transform["animation"] = str(transform.get("animation") or "")
+            if clean_transform:
+                cut["transform"] = clean_transform
+
+        transition_in = str(item.get("transition_in") or "").strip()
+        if transition_in:
+            cut["transition_in"] = transition_in
+        transition_out = str(item.get("transition_out") or "").strip()
+        if transition_out:
+            cut["transition_out"] = transition_out
+
+        if "transition_duration" in item:
+            try:
+                cut["transition_duration"] = max(0.0, float(item.get("transition_duration") or 0.0))
+            except (TypeError, ValueError):
+                pass
+
+        reason = str(item.get("reason") or "").strip()
+        if reason:
+            cut["reason"] = reason[:180]
+
+        cuts.append(cut)
+
+    return cuts
+
+
+def _normalize_cut_transition(value: str) -> str:
+    clean = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "cut": "cut",
+        "hard_cut": "cut",
+        "none": "cut",
+        "fade": "fade",
+        "crossfade": "dissolve",
+        "dissolve": "dissolve",
+        "wipe": "wipe",
+        "whip": "wipe",
+        "slide": "wipe",
+    }
+    return mapping.get(clean, "cut")
+
+
+def _zoom_to_transform_animation(value: str) -> str:
+    clean = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "ken_burns": "ken-burns-slow-zoom",
+        "zoom_in": "zoom-in",
+        "zoom_out": "zoom-out",
+    }
+    return mapping.get(clean, "")
+
+
+def _build_edit_decisions_subtitles(
+    *,
+    subtitles_path: Optional[Path],
+    normalized_props: dict,
+) -> Optional[dict]:
+    subtitles: dict = {
+        "enabled": False,
+        "style": "word-by-word",
+        "position": "bottom-center",
+    }
+
+    if subtitles_path and subtitles_path.exists():
+        subtitles.update(
+            {
+                "enabled": True,
+                "source": _to_file_uri(str(subtitles_path.resolve().as_posix())),
+                "font": "IBM Plex Sans",
+                "font_size": 52,
+                "color": "#F8FAFC",
+                "outline_color": "#000000",
+                "background": "#00000099",
+                "max_words_per_line": 4,
+            }
+        )
+        return subtitles
+
+    captions = normalized_props.get("captions") if isinstance(normalized_props.get("captions"), dict) else {}
+    words = captions.get("words") if isinstance(captions.get("words"), list) else []
+    if not words:
+        return None
+
+    subtitles.update(
+        {
+            "enabled": True,
+            "font_size": int(captions.get("fontSize", 52) or 52),
+            "color": str(captions.get("color", "#F8FAFC")),
+            "outline_color": "#000000",
+            "background": str(captions.get("backgroundColor", "#00000099")),
+            "max_words_per_line": int(captions.get("wordsPerPage", 4) or 4),
+        }
+    )
+    return subtitles
+
+
+def _build_edit_decisions_audio(
+    *,
+    normalized_props: dict,
+    composition_id: str,
+    narration_audio_path: Optional[Path],
+    music_path: Optional[Path],
+) -> tuple[Optional[dict], Optional[dict]]:
+    audio_payload: dict = {}
+    legacy_music: Optional[dict] = None
+
+    narration_src = ""
+    if narration_audio_path and narration_audio_path.exists():
+        narration_src = _to_file_uri(str(narration_audio_path.resolve().as_posix()))
+    else:
+        soundtrack = normalized_props.get("soundtrack") if isinstance(normalized_props.get("soundtrack"), dict) else {}
+        if soundtrack.get("src"):
+            narration_src = _to_file_uri(str(soundtrack.get("src")))
+
+    if narration_src:
+        audio_payload["narration"] = {
+            "segments": [
+                {
+                    "asset_id": narration_src,
+                    "start_seconds": 0.0,
+                }
+            ]
+        }
+
+    music_src = ""
+    music_volume = 0.16
+    fade_in = 0.5
+    fade_out = 1.2
+
+    if composition_id == "UniversalCommercial":
+        audio_cfg = normalized_props.get("audio") if isinstance(normalized_props.get("audio"), dict) else {}
+        music_src = str(audio_cfg.get("bgmPath") or "").strip()
+        try:
+            music_volume = float(audio_cfg.get("volume", 0.4) or 0.4)
+        except (TypeError, ValueError):
+            music_volume = 0.4
+    else:
+        music = normalized_props.get("music") if isinstance(normalized_props.get("music"), dict) else {}
+        music_src = str(music.get("src") or "").strip()
+        try:
+            music_volume = float(music.get("volume", 0.16) or 0.16)
+        except (TypeError, ValueError):
+            music_volume = 0.16
+        try:
+            fade_in = float(music.get("fadeInSeconds", 0.5) or 0.5)
+        except (TypeError, ValueError):
+            fade_in = 0.5
+        try:
+            fade_out = float(music.get("fadeOutSeconds", 1.2) or 1.2)
+        except (TypeError, ValueError):
+            fade_out = 1.2
+
+    if not music_src and music_path and music_path.exists():
+        music_src = _to_file_uri(str(music_path.resolve().as_posix()))
+
+    if music_src:
+        music_src = _to_file_uri(music_src)
+        music_volume = max(0.0, min(1.0, music_volume))
+        fade_in = max(0.0, fade_in)
+        fade_out = max(0.0, fade_out)
+
+        music_payload = {
+            "asset_id": music_src,
+            "volume": music_volume,
+            "fade_in_seconds": fade_in,
+            "fade_out_seconds": fade_out,
+            "ducking": True,
+        }
+        audio_payload["music"] = music_payload
+        legacy_music = dict(music_payload)
+
+    if not audio_payload:
+        return None, None
+    return audio_payload, legacy_music
+
+
 def _resolve_composition_id(metadata: dict, timeline_payload: Optional[dict]) -> str:
     """Resolve composition ID from timeline payload first, then metadata."""
     candidate = ""
@@ -828,7 +1259,15 @@ def _resolve_composition_id(metadata: dict, timeline_payload: Optional[dict]) ->
     if not candidate:
         candidate = str(metadata.get("composition_id") or "").strip()
 
-    return candidate or "CinematicRenderer"
+    resolved = candidate or DEFAULT_REMOTION_COMPOSITION
+    if resolved not in ALLOWED_REMOTION_COMPOSITIONS:
+        logger.warning(
+            "Unknown remotion composition in payload/metadata ({}). Falling back to {}.",
+            resolved,
+            DEFAULT_REMOTION_COMPOSITION,
+        )
+        return DEFAULT_REMOTION_COMPOSITION
+    return resolved
 
 
 def _render_item_count(props: dict, composition_id: str) -> int:

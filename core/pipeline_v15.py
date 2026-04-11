@@ -58,6 +58,7 @@ from tools.tool_registry import ToolRegistry
 from core.reference_context import load_reference_context
 from core.subtopic_manager import get_subtopic_manager
 from core.state import StoryState, get_style_for_platform
+from tools.video.saar_composer import SaarComposer
 from models.content import (
     BlockScores,
     ErrorCode,
@@ -110,6 +111,77 @@ def _progress_scope():
     yield _NoopProgress()
 
 
+def _build_saar_scene_data(media_paths: list[Path]) -> list[dict[str, str]]:
+    """Build paired A/B scene payload for SaarComposer from downloaded clips."""
+    normalized_paths = [Path(p) for p in media_paths if p]
+    if not normalized_paths:
+        return []
+
+    variant_a = [path for idx, path in enumerate(normalized_paths) if idx % 2 == 0]
+    variant_b = [path for idx, path in enumerate(normalized_paths) if idx % 2 == 1]
+    if not variant_b:
+        variant_b = list(variant_a)
+
+    scene_count = max(len(variant_a), len(variant_b))
+    scene_data: list[dict[str, str]] = []
+    for idx in range(scene_count):
+        visual_a = variant_a[idx % len(variant_a)]
+        visual_b = variant_b[idx % len(variant_b)]
+        scene_data.append(
+            {
+                "visual_1": str(visual_a),
+                "visual_2": str(visual_b),
+                "fallback_clip": str(visual_a),
+            }
+        )
+    return scene_data
+
+
+def _select_saar_variant(candidate_paths: list[Path]) -> tuple[Optional[Path], dict]:
+    """Select Saar winner with deterministic telemetry-friendly heuristics."""
+    ranked: list[dict[str, object]] = []
+    for candidate in candidate_paths:
+        path = Path(candidate)
+        try:
+            size_bytes = int(path.stat().st_size)
+        except OSError:
+            continue
+        if size_bytes < 1024:
+            continue
+
+        name_upper = path.stem.upper()
+        variant = "B" if "VARIANT_B" in name_upper else "A"
+        ranked.append(
+            {
+                "variant": variant,
+                "path": str(path),
+                "size_bytes": size_bytes,
+            }
+        )
+
+    ranked.sort(key=lambda item: int(item.get("size_bytes", 0)), reverse=True)
+    if not ranked:
+        return None, {
+            "saar_candidate_count": 0,
+            "saar_candidates": [],
+            "saar_selection_mode": "size_bytes_desc",
+            "saar_selection_reason": "no_valid_candidates",
+            "saar_selected_variant": "",
+            "saar_selected_path": "",
+        }
+
+    winner = ranked[0]
+    winner_path = Path(str(winner.get("path", "")))
+    return winner_path, {
+        "saar_candidate_count": len(ranked),
+        "saar_candidates": ranked,
+        "saar_selection_mode": "size_bytes_desc",
+        "saar_selection_reason": "winner=max_file_size_bytes",
+        "saar_selected_variant": str(winner.get("variant", "A") or "A"),
+        "saar_selected_path": str(winner_path),
+    }
+
+
 def run_pipeline_v15(
     nicho_slug: str,
     mode: DirectorMode = DirectorMode.AUTO,
@@ -140,7 +212,11 @@ def run_pipeline_v15(
     from pipeline.quality_gate import validate_and_score
     from pipeline.self_healer import attempt_healing
     from pipeline.renderer import download_clips
-    from pipeline.renderer_remotion import render_video_with_fallback, build_director_artifacts
+    from pipeline.renderer_remotion import (
+        render_video_with_fallback,
+        build_director_artifacts,
+        build_edit_decisions_artifact,
+    )
     from pipeline.duration_validator import validate_duration
     from pipeline.pre_render_validator import validate_pre_render, extract_flagged_greenscreen_clips
     from pipeline.cleanup import cleanup_temp, cleanup_stale_temp
@@ -209,6 +285,8 @@ def run_pipeline_v15(
         "disable_image_cache",
         "ab_visual_split_enabled",
         "ab_visual_multiplier",
+        "saar_composer_enabled",
+        "saar_composer_use_winner",
         "remotion_composition_id",
         "provider_order_stock_video",
         "provider_order_image_generation",
@@ -220,16 +298,16 @@ def run_pipeline_v15(
     allowed_remotion_compositions = {"CinematicRenderer", "UniversalCommercial"}
     raw_requested_composition = str(
         runtime_overrides.get("remotion_composition_id", settings.remotion_composition_id)
-        or "CinematicRenderer"
+        or "UniversalCommercial"
     ).strip()
     requested_remotion_composition = (
         raw_requested_composition
         if raw_requested_composition in allowed_remotion_compositions
-        else "CinematicRenderer"
+        else "UniversalCommercial"
     )
     if raw_requested_composition and raw_requested_composition not in allowed_remotion_compositions:
         logger.warning(
-            "Unknown remotion composition requested ({}). Falling back to CinematicRenderer.",
+            "Unknown remotion composition requested ({}). Falling back to UniversalCommercial.",
             raw_requested_composition,
         )
     manifest.feature_flags["remotion_composition_id"] = requested_remotion_composition
@@ -240,13 +318,21 @@ def run_pipeline_v15(
         )
     except (TypeError, ValueError):
         baseline_ab_multiplier = int(settings.ab_visual_split_multiplier)
+    saar_enabled = bool(runtime_overrides.get("saar_composer_enabled", settings.enable_saar_composer))
+    saar_use_winner = bool(runtime_overrides.get("saar_composer_use_winner", settings.saar_composer_use_winner))
     manifest.ab_visual_split = {
         "enabled": bool(runtime_overrides.get("ab_visual_split_enabled", settings.enable_ab_visual_split)),
         "multiplier": max(2, min(3, baseline_ab_multiplier)),
         "runtime_override_enabled": "ab_visual_split_enabled" in runtime_overrides,
         "runtime_override_multiplier": "ab_visual_multiplier" in runtime_overrides,
+        "saar_enabled": saar_enabled,
+        "saar_use_winner": saar_use_winner,
+        "runtime_override_saar_enabled": "saar_composer_enabled" in runtime_overrides,
+        "runtime_override_saar_use_winner": "saar_composer_use_winner" in runtime_overrides,
         "requested_images_count": runtime_overrides.get("generated_images_count", settings.generated_images_count),
     }
+    manifest.feature_flags["enable_saar_composer"] = saar_enabled
+    manifest.feature_flags["saar_composer_use_winner"] = saar_use_winner
     manifest.manual_ideas = manual_idea_lines
     manifest.niche_memory_snapshot = niche_memory_lines
     manifest.reference_url = (reference_url or "").strip()
@@ -428,6 +514,17 @@ def run_pipeline_v15(
         issue_count = len(qa_issues or [])
         qa_penalty = 0.0 if qa_passed else min(2.0, 0.40 * max(1, issue_count))
         selection_score = round(max(0.0, min(10.0, base_score + backend_bonus - qa_penalty)), 2)
+        try:
+            saar_candidate_count = int(split.get("saar_candidate_count", 0) or 0)
+        except (TypeError, ValueError):
+            saar_candidate_count = 0
+
+        if saar_candidate_count >= 2:
+            selection_mode = "saar_ab_scoring"
+        elif bool(split.get("saar_enabled", False)):
+            selection_mode = "saar_ab_attempted"
+        else:
+            selection_mode = "single_run_scoring"
 
         if qa_skipped:
             selection_decision = "needs_qa_confirmation"
@@ -454,13 +551,18 @@ def run_pipeline_v15(
             reason_parts.append("qa_skipped=true")
         if qa_penalty > 0:
             reason_parts.append(f"qa_penalty={qa_penalty:.2f}")
+        if saar_candidate_count > 0:
+            reason_parts.append(f"saar_candidates={saar_candidate_count}")
+            saar_pick = str(split.get("saar_selected_variant", "") or "")
+            if saar_pick:
+                reason_parts.append(f"saar_pick={saar_pick}")
 
         split.update(
             {
                 "selected_variant": str(manifest.ab_variant or "A"),
                 "selection_score": selection_score,
                 "selection_decision": selection_decision,
-                "selection_mode": "single_run_scoring",
+                "selection_mode": selection_mode,
                 "qa_gate_passed": bool(qa_passed),
                 "qa_skipped": bool(qa_skipped),
                 "qa_penalty": round(qa_penalty, 2),
@@ -553,6 +655,8 @@ def run_pipeline_v15(
             },
             "ab_split": {
                 "enabled": bool(flags.get("enable_ab_visual_split", False)),
+                "saar_enabled": bool(flags.get("enable_saar_composer", False)),
+                "saar_use_winner": bool(flags.get("saar_composer_use_winner", False)),
             },
             "post_tts": {
                 "smart_silence_trim": bool(flags.get("enable_smart_silence_trim", False)),
@@ -641,6 +745,7 @@ def run_pipeline_v15(
         elif stage_key == "combine":
             artifacts["edit_decisions"] = {
                 "timeline_json_path": manifest.timeline_json_path,
+                "edit_decisions_path": manifest.edit_decisions_path,
                 "director_json_path": manifest.director_json_path,
                 "director_meta_path": manifest.director_meta_path,
             }
@@ -1466,8 +1571,31 @@ def run_pipeline_v15(
                 music_path=music_path if music_path and music_path.exists() else None,
                 composition_id=requested_remotion_composition,
             )
+            incremental_eml_seed = editor_agent.build_incremental_eml_seed(
+                state=story,
+                media_paths=render_inputs,
+                decisions=edit_decisions,
+                audio_duration=audio_duration,
+            )
 
             try:
+                edit_decisions_path, _ = build_edit_decisions_artifact(
+                    timeline_payload=timeline_payload,
+                    metadata={
+                        "timestamp": timestamp,
+                        "job_id": job_id,
+                        "composition_id": requested_remotion_composition,
+                        "titulo": manifest.titulo,
+                        "nicho": nicho_slug,
+                    },
+                    artifacts_dir=settings.temp_dir,
+                    subtitles_path=ass_path if ass_path.exists() else None,
+                    narration_audio_path=audio_path,
+                    music_path=music_path if music_path and music_path.exists() else None,
+                    incremental_eml_seed=incremental_eml_seed,
+                )
+                manifest.edit_decisions_path = str(edit_decisions_path)
+
                 director_path, director_meta_path, _, _ = build_director_artifacts(
                     timeline_payload=timeline_payload,
                     metadata={
@@ -1486,7 +1614,7 @@ def run_pipeline_v15(
                 _stage_end("combine", "error", str(exc)[:180])
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "combine"
-                manifest.error_message = f"Director artifact generation failed: {str(exc)[:180]}"
+                manifest.error_message = f"Edit/director artifact generation failed: {str(exc)[:180]}"
                 manifest.error_code = ErrorCode.JSON_SCHEMA_INVALID.value
                 state_mgr.save(manifest)
                 notify_error(manifest)
@@ -1500,6 +1628,7 @@ def run_pipeline_v15(
                 metadata={
                     "timeline_scenes": len(timeline_payload.get("scenes", [])),
                     "composition_id": str(timeline_payload.get("composition_id", requested_remotion_composition)),
+                    "edit_decisions_path": manifest.edit_decisions_path,
                     "director_json_path": manifest.director_json_path,
                     "director_meta_path": manifest.director_meta_path,
                 },
@@ -1510,6 +1639,7 @@ def run_pipeline_v15(
                 (
                     f"scenes={len(timeline_payload.get('scenes', []))}, "
                     f"composition={timeline_payload.get('composition_id', requested_remotion_composition)}, "
+                    f"edit={Path(manifest.edit_decisions_path).name if manifest.edit_decisions_path else 'none'}, "
                     f"director={Path(manifest.director_json_path).name if manifest.director_json_path else 'none'}"
                 ),
             )
@@ -1657,8 +1787,31 @@ def run_pipeline_v15(
                             music_path=music_path if music_path and music_path.exists() else None,
                             composition_id=requested_remotion_composition,
                         )
+                        incremental_eml_seed = editor_agent.build_incremental_eml_seed(
+                            state=story,
+                            media_paths=render_inputs,
+                            decisions=edit_decisions,
+                            audio_duration=audio_duration,
+                        )
 
                         try:
+                            edit_decisions_path, _ = build_edit_decisions_artifact(
+                                timeline_payload=timeline_payload,
+                                metadata={
+                                    "timestamp": timestamp,
+                                    "job_id": job_id,
+                                    "composition_id": requested_remotion_composition,
+                                    "titulo": manifest.titulo,
+                                    "nicho": nicho_slug,
+                                },
+                                artifacts_dir=settings.temp_dir,
+                                subtitles_path=ass_path if ass_path.exists() else None,
+                                narration_audio_path=audio_path,
+                                music_path=music_path if music_path and music_path.exists() else None,
+                                incremental_eml_seed=incremental_eml_seed,
+                            )
+                            manifest.edit_decisions_path = str(edit_decisions_path)
+
                             director_path, director_meta_path, _, _ = build_director_artifacts(
                                 timeline_payload=timeline_payload,
                                 metadata={
@@ -1677,7 +1830,7 @@ def run_pipeline_v15(
                             _stage_end("validated", "error", str(exc)[:180])
                             manifest.status = JobStatus.ERROR.value
                             manifest.error_stage = "pre_render_validation"
-                            manifest.error_message = f"Director artifact regeneration failed: {str(exc)[:180]}"
+                            manifest.error_message = f"Edit/director artifact regeneration failed: {str(exc)[:180]}"
                             manifest.error_code = ErrorCode.JSON_SCHEMA_INVALID.value
                             state_mgr.save(manifest)
                             notify_error(manifest)
@@ -1805,6 +1958,95 @@ def run_pipeline_v15(
                     return manifest
 
             manifest.video_path = str(video_path)
+
+            split_state = dict(manifest.ab_visual_split or {})
+            if bool(split_state.get("enabled", False)) and bool(split_state.get("saar_enabled", False)):
+                if len(clips) < 2:
+                    split_state["saar_candidate_count"] = 0
+                    split_state["saar_selection_mode"] = "size_bytes_desc"
+                    split_state["saar_selection_reason"] = "insufficient_clips_for_ab_split"
+                    split_state["saar_winner_applied"] = False
+                    _add_decision(
+                        "render",
+                        "SaarComposer A/B skipped",
+                        "insufficient clips for A/B pairing",
+                        severity="warning",
+                    )
+                elif not Path(audio_path).exists():
+                    split_state["saar_candidate_count"] = 0
+                    split_state["saar_selection_mode"] = "size_bytes_desc"
+                    split_state["saar_selection_reason"] = "missing_audio_track"
+                    split_state["saar_winner_applied"] = False
+                    _add_decision(
+                        "render",
+                        "SaarComposer A/B skipped",
+                        "audio track missing",
+                        severity="warning",
+                    )
+                else:
+                    try:
+                        scene_data = _build_saar_scene_data(clips)
+                        composer = SaarComposer(settings.temp_dir)
+                        saar_prefix = f"{timestamp}_{nicho_slug}"
+                        raw_candidates = composer.build_ab_split_renders(
+                            scene_data=scene_data,
+                            audio_track=str(audio_path),
+                            output_prefix=saar_prefix,
+                        )
+                        candidate_paths = [Path(path) for path in raw_candidates if path]
+                        selected_saar_path, saar_metadata = _select_saar_variant(candidate_paths)
+                        split_state.update(saar_metadata)
+
+                        selected_variant = str(saar_metadata.get("saar_selected_variant", "") or "")
+                        if selected_variant:
+                            manifest.ab_variant = selected_variant
+                            split_state["selected_variant"] = selected_variant
+
+                        if selected_saar_path and bool(split_state.get("saar_use_winner", False)):
+                            if str(selected_saar_path) != str(video_path):
+                                shutil.copy2(str(selected_saar_path), str(video_path))
+                            split_state["saar_winner_applied"] = True
+                            render_backend = "saar_composer"
+                            _add_decision(
+                                "render",
+                                "SaarComposer winner applied",
+                                f"variant={selected_variant or 'A'}",
+                            )
+                        elif selected_saar_path:
+                            split_state["saar_winner_applied"] = False
+                            _add_decision(
+                                "render",
+                                "SaarComposer candidates generated",
+                                (
+                                    f"winner={selected_variant or 'A'}, "
+                                    f"apply_winner={bool(split_state.get('saar_use_winner', False))}"
+                                ),
+                            )
+                        else:
+                            split_state["saar_winner_applied"] = False
+                            _add_decision(
+                                "render",
+                                "SaarComposer A/B produced no valid candidates",
+                                str(split_state.get("saar_selection_reason", "no_valid_candidates"))[:180],
+                                severity="warning",
+                            )
+                    except Exception as exc:
+                        try:
+                            split_state["saar_candidate_count"] = int(split_state.get("saar_candidate_count", 0) or 0)
+                        except (TypeError, ValueError):
+                            split_state["saar_candidate_count"] = 0
+                        split_state["saar_selection_mode"] = str(split_state.get("saar_selection_mode", "size_bytes_desc"))
+                        split_state["saar_selection_reason"] = "composer_exception"
+                        split_state["saar_error"] = str(exc)[:220]
+                        split_state["saar_winner_applied"] = False
+                        _add_decision(
+                            "render",
+                            "SaarComposer A/B failed",
+                            str(exc)[:180],
+                            severity="warning",
+                        )
+
+                manifest.ab_visual_split = split_state
 
             # Optional OpenMontage enhancement chain (free/local).
             if settings.enable_openmontage_free_tools and settings.openmontage_enable_enhancement:

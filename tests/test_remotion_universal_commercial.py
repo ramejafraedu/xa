@@ -16,6 +16,7 @@ from pipeline.renderer_remotion import (
     _normalize_timeline_props,
     _resolve_composition_id,
     build_director_artifacts,
+    build_edit_decisions_artifact,
 )
 
 
@@ -26,6 +27,11 @@ def test_resolve_composition_id_prefers_timeline() -> None:
     }
     resolved = _resolve_composition_id({"composition_id": "CinematicRenderer"}, payload)
     assert resolved == "UniversalCommercial", f"Unexpected composition resolution: {resolved}"
+
+
+def test_resolve_composition_id_defaults_to_universal() -> None:
+    resolved = _resolve_composition_id({}, None)
+    assert resolved == "UniversalCommercial", f"Expected UniversalCommercial default, got: {resolved}"
 
 
 def test_universal_commercial_normalization() -> None:
@@ -142,11 +148,111 @@ def test_director_artifacts_generation() -> None:
     director_meta_path.unlink(missing_ok=True)
 
 
+def test_edit_decisions_artifact_generation() -> None:
+    feature_image = str((settings.workspace / "temp" / "feature_edit_decision.png").resolve())
+
+    timeline_payload = {
+        "composition_id": "UniversalCommercial",
+        "projectInfo": {"name": "Demo Brand"},
+        "script": {
+            "hook": "Hook",
+            "solution": "Solution",
+            "cta": "CTA",
+            "features": [
+                {
+                    "title": "Feature A",
+                    "subtitle": "Benefit",
+                    "imagePath": feature_image,
+                }
+            ],
+        },
+        "audio": {
+            "volume": 0.5,
+        },
+    }
+
+    edit_path, edit_payload = build_edit_decisions_artifact(
+        timeline_payload=timeline_payload,
+        metadata={
+            "timestamp": 1775940000001,
+            "job_id": "test_job",
+            "composition_id": "UniversalCommercial",
+        },
+        artifacts_dir=settings.temp_dir,
+    )
+
+    assert edit_path.exists(), "edit_decisions file missing"
+    assert edit_payload.get("version") == "1.0"
+    assert edit_payload.get("renderer_family") == "animation-first"
+    assert len(edit_payload.get("cuts", [])) >= 1, "Expected at least one cut in edit_decisions"
+
+    persisted = json.loads(edit_path.read_text(encoding="utf-8"))
+    assert persisted.get("version") == "1.0"
+    assert persisted.get("cuts", [{}])[0].get("source", "").startswith("workspace/")
+
+    edit_path.unlink(missing_ok=True)
+
+
+def test_edit_decisions_artifact_incremental_seed_fallback() -> None:
+    fallback_media = str((settings.workspace / "temp" / "seed_clip.mp4").resolve())
+    incremental_seed = {
+        "version": "1.0",
+        "mapper": "editor_incremental_v1",
+        "cuts": [
+            {
+                "id": "seed_1",
+                "source": fallback_media,
+                "in_seconds": 0.0,
+                "out_seconds": 2.4,
+                "transition_out": "cut",
+                "reason": "Seed fallback cut",
+            }
+        ],
+        "metadata": {"media_count": 1},
+    }
+
+    timeline_payload = {
+        "composition_id": "UniversalCommercial",
+        "projectInfo": {"name": "Demo Brand"},
+        "script": {
+            "hook": "Hook",
+            "solution": "Solution",
+            "cta": "CTA",
+            "features": [],
+        },
+    }
+
+    edit_path, edit_payload = build_edit_decisions_artifact(
+        timeline_payload=timeline_payload,
+        metadata={
+            "timestamp": 1775940000002,
+            "job_id": "test_job",
+            "composition_id": "UniversalCommercial",
+        },
+        artifacts_dir=settings.temp_dir,
+        incremental_eml_seed=incremental_seed,
+    )
+
+    assert edit_path.exists(), "edit_decisions fallback file missing"
+    assert len(edit_payload.get("cuts", [])) == 1, "Expected incremental seed fallback cut"
+    assert edit_payload.get("cuts", [{}])[0].get("id") == "seed_1"
+
+    meta = edit_payload.get("metadata", {})
+    assert meta.get("cut_mapper") == "editor_incremental"
+    assert meta.get("cut_mapper_fallback") is True
+    assert int(meta.get("incremental_seed_cut_count", 0)) == 1
+
+    edit_path.unlink(missing_ok=True)
+
+
 def main() -> int:
     print("\n=== UNIVERSAL COMMERCIAL NORMALIZATION SMOKE ===")
 
     test_resolve_composition_id_prefers_timeline()
     print("PASS: composition id resolution")
+
+    test_resolve_composition_id_defaults_to_universal()
+    print("PASS: default composition fallback")
 
     test_universal_commercial_normalization()
     print("PASS: universal payload normalization")
@@ -156,6 +262,12 @@ def main() -> int:
 
     test_director_artifacts_generation()
     print("PASS: director artifacts generation")
+
+    test_edit_decisions_artifact_generation()
+    print("PASS: edit_decisions artifact generation")
+
+    test_edit_decisions_artifact_incremental_seed_fallback()
+    print("PASS: incremental EML fallback mapping")
 
     print("\nAll UniversalCommercial smoke tests passed")
     return 0

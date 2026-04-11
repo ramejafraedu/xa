@@ -437,6 +437,16 @@ def _extract_ab_visual_split(manifest: dict) -> dict:
     selection_decision = str(summary.get("selection_decision", "") or "")
     selection_mode = str(summary.get("selection_mode", "") or "")
     selection_reason = str(summary.get("selection_reason", "") or "")
+    saar_selection_mode = str(summary.get("saar_selection_mode", "") or "")
+    saar_selection_reason = str(summary.get("saar_selection_reason", "") or "")
+    saar_selected_variant = str(
+        summary.get("saar_selected_variant", summary.get("selected_variant", "")) or ""
+    )
+
+    try:
+        saar_candidate_count = int(summary.get("saar_candidate_count", 0) or 0)
+    except (TypeError, ValueError):
+        saar_candidate_count = 0
 
     try:
         selection_score = float(summary.get("selection_score", 0.0) or 0.0)
@@ -462,6 +472,13 @@ def _extract_ab_visual_split(manifest: dict) -> dict:
         "selection_mode": selection_mode,
         "selection_score": round(selection_score, 2),
         "selection_reason": selection_reason,
+        "saar_enabled": bool(summary.get("saar_enabled", False)),
+        "saar_use_winner": bool(summary.get("saar_use_winner", False)),
+        "saar_winner_applied": bool(summary.get("saar_winner_applied", False)),
+        "saar_candidate_count": saar_candidate_count,
+        "saar_selected_variant": saar_selected_variant,
+        "saar_selection_mode": saar_selection_mode,
+        "saar_selection_reason": saar_selection_reason,
         "qa_gate_passed": bool(summary.get("qa_gate_passed", False)),
         "qa_skipped": bool(summary.get("qa_skipped", False)),
         "qa_penalty": round(qa_penalty, 2),
@@ -1246,6 +1263,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "reference_hook_seconds": data.get("reference_hook_seconds", 0.0),
                     "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
                     "timeline_json_path": data.get("timeline_json_path", ""),
+                    "edit_decisions_path": data.get("edit_decisions_path", ""),
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
                     "render_backend": data.get("render_backend", ""),
                     **_publish_fields(data),
@@ -1275,6 +1293,7 @@ async def list_jobs(limit: int = 30, offset: int = 0):
                     "reference_hook_seconds": data.get("reference_hook_seconds", 0.0),
                     "reference_avg_cut_seconds": data.get("reference_avg_cut_seconds", 0.0),
                     "timeline_json_path": data.get("timeline_json_path", ""),
+                    "edit_decisions_path": data.get("edit_decisions_path", ""),
                     "cost_actual_usd": data.get("cost_actual_usd", 0.0),
                     "render_backend": data.get("render_backend", ""),
                     **_publish_fields(data),
@@ -1727,6 +1746,8 @@ async def operations_config():
         "generated_images_count": int(settings.generated_images_count),
         "enable_ab_visual_split": bool(settings.enable_ab_visual_split),
         "ab_visual_split_multiplier": int(settings.ab_visual_split_multiplier),
+        "enable_saar_composer": bool(settings.enable_saar_composer),
+        "saar_composer_use_winner": bool(settings.saar_composer_use_winner),
         "enable_smart_silence_trim": bool(settings.enable_smart_silence_trim),
         "enable_post_tts_loudnorm": bool(settings.enable_post_tts_loudnorm),
         "media_cache_ttl_days": int(settings.media_cache_ttl_days),
@@ -1799,6 +1820,18 @@ async def operations_config_update(payload: dict = Body(...)):
             env_updates["AB_VISUAL_SPLIT_MULTIPLIER"] = str(value)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="ab_visual_split_multiplier must be an integer")
+
+    if "enable_saar_composer" in payload:
+        value = _as_bool(payload.get("enable_saar_composer"), default=settings.enable_saar_composer)
+        settings.enable_saar_composer = value
+        updates["enable_saar_composer"] = value
+        env_updates["ENABLE_SAAR_COMPOSER"] = "true" if value else "false"
+
+    if "saar_composer_use_winner" in payload:
+        value = _as_bool(payload.get("saar_composer_use_winner"), default=settings.saar_composer_use_winner)
+        settings.saar_composer_use_winner = value
+        updates["saar_composer_use_winner"] = value
+        env_updates["SAAR_COMPOSER_USE_WINNER"] = "true" if value else "false"
 
     if "enable_smart_silence_trim" in payload:
         value = _as_bool(payload.get("enable_smart_silence_trim"), default=settings.enable_smart_silence_trim)
