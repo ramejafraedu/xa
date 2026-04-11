@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openmontage/artifacts/director",
+  "title": "Director Config Artifact",
+  "description": "Normalized composition props snapshot generated before Remotion render.",
+  "type": "object",
+  "required": ["version", "composition_id", "timestamp", "props"],
+  "properties": {
+    "version": { "type": "string", "const": "1.0" },
+    "composition_id": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "integer", "minimum": 1 },
+    "job_id": { "type": "string" },
+    "props": { "type": "object" }
+  },
+  "additionalProperties": false
+}

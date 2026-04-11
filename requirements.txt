@@ -14,6 +14,11 @@ jsonschema>=4.20,<5     # OpenMontage styles/playbook validation
 # HTTP (single library, no mixing)
 httpx>=0.28,<1
 
+# LangChain stack (used by multiple agents)
+langchain>=0.3,<0.4
+langchain-core>=0.3,<0.4
+langchain-community>=0.3,<0.4
+
 # TTS
 edge-tts>=6.1,<7
 
@@ -38,6 +43,9 @@ psutil>=6.1,<7
 # Video/Audio (optional, for async file ops)
 aiofiles>=23.2,<24
 yt-dlp>=2025.1
+opencv-python-headless>=4.10,<5
+scenedetect>=0.6,<0.7
+moviepy>=2,<3
 
 # Gemini API (Veo 3.1, Lyria 3, Imagen, TTS)
 google-genai>=1.14

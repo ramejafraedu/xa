@@ -6,10 +6,13 @@ flags in config (ALLOW_FFMPEG_FALLBACK).
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
+import time
 from urllib.parse import unquote
 from pathlib import Path
 from typing import Optional
@@ -20,6 +23,31 @@ from config import settings
 
 
 REMOTION_DIR = Path(__file__).resolve().parent.parent / "remotion-composer"
+
+
+def _resolve_remotion_runner() -> tuple[list[str], str]:
+    """Resolve the safest way to execute Remotion CLI.
+
+    Prefer local CLI script via `node` to avoid execute-bit issues on
+    `node_modules/.bin/remotion` after cross-OS deployments.
+    """
+    local_cli_root = REMOTION_DIR / "node_modules" / "@remotion" / "cli"
+    local_cli = local_cli_root / "remotion-cli.js"
+    local_cli_dist = local_cli_root / "dist" / "index.js"
+    if local_cli.exists() and local_cli_dist.exists():
+        return ["node", str(local_cli)], "local-cli"
+
+    if local_cli.exists() and not local_cli_dist.exists():
+        logger.warning(
+            "Remotion local CLI incomplete (missing dist/index.js). "
+            "Falling back to npx remotion."
+        )
+
+    npx_bin = shutil.which("npx") or shutil.which("npx.cmd")
+    if npx_bin:
+        return [npx_bin, "remotion"], "npx"
+
+    return [], ""
 
 
 def get_remotion_unavailability_reason() -> str:
@@ -35,9 +63,9 @@ def get_remotion_unavailability_reason() -> str:
     if not (REMOTION_DIR / "node_modules").exists():
         return "remotion-composer/node_modules missing"
 
-    npx_bin = shutil.which("npx") or shutil.which("npx.cmd")
-    if not npx_bin:
-        return "npx not found in PATH"
+    remotion_runner, _ = _resolve_remotion_runner()
+    if not remotion_runner:
+        return "Remotion CLI not found (missing local @remotion/cli and npx)"
 
     try:
         result = subprocess.run(
@@ -112,14 +140,36 @@ def render_with_remotion(
         logger.info("Remotion not available, falling back to FFmpeg")
         return False
 
+    requested_concurrency = max(1, int(getattr(settings, "remotion_concurrency", 1) or 1))
+    available_cores = max(1, int(os.cpu_count() or 1))
+    remotion_concurrency = min(requested_concurrency, available_cores)
+    if remotion_concurrency != requested_concurrency:
+        logger.warning(
+            "Remotion concurrency adjusted to host capacity: "
+            f"requested={requested_concurrency}, available={available_cores}, using={remotion_concurrency}"
+        )
+    remotion_timeout = max(120, int(getattr(settings, "remotion_timeout_seconds", 600) or 600))
+
     try:
         _ensure_public_workspace_link()
         props: dict
+        composition_id = _resolve_composition_id(metadata, timeline_payload)
         if timeline_payload:
-            props = _normalize_timeline_props(timeline_payload, metadata)
+            props = _normalize_timeline_props(
+                timeline_payload,
+                metadata,
+                subtitles_path=subtitles_path,
+                composition_id=composition_id,
+            )
         elif timeline_path and timeline_path.exists():
             payload = json.loads(timeline_path.read_text(encoding="utf-8"))
-            props = _normalize_timeline_props(payload, metadata)
+            composition_id = _resolve_composition_id(metadata, payload)
+            props = _normalize_timeline_props(
+                payload,
+                metadata,
+                subtitles_path=subtitles_path,
+                composition_id=composition_id,
+            )
         else:
             props = _build_legacy_props(
                 clips=clips,
@@ -128,31 +178,33 @@ def render_with_remotion(
                 music_path=music_path,
                 metadata=metadata,
             )
+            composition_id = str(metadata.get("composition_id", "CinematicRenderer") or "CinematicRenderer")
 
         _materialize_workspace_assets(props)
 
         props_file = output_path.parent / f"remotion_props_{metadata.get('timestamp', 0)}.json"
         props_file.write_text(json.dumps(props, indent=2), encoding="utf-8")
 
-        composition_id = str(metadata.get("composition_id", "CinematicRenderer"))
-        logger.info(f"🎥 Remotion: Rendering {len(props.get('scenes', []))} scenes ({composition_id})...")
+        render_items = _render_item_count(props, composition_id)
+        logger.info(f"🎥 Remotion: Rendering {render_items} items ({composition_id})...")
 
-        npx_bin = shutil.which("npx") or shutil.which("npx.cmd")
-        if not npx_bin:
-            logger.warning("Remotion render aborted: npx executable not found")
+        remotion_runner, runner_kind = _resolve_remotion_runner()
+        if not remotion_runner:
+            logger.warning("Remotion render aborted: CLI runner not found")
             return False
 
         output_path_str = str(output_path.resolve().as_posix())
         props_json = json.dumps(props, ensure_ascii=False)
 
         cmd = [
-            npx_bin, "remotion", "render",
+            *remotion_runner,
+            "render",
             "src/index.tsx",
             composition_id,
             output_path_str,
             "--props", props_json,
             "--codec", "h264",
-            "--concurrency", "1",
+            "--concurrency", str(remotion_concurrency),
         ]
 
         result = subprocess.run(
@@ -160,7 +212,7 @@ def render_with_remotion(
             cwd=str(REMOTION_DIR),
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=remotion_timeout,
             shell=False,
         )
 
@@ -172,7 +224,14 @@ def render_with_remotion(
             logger.debug(f"Remotion stderr: {result.stderr[:2000]}")
 
         if result.returncode != 0:
-            logger.warning(f"Remotion render failed (exit {result.returncode})")
+            stderr_snippet = (result.stderr or "").strip().replace("\n", " ")[:500]
+            if stderr_snippet:
+                logger.warning(
+                    f"Remotion render failed (exit {result.returncode}, runner={runner_kind}): "
+                    f"{stderr_snippet}"
+                )
+            else:
+                logger.warning(f"Remotion render failed (exit {result.returncode}, runner={runner_kind})")
             return False
 
         if output_path.exists() and output_path.stat().st_size > 1024:
@@ -196,10 +255,10 @@ def render_with_remotion(
         return False
 
     except subprocess.TimeoutExpired:
-        logger.error("Remotion render timed out (10 min)")
+        logger.error(f"Remotion render timed out ({remotion_timeout}s)")
         return False
     except FileNotFoundError:
-        logger.error(f"Remotion executable not found (npx={npx_bin})")
+        logger.error("Remotion executable not found")
         return False
     except Exception as exc:
         logger.warning(f"Remotion render error: {exc}")
@@ -528,11 +587,18 @@ def _build_legacy_props(
     return payload
 
 
-def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
-    """Normalize timeline payload into strict CinematicRenderer props."""
+def _normalize_timeline_props(
+    timeline_payload: dict,
+    metadata: dict,
+    subtitles_path: Optional[Path] = None,
+    composition_id: str = "CinematicRenderer",
+) -> dict:
+    """Normalize timeline payload into strict composition-specific props."""
     props = dict(timeline_payload or {})
-    scenes_raw = props.get("scenes") if isinstance(props.get("scenes"), list) else []
+    if composition_id == "UniversalCommercial":
+        return _normalize_universal_commercial_props(props, metadata)
 
+    scenes_raw = props.get("scenes") if isinstance(props.get("scenes"), list) else []
     scenes: list[dict] = []
     for idx, raw in enumerate(scenes_raw):
         if not isinstance(raw, dict):
@@ -636,9 +702,10 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
     else:
         props.pop("music", None)
 
-    captions = props.get("captions")
-    if isinstance(captions, dict) and isinstance(captions.get("words"), list):
-        normalized_words = []
+    captions = props.get("captions") if isinstance(props.get("captions"), dict) else {}
+    normalized_words: list[dict] = []
+
+    if isinstance(captions.get("words"), list):
         for w in captions.get("words", []):
             if not isinstance(w, dict):
                 continue
@@ -651,17 +718,338 @@ def _normalize_timeline_props(timeline_payload: dict, metadata: dict) -> dict:
                 end_ms = start_ms + 40
             normalized_words.append({"word": word, "startMs": start_ms, "endMs": end_ms})
 
+    if not normalized_words and subtitles_path and subtitles_path.exists():
+        normalized_words = _parse_ass_words(subtitles_path)
         if normalized_words:
-            props["captions"] = {
-                **captions,
-                "words": normalized_words,
-            }
-        else:
-            props.pop("captions", None)
+            logger.info("Remotion captions fallback applied from ASS subtitles")
+
+    if normalized_words:
+        props["captions"] = {
+            **captions,
+            "words": normalized_words,
+            "wordsPerPage": int(captions.get("wordsPerPage", 4) or 4),
+            "fontSize": int(captions.get("fontSize", 52) or 52),
+            "color": str(captions.get("color", "#F8FAFC")),
+            "highlightColor": str(captions.get("highlightColor", "#FBBF24")),
+            "backgroundColor": str(captions.get("backgroundColor", "rgba(0, 0, 0, 0.60)")),
+        }
     else:
         props.pop("captions", None)
 
     return props
+
+
+def build_director_artifacts(
+    timeline_payload: dict,
+    metadata: dict,
+    artifacts_dir: Path,
+    *,
+    subtitles_path: Optional[Path] = None,
+) -> tuple[Path, Path, dict, dict]:
+    """Build, validate, and persist director artifacts for auditability.
+
+    Returns:
+        (director_json_path, director_meta_path, director_payload, director_meta)
+    """
+    payload = dict(timeline_payload or {})
+    composition_id = _resolve_composition_id(metadata, payload)
+    normalized_props = _normalize_timeline_props(
+        payload,
+        metadata,
+        subtitles_path=subtitles_path,
+        composition_id=composition_id,
+    )
+
+    try:
+        timestamp = int(metadata.get("timestamp") or int(time.time() * 1000))
+    except (TypeError, ValueError, AttributeError):
+        timestamp = int(time.time() * 1000)
+
+    director_payload = {
+        "version": "1.0",
+        "composition_id": composition_id,
+        "timestamp": timestamp,
+        "job_id": str(metadata.get("job_id") or ""),
+        "props": normalized_props,
+    }
+
+    props_hash = hashlib.sha1(
+        json.dumps(normalized_props, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    director_meta = {
+        "version": "1.0",
+        "composition_id": composition_id,
+        "timestamp": timestamp,
+        "job_id": str(metadata.get("job_id") or ""),
+        "props_hash": props_hash,
+        "render_item_count": int(_render_item_count(normalized_props, composition_id)),
+        "asset_reference_count": int(_count_asset_references(normalized_props, composition_id)),
+        "has_captions": bool(normalized_props.get("captions")),
+        "has_soundtrack": bool(isinstance(normalized_props.get("soundtrack"), dict)),
+        "has_music": bool(isinstance(normalized_props.get("music"), dict)),
+    }
+
+    from schemas.artifacts import validate_artifact
+
+    validate_artifact("director", director_payload)
+    validate_artifact("director_meta", director_meta)
+
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    director_path = artifacts_dir / f"director_{timestamp}.json"
+    director_meta_path = artifacts_dir / f"director_meta_{timestamp}.json"
+
+    director_path.write_text(
+        json.dumps(director_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    director_meta_path.write_text(
+        json.dumps(director_meta, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    return director_path, director_meta_path, director_payload, director_meta
+
+
+def _resolve_composition_id(metadata: dict, timeline_payload: Optional[dict]) -> str:
+    """Resolve composition ID from timeline payload first, then metadata."""
+    candidate = ""
+    if isinstance(timeline_payload, dict):
+        candidate = str(
+            timeline_payload.get("composition_id")
+            or timeline_payload.get("compositionId")
+            or ""
+        ).strip()
+
+        if not candidate:
+            meta = timeline_payload.get("meta")
+            if isinstance(meta, dict):
+                candidate = str(meta.get("composition_id") or meta.get("compositionId") or "").strip()
+
+    if not candidate:
+        candidate = str(metadata.get("composition_id") or "").strip()
+
+    return candidate or "CinematicRenderer"
+
+
+def _render_item_count(props: dict, composition_id: str) -> int:
+    """Estimate render item count for log visibility across compositions."""
+    if composition_id == "UniversalCommercial":
+        script = props.get("script") if isinstance(props.get("script"), dict) else {}
+        features = script.get("features") if isinstance(script.get("features"), list) else []
+        return len(features) + 3
+
+    scenes = props.get("scenes") if isinstance(props.get("scenes"), list) else []
+    return len(scenes)
+
+
+def _count_asset_references(props: dict, composition_id: str) -> int:
+    """Count explicit media references included in normalized render props."""
+    refs = 0
+
+    if composition_id == "UniversalCommercial":
+        script = props.get("script") if isinstance(props.get("script"), dict) else {}
+        features = script.get("features") if isinstance(script.get("features"), list) else []
+        for feature in features:
+            if isinstance(feature, dict) and str(feature.get("imagePath") or "").strip():
+                refs += 1
+
+        audio = props.get("audio") if isinstance(props.get("audio"), dict) else {}
+        if str(audio.get("bgmPath") or "").strip():
+            refs += 1
+        return refs
+
+    scenes = props.get("scenes") if isinstance(props.get("scenes"), list) else []
+    for scene in scenes:
+        if isinstance(scene, dict) and str(scene.get("src") or "").strip():
+            refs += 1
+
+    soundtrack = props.get("soundtrack")
+    if isinstance(soundtrack, dict) and str(soundtrack.get("src") or "").strip():
+        refs += 1
+
+    music = props.get("music")
+    if isinstance(music, dict) and str(music.get("src") or "").strip():
+        refs += 1
+
+    return refs
+
+
+def _normalize_static_asset_path(value: str) -> str:
+    """Return a staticFile-compatible path (workspace relative) when possible."""
+    normalized = _to_file_uri(str(value or "").strip())
+    if not normalized:
+        return ""
+
+    lowered = normalized.lower()
+    if lowered.startswith("workspace/"):
+        return normalized
+
+    if lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("data:"):
+        return ""
+    if lowered.startswith("file://"):
+        return ""
+
+    if normalized.startswith("/") or normalized.startswith("\\") or ":" in normalized:
+        return ""
+
+    return normalized.replace("\\", "/")
+
+
+def _normalize_universal_commercial_props(timeline_payload: dict, metadata: dict) -> dict:
+    """Normalize flexible payloads into UniversalCommercial props contract."""
+    raw_style = timeline_payload.get("style") if isinstance(timeline_payload.get("style"), dict) else {}
+    raw_project = timeline_payload.get("projectInfo") if isinstance(timeline_payload.get("projectInfo"), dict) else {}
+    raw_script = timeline_payload.get("script") if isinstance(timeline_payload.get("script"), dict) else {}
+
+    theme = str(raw_style.get("theme") or timeline_payload.get("theme") or "minimal").strip().lower()
+    if theme not in {"cyberpunk", "minimal", "playful"}:
+        theme = "minimal"
+
+    theme_defaults = {
+        "cyberpunk": {
+            "primaryColor": "#0F172A",
+            "accentColor": "#22D3EE",
+            "fontFamily": "Orbitron, sans-serif",
+        },
+        "minimal": {
+            "primaryColor": "#334155",
+            "accentColor": "#F97316",
+            "fontFamily": "IBM Plex Sans, sans-serif",
+        },
+        "playful": {
+            "primaryColor": "#BE123C",
+            "accentColor": "#14B8A6",
+            "fontFamily": "Baloo 2, sans-serif",
+        },
+    }[theme]
+
+    project_name = str(
+        raw_project.get("name")
+        or metadata.get("titulo")
+        or metadata.get("nicho")
+        or "Video Factory"
+    ).strip()
+
+    style = {
+        "theme": theme,
+        "primaryColor": str(raw_style.get("primaryColor") or theme_defaults["primaryColor"]),
+        "accentColor": str(raw_style.get("accentColor") or theme_defaults["accentColor"]),
+        "fontFamily": str(raw_style.get("fontFamily") or theme_defaults["fontFamily"]),
+    }
+
+    raw_features = raw_script.get("features") if isinstance(raw_script.get("features"), list) else []
+    if not raw_features and isinstance(timeline_payload.get("features"), list):
+        raw_features = timeline_payload.get("features")
+    if not raw_features:
+        scenes = timeline_payload.get("scenes") if isinstance(timeline_payload.get("scenes"), list) else []
+        raw_features = _build_universal_features_from_scenes(scenes)
+
+    features: list[dict] = []
+    for idx, item in enumerate(raw_features or []):
+        if not isinstance(item, dict):
+            continue
+
+        image_path = _normalize_static_asset_path(
+            str(item.get("imagePath") or item.get("image") or item.get("src") or "")
+        )
+        feature = {
+            "title": str(item.get("title") or item.get("name") or f"Feature {idx + 1}").strip(),
+            "subtitle": str(item.get("subtitle") or item.get("description") or "Beneficio principal").strip(),
+        }
+        if image_path:
+            feature["imagePath"] = image_path
+        features.append(feature)
+
+    if not features:
+        features = [
+            {
+                "title": "Narrativa visual",
+                "subtitle": "Secuencia comercial clara y orientada a conversion",
+            }
+        ]
+
+    hook = str(
+        raw_script.get("hook")
+        or timeline_payload.get("hook")
+        or metadata.get("gancho")
+        or metadata.get("titulo")
+        or "Convierte atencion en accion"
+    ).strip()
+    solution = str(
+        raw_script.get("solution")
+        or timeline_payload.get("solution")
+        or "Presenta tu producto con ritmo y claridad"
+    ).strip()
+    cta = str(
+        raw_script.get("cta")
+        or timeline_payload.get("cta")
+        or timeline_payload.get("callToAction")
+        or "Conoce mas"
+    ).strip()
+
+    raw_audio = timeline_payload.get("audio") if isinstance(timeline_payload.get("audio"), dict) else {}
+    music = timeline_payload.get("music") if isinstance(timeline_payload.get("music"), dict) else {}
+    bgm = _normalize_static_asset_path(str(raw_audio.get("bgmPath") or music.get("src") or ""))
+
+    try:
+        volume = float(raw_audio.get("volume") if raw_audio.get("volume") is not None else 0.4)
+    except (TypeError, ValueError):
+        volume = 0.4
+    volume = max(0.0, min(1.0, volume))
+
+    normalized: dict = {
+        "projectInfo": {
+            "name": project_name,
+            "tagline": str(raw_project.get("tagline") or "").strip(),
+            "website": str(raw_project.get("website") or "").strip(),
+            "industry": str(raw_project.get("industry") or "").strip(),
+        },
+        "style": style,
+        "script": {
+            "hook": hook,
+            "solution": solution,
+            "features": features,
+            "cta": cta,
+        },
+        "audio": {
+            "volume": volume,
+        },
+    }
+
+    if bgm:
+        normalized["audio"]["bgmPath"] = bgm
+
+    return normalized
+
+
+def _build_universal_features_from_scenes(scenes: list[dict]) -> list[dict]:
+    """Approximate UniversalCommercial features from generic scene entries."""
+    features: list[dict] = []
+    for idx, scene in enumerate(scenes):
+        if not isinstance(scene, dict):
+            continue
+
+        title = str(scene.get("title") or scene.get("text") or scene.get("id") or "").strip()
+        subtitle = str(scene.get("subtitle") or scene.get("sceneText") or "").strip()
+        image_path = _normalize_static_asset_path(str(scene.get("imagePath") or scene.get("src") or ""))
+
+        if not title:
+            title = f"Feature {idx + 1}"
+        if not subtitle:
+            subtitle = "Beneficio principal"
+
+        entry = {
+            "title": title,
+            "subtitle": subtitle,
+        }
+        if image_path:
+            entry["imagePath"] = image_path
+        features.append(entry)
+
+        if len(features) >= 4:
+            break
+
+    return features
 
 
 def _to_file_uri(value: str) -> str:
@@ -739,7 +1127,19 @@ def _materialize_workspace_assets(props: dict) -> None:
             rel = static_src.replace("workspace/", "", 1)
             dest = public_workspace / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(local_path, dest)
+            # When public/workspace is a symlink to workspace, source and dest can be identical.
+            try:
+                if dest.exists() and dest.resolve() == local_path.resolve():
+                    entry[key] = static_src
+                    return
+            except Exception:
+                pass
+
+            try:
+                shutil.copy2(local_path, dest)
+            except shutil.SameFileError:
+                # Safe no-op: file already available at target path.
+                pass
             entry[key] = static_src
 
     for scene in props.get("scenes", []):
@@ -753,6 +1153,16 @@ def _materialize_workspace_assets(props: dict) -> None:
     music = props.get("music")
     if isinstance(music, dict):
         _materialize(music, "src")
+
+    audio = props.get("audio")
+    if isinstance(audio, dict):
+        _materialize(audio, "bgmPath")
+
+    script = props.get("script")
+    if isinstance(script, dict) and isinstance(script.get("features"), list):
+        for feature in script.get("features", []):
+            if isinstance(feature, dict):
+                _materialize(feature, "imagePath")
 
 
 def _parse_ass_words(subtitles_path: Optional[Path]) -> list[dict]:

@@ -373,6 +373,7 @@ echo ""
 echo "🔧 8. Configurando servicio systemd..."
 
 SERVICE_FILE="/tmp/video-factory.service"
+DASHBOARD_SERVICE_FILE="/tmp/video-factory-dashboard.service"
 
 cat > "$SERVICE_FILE" << EOF
 [Unit]
@@ -401,11 +402,38 @@ WantedBy=multi-user.target
 EOF
 
 print_status "Archivo de servicio creado"
+cat > "$DASHBOARD_SERVICE_FILE" << EOF
+[Unit]
+Description=Video Factory V16 Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$PROJECT_DIR
+Environment=PATH=$PROJECT_DIR/venv/bin:/usr/local/bin:/usr/bin
+Environment=PYTHONPATH=$PROJECT_DIR
+Environment=HOME=$HOME
+ExecStart=$PROJECT_DIR/venv/bin/python $PROJECT_DIR/dashboard.py
+Restart=always
+RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+print_status "Archivo de servicio de dashboard creado"
 print_warning "Para instalar el servicio ejecuta:"
 echo "  sudo cp /tmp/video-factory.service /etc/systemd/system/"
+echo "  sudo cp /tmp/video-factory-dashboard.service /etc/systemd/system/"
 echo "  sudo systemctl daemon-reload"
 echo "  sudo systemctl enable video-factory"
 echo "  sudo systemctl start video-factory"
+echo "  sudo systemctl enable video-factory-dashboard"
+echo "  sudo systemctl start video-factory-dashboard"
 
 # ============================================
 # 9. CREAR SCRIPTS DE UTILIDAD
@@ -526,12 +554,16 @@ echo "   python scheduler.py"
 echo ""
 echo "4. 🔧 Instala el servicio systemd (para producción):"
 echo "   sudo cp /tmp/video-factory.service /etc/systemd/system/"
+echo "   sudo cp /tmp/video-factory-dashboard.service /etc/systemd/system/"
 echo "   sudo systemctl daemon-reload"
 echo "   sudo systemctl enable video-factory"
 echo "   sudo systemctl start video-factory"
+echo "   sudo systemctl enable video-factory-dashboard"
+echo "   sudo systemctl start video-factory-dashboard"
 echo ""
 echo "5. 📊 Monitorea los logs:"
 echo "   sudo journalctl -u video-factory -f"
+echo "   sudo journalctl -u video-factory-dashboard -f"
 echo "   # o si ejecutas manualmente:"
 echo "   tail -f logs/video_factory.log"
 echo ""

@@ -35,6 +35,14 @@ def _sample_manifest(job_id: str) -> dict:
             "runtime_override_enabled": True,
             "runtime_override_multiplier": True,
             "requested_images_count": 4,
+            "selected_variant": "A",
+            "selection_decision": "promote",
+            "selection_mode": "single_run_scoring",
+            "selection_score": 8.12,
+            "selection_reason": "quality=8.10, viral=8.20, qa=pass",
+            "qa_gate_passed": True,
+            "qa_skipped": False,
+            "qa_penalty": 0.0,
         },
         "decision_trail": [
             {
@@ -70,6 +78,13 @@ def test_extract_ab_visual_split():
     assert split["runtime_override_enabled"] is True
     assert split["runtime_override_multiplier"] is True
     assert split["requested_images_count"] == 4
+    assert split["selected_variant"] == "A"
+    assert split["selection_decision"] == "promote"
+    assert split["selection_mode"] == "single_run_scoring"
+    assert abs(split["selection_score"] - 8.12) < 0.01
+    assert split["qa_gate_passed"] is True
+    assert split["qa_skipped"] is False
+    assert abs(split["qa_penalty"] - 0.0) < 0.01
     assert len(split["decision_events"]) == 1
 
     return True
@@ -122,6 +137,10 @@ def test_dashboard_ab_routes_and_operations():
             assert split_payload.get("enabled") is True
             assert split_payload.get("multiplier") == 2
             assert split_payload.get("target_clips") == 8
+            assert split_payload.get("selected_variant") == "A"
+            assert split_payload.get("selection_decision") == "promote"
+            assert split_payload.get("selection_mode") == "single_run_scoring"
+            assert abs(float(split_payload.get("selection_score", 0.0)) - 8.12) < 0.01
 
             jobs = client.get("/api/jobs?limit=20")
             assert jobs.status_code == 200

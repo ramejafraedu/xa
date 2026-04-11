@@ -1,13 +1,13 @@
 import React from 'react';
-import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig, interpolate, spring, Img, staticFile, Audio as RemotionAudio } from 'remotion';
+import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, spring, Img, staticFile, Audio as RemotionAudio } from 'remotion';
 import { DirectorConfig } from '../types/DirectorConfig';
-import { KineticText } from '../components/KineticText';
-import { MacWindow } from '../components/MacWindow';
+import { KineticText } from '../components/components/KineticText';
+import { MacWindow } from '../components/components/MacWindow';
 
 import { TransitionSeries, linearTiming } from "@remotion/transitions";
 import { slide } from "@remotion/transitions/slide";
-import { FontLoader } from '../components/FontLoader';
-import { DynamicBackground } from '../components/DynamicBackground';
+import { FontLoader } from '../components/components/FontLoader';
+import { DynamicBackground } from '../components/components/DynamicBackground';
 
 export const UniversalCommercial: React.FC<DirectorConfig> = ({
     projectInfo,
@@ -15,9 +15,6 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
     script,
     audio
 }) => {
-    const frame = useCurrentFrame();
-    const { fps } = useVideoConfig();
-
     // Theme Styles
     const getBgColor = () => {
         switch (style.theme) {
@@ -40,7 +37,7 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
     const bgColor = getBgColor();
     const textColor = getTextColor();
     const accentColor = style.accentColor;
-    const fontFamily = style.fontFamily || 'Inter, sans-serif';
+    const fontFamily = style.fontFamily || 'Space Grotesk, sans-serif';
 
     // Scene Timings
     // Scene Timings

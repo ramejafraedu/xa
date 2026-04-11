@@ -314,6 +314,30 @@ sudo systemctl restart video-factory
 sudo systemctl stop video-factory
 ```
 
+### Autoarranque Dashboard al Encender (Linux/VPS)
+
+Si quieres poder acceder al dashboard automaticamente despues de reiniciar la maquina:
+
+```bash
+cd ~/video_factory
+chmod +x setup_ubuntu.sh install_autostart_services.sh
+./setup_ubuntu.sh
+./install_autostart_services.sh
+```
+
+Verifica:
+
+```bash
+sudo systemctl status video-factory-dashboard
+sudo journalctl -u video-factory-dashboard -f
+```
+
+Notas:
+
+- El dashboard usa `DASHBOARD_HOST` y `DASHBOARD_PORT` desde `.env`.
+- Valor recomendado para acceso remoto: `DASHBOARD_HOST=0.0.0.0`.
+- Asegura regla de firewall para el puerto del dashboard (default 8000).
+
 ### Limpieza Automática
 
 Programar en cron:

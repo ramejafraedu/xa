@@ -6,6 +6,8 @@ import {
 } from "./CinematicRenderer";
 import { signalFromTomorrowWithMusicFixture } from "./cinematic/fixtures";
 import { TalkingHead, TalkingHeadProps } from "./TalkingHead";
+import { UniversalCommercial } from "./templates/UniversalCommercial";
+import { DirectorConfig } from "./types/DirectorConfig";
 
 // ---------------------------------------------------------------------------
 // Theme System — prevents every video from looking like dark fintech
@@ -93,6 +95,54 @@ export const THEMES: Record<string, ThemeConfig> = {
     captionHighlightColor: "#FFB347",
     captionBackgroundColor: "rgba(10, 10, 26, 0.8)",
   },
+  cyberpunk: {
+    primaryColor: "#0F172A",
+    accentColor: "#22D3EE",
+    backgroundColor: "#020617",
+    surfaceColor: "#111827",
+    textColor: "#E2E8F0",
+    mutedTextColor: "#94A3B8",
+    headingFont: "Orbitron",
+    bodyFont: "Space Grotesk",
+    monoFont: "JetBrains Mono",
+    chartColors: ["#22D3EE", "#A78BFA", "#F43F5E", "#F59E0B", "#34D399"],
+    springConfig: { damping: 13, stiffness: 95, mass: 1 },
+    transitionDuration: 0.3,
+    captionHighlightColor: "#22D3EE",
+    captionBackgroundColor: "rgba(2, 6, 23, 0.78)",
+  },
+  minimal: {
+    primaryColor: "#334155",
+    accentColor: "#F97316",
+    backgroundColor: "#F8FAFC",
+    surfaceColor: "#FFFFFF",
+    textColor: "#0F172A",
+    mutedTextColor: "#64748B",
+    headingFont: "IBM Plex Sans",
+    bodyFont: "IBM Plex Sans",
+    monoFont: "IBM Plex Mono",
+    chartColors: ["#334155", "#F97316", "#0EA5E9", "#84CC16", "#A855F7"],
+    springConfig: { damping: 24, stiffness: 150, mass: 1 },
+    transitionDuration: 0.45,
+    captionHighlightColor: "#F97316",
+    captionBackgroundColor: "rgba(248, 250, 252, 0.88)",
+  },
+  playful: {
+    primaryColor: "#BE123C",
+    accentColor: "#14B8A6",
+    backgroundColor: "#FFF1F2",
+    surfaceColor: "#FFE4E6",
+    textColor: "#9F1239",
+    mutedTextColor: "#9D174D",
+    headingFont: "Baloo 2",
+    bodyFont: "Nunito",
+    monoFont: "Fira Code",
+    chartColors: ["#BE123C", "#14B8A6", "#F59E0B", "#8B5CF6", "#22C55E"],
+    springConfig: { damping: 16, stiffness: 90, mass: 1 },
+    transitionDuration: 0.35,
+    captionHighlightColor: "#14B8A6",
+    captionBackgroundColor: "rgba(255, 228, 230, 0.88)",
+  },
 };
 
 // Default theme when none is specified — uses the existing dark style for backwards compatibility
@@ -120,6 +170,62 @@ const calculateMetadata: CalculateMetadataFunction<ExplainerProps> = async ({
   const lastEnd = Math.max(...cuts.map((c) => c.out_seconds || 0));
   // Add 1 second padding for final fade
   return { durationInFrames: Math.ceil((lastEnd + 1) * 30) };
+};
+
+const calculateUniversalCommercialMetadata: CalculateMetadataFunction<DirectorConfig> = async ({
+  props,
+}) => {
+  const hookDuration = 150;
+  const solutionDuration = 150;
+  const featureDuration = 180;
+  const ctaDuration = 150;
+  const transitionDuration = 30;
+
+  const featureCount = Math.max(0, props?.script?.features?.length ?? 0);
+  const transitionCount = featureCount > 0 ? featureCount + 2 : 3;
+  const totalFrames =
+    hookDuration +
+    solutionDuration +
+    ctaDuration +
+    (featureCount * featureDuration) +
+    (transitionCount * transitionDuration);
+
+  return { durationInFrames: Math.max(totalFrames, 30 * 12) };
+};
+
+const defaultUniversalCommercialProps: DirectorConfig = {
+  projectInfo: {
+    name: "Video Factory",
+    tagline: "Narrativas que convierten",
+  },
+  style: {
+    theme: "minimal",
+    primaryColor: "#334155",
+    accentColor: "#F97316",
+    fontFamily: "Space Grotesk, sans-serif",
+  },
+  script: {
+    hook: "Haz que cada segundo venda tu idea.",
+    solution: "Creamos videos comerciales con ritmo, claridad y estilo visual consistente.",
+    features: [
+      {
+        title: "Gancho inmediato",
+        subtitle: "Primeros 3 segundos orientados a retencion",
+      },
+      {
+        title: "Visuales de marca",
+        subtitle: "Paleta, tipografia y tono narrativo alineados",
+      },
+      {
+        title: "CTA accionable",
+        subtitle: "Cierre directo para clicks, leads o ventas",
+      },
+    ],
+    cta: "Convierte hoy",
+  },
+  audio: {
+    volume: 0.4,
+  },
 };
 
 export const Root: React.FC = () => {
@@ -178,6 +284,16 @@ export const Root: React.FC = () => {
           fontSize: 52,
           highlightColor: "#22D3EE",
         }}
+      />
+      <Composition
+        id="UniversalCommercial"
+        component={UniversalCommercial}
+        durationInFrames={30 * 60}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={defaultUniversalCommercialProps}
+        calculateMetadata={calculateUniversalCommercialMetadata}
       />
     </>
   );

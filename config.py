@@ -222,10 +222,11 @@ class Settings(BaseSettings):
     
     # Remotion - Provider Principal (V16 PRO)
     force_remotion_primary: bool = True  # Forzar Remotion sin fallback a FFmpeg
-    remotion_concurrency: int = 4  # Workers para n2-standard-8
+    remotion_concurrency: int = 8  # Workers para 8 vCPU (auto-cap por CPU en runtime)
     remotion_timeout_seconds: int = 900
     remotion_quality: int = 80
     remotion_preset: str = "ultrafast"
+    remotion_composition_id: str = "CinematicRenderer"
     
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True
@@ -469,6 +470,7 @@ class Settings(BaseSettings):
             "free_mode": self.free_mode,
             "allow_freemium_in_free_mode": self.allow_freemium_in_free_mode,
             "use_remotion": self.use_remotion,
+            "remotion_composition_id": self.remotion_composition_id,
             "force_ffmpeg_renderer": self.force_ffmpeg_renderer,
             "require_remotion": self.require_remotion,
             "allow_ffmpeg_fallback": self.allow_ffmpeg_fallback,

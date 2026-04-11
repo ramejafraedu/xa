@@ -127,6 +127,7 @@ class EditorAgent:
         subtitles_path: Optional[Path] = None,
         narration_audio_path: Optional[Path] = None,
         music_path: Optional[Path] = None,
+        composition_id: str = "CinematicRenderer",
     ) -> dict:
         """Build and persist a Remotion-compatible timeline JSON.
 
@@ -141,6 +142,12 @@ class EditorAgent:
             narration_audio_path=narration_audio_path,
             music_path=music_path,
         )
+
+        resolved_composition = str(composition_id or "CinematicRenderer").strip() or "CinematicRenderer"
+        timeline["composition_id"] = resolved_composition
+        meta = timeline.get("meta") if isinstance(timeline.get("meta"), dict) else {}
+        meta["composition_id"] = resolved_composition
+        timeline["meta"] = meta
 
         timeline_path.parent.mkdir(parents=True, exist_ok=True)
         timeline_path.write_text(

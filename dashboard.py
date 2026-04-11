@@ -433,6 +433,21 @@ def _extract_ab_visual_split(manifest: dict) -> dict:
     except (TypeError, ValueError):
         requested_images_count = 0
 
+    selected_variant = str(summary.get("selected_variant", "") or "")
+    selection_decision = str(summary.get("selection_decision", "") or "")
+    selection_mode = str(summary.get("selection_mode", "") or "")
+    selection_reason = str(summary.get("selection_reason", "") or "")
+
+    try:
+        selection_score = float(summary.get("selection_score", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        selection_score = 0.0
+
+    try:
+        qa_penalty = float(summary.get("qa_penalty", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        qa_penalty = 0.0
+
     return {
         "enabled": enabled,
         "multiplier": multiplier,
@@ -442,6 +457,14 @@ def _extract_ab_visual_split(manifest: dict) -> dict:
         "runtime_override_enabled": bool(summary.get("runtime_override_enabled", False)),
         "runtime_override_multiplier": bool(summary.get("runtime_override_multiplier", False)),
         "requested_images_count": requested_images_count,
+        "selected_variant": selected_variant,
+        "selection_decision": selection_decision,
+        "selection_mode": selection_mode,
+        "selection_score": round(selection_score, 2),
+        "selection_reason": selection_reason,
+        "qa_gate_passed": bool(summary.get("qa_gate_passed", False)),
+        "qa_skipped": bool(summary.get("qa_skipped", False)),
+        "qa_penalty": round(qa_penalty, 2),
         "decision_events": sorted(decision_events, key=lambda x: x.get("timestamp", 0)),
         "raw": summary,
     }
@@ -2371,9 +2394,14 @@ def _run_all_bg(
 
 def main():
     import argparse
+    try:
+        default_port = int(os.getenv("DASHBOARD_PORT", "8000"))
+    except ValueError:
+        default_port = 8000
+
     parser = argparse.ArgumentParser(description="Video Factory Dashboard")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=default_port)
+    parser.add_argument("--host", default=os.getenv("DASHBOARD_HOST", "0.0.0.0"))
     args = parser.parse_args()
 
     # Setup logging with dashboard sink

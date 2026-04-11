@@ -49,6 +49,7 @@ from core.feedback_loop import review_content, should_iterate
 from core.gemini_control_plane import get_gemini_control_plane
 from core.openmontage_free import (
     strict_free_candidates,
+    apply_playbook_to_story,
     apply_bg_remove,
     apply_upscale,
     apply_face_restore,
@@ -139,7 +140,7 @@ def run_pipeline_v15(
     from pipeline.quality_gate import validate_and_score
     from pipeline.self_healer import attempt_healing
     from pipeline.renderer import download_clips
-    from pipeline.renderer_remotion import render_video_with_fallback
+    from pipeline.renderer_remotion import render_video_with_fallback, build_director_artifacts
     from pipeline.duration_validator import validate_duration
     from pipeline.pre_render_validator import validate_pre_render, extract_flagged_greenscreen_clips
     from pipeline.cleanup import cleanup_temp, cleanup_stale_temp
@@ -164,21 +165,23 @@ def run_pipeline_v15(
         mode_str="warn"
     )
 
-    # V16: Initialize Tool Registry
+    # V16: Initialize Tool Registry (focused pre/render QA tools)
     registry = ToolRegistry()
-    try:
-        from tools import video, audio, graphics, subtitle, enhancement, analysis, avatar, publishers
-        registry.register_module(video)
-        registry.register_module(audio)
-        registry.register_module(graphics)
-        registry.register_module(subtitle)
-        registry.register_module(enhancement)
-        registry.register_module(analysis)
-        registry.register_module(avatar)
-        registry.register_module(publishers)
-        logger.info(f"🔧 Loaded {len(registry._tools)} tools from OpenMontage suite")
-    except ImportError as e:
-        logger.warning(f"Failed to load some tools: {e}")
+    for module_name in (
+        "tools.analysis.audio_probe",
+        "tools.analysis.composition_validator",
+        "tools.analysis.visual_qa",
+    ):
+        try:
+            module = __import__(module_name, fromlist=["*"])
+            registry.register_module(module)
+        except Exception as exc:
+            logger.debug(f"Tool module skipped ({module_name}): {exc}")
+
+    if registry._tools:
+        logger.info(f"🔧 Loaded {len(registry._tools)} analysis tools from OpenMontage suite")
+    else:
+        logger.warning("No OpenMontage analysis tools were registered in ToolRegistry")
 
     manifest = JobManifest(
         job_id=job_id,
@@ -206,12 +209,31 @@ def run_pipeline_v15(
         "disable_image_cache",
         "ab_visual_split_enabled",
         "ab_visual_multiplier",
+        "remotion_composition_id",
         "provider_order_stock_video",
         "provider_order_image_generation",
         "provider_order_music_generation",
         "provider_order_tts",
     }
     runtime_overrides = {k: v for k, v in runtime_overrides.items() if k in allowed_override_keys}
+
+    allowed_remotion_compositions = {"CinematicRenderer", "UniversalCommercial"}
+    raw_requested_composition = str(
+        runtime_overrides.get("remotion_composition_id", settings.remotion_composition_id)
+        or "CinematicRenderer"
+    ).strip()
+    requested_remotion_composition = (
+        raw_requested_composition
+        if raw_requested_composition in allowed_remotion_compositions
+        else "CinematicRenderer"
+    )
+    if raw_requested_composition and raw_requested_composition not in allowed_remotion_compositions:
+        logger.warning(
+            "Unknown remotion composition requested ({}). Falling back to CinematicRenderer.",
+            raw_requested_composition,
+        )
+    manifest.feature_flags["remotion_composition_id"] = requested_remotion_composition
+
     try:
         baseline_ab_multiplier = int(
             runtime_overrides.get("ab_visual_multiplier", settings.ab_visual_split_multiplier)
@@ -274,6 +296,7 @@ def run_pipeline_v15(
 
     # Lightweight observability trail persisted in the manifest.
     stage_clock: dict[str, float] = {}
+    pre_render_tool_checks: dict[str, dict] = {}
 
     def _stage_start(stage_key: str, label: str = "", detail: str = "") -> None:
         stage_clock[stage_key] = time.time()
@@ -299,6 +322,12 @@ def run_pipeline_v15(
         if elapsed > 0 and stage_key not in manifest.timings:
             manifest.timings[stage_key] = elapsed
 
+        checkpoint_metadata = dict(metadata or {})
+        checkpoint_metadata.setdefault("cost_estimate_usd", round(float(manifest.cost_estimate_usd or 0.0), 4))
+        checkpoint_metadata.setdefault("cost_reserved_usd", round(float(manifest.cost_reserved_usd or 0.0), 4))
+        checkpoint_metadata.setdefault("cost_actual_usd", round(float(manifest.cost_actual_usd or 0.0), 4))
+        checkpoint_metadata.setdefault("error_code", str(manifest.error_code or ""))
+
         updated_running_entry = False
         for entry in reversed(manifest.stage_trace):
             if entry.get("stage") == stage_key and entry.get("state") == "running":
@@ -307,8 +336,7 @@ def run_pipeline_v15(
                 entry["elapsed_seconds"] = elapsed
                 if detail:
                     entry["detail"] = detail
-                if metadata:
-                    entry["metadata"] = metadata
+                entry["metadata"] = checkpoint_metadata
                 updated_running_entry = True
                 break
 
@@ -321,7 +349,7 @@ def run_pipeline_v15(
                 "ended_at": int(time.time() * 1000),
                 "elapsed_seconds": elapsed,
                 "detail": detail,
-                "metadata": metadata or {},
+                "metadata": checkpoint_metadata,
             })
 
         checkpoint_status = "completed" if state == "completed" else "error" if state == "error" else state
@@ -332,7 +360,7 @@ def run_pipeline_v15(
                 stage=stage_key,
                 status=checkpoint_status,
                 artifacts=checkpoint_artifacts,
-                metadata=metadata or {},
+                metadata=checkpoint_metadata,
                 elapsed=elapsed,
             )
         except Exception as exc:
@@ -375,6 +403,178 @@ def run_pipeline_v15(
             if len(merged) >= max(1, int(limit)):
                 break
         return merged
+
+    def _update_ab_variant_selection(
+        qa_passed: bool,
+        qa_issues: list[str],
+        *,
+        qa_skipped: bool = False,
+    ) -> None:
+        """Score and persist A/B variant selection metadata for observability.
+
+        Current V15 render path produces one final variant per run, so selection is
+        expressed as promote/iterate/hold decision for that candidate.
+        """
+        split = dict(manifest.ab_visual_split or {})
+        if not bool(split.get("enabled", False)):
+            manifest.ab_visual_split = split
+            return
+
+        quality = float(manifest.quality_score or 0.0)
+        viral = float(manifest.viral_score or 0.0)
+        base_score = (quality * 0.62) + (viral * 0.38)
+        backend_bonus = 0.15 if str(manifest.render_backend or "").lower() == "remotion" else 0.0
+
+        issue_count = len(qa_issues or [])
+        qa_penalty = 0.0 if qa_passed else min(2.0, 0.40 * max(1, issue_count))
+        selection_score = round(max(0.0, min(10.0, base_score + backend_bonus - qa_penalty)), 2)
+
+        if qa_skipped:
+            selection_decision = "needs_qa_confirmation"
+            severity = "warning"
+        elif not qa_passed:
+            selection_decision = "hold_review"
+            severity = "warning"
+        elif selection_score >= 8.0:
+            selection_decision = "promote"
+            severity = "info"
+        elif selection_score >= 7.0:
+            selection_decision = "keep_testing"
+            severity = "info"
+        else:
+            selection_decision = "iterate"
+            severity = "warning"
+
+        reason_parts = [
+            f"quality={quality:.2f}",
+            f"viral={viral:.2f}",
+            f"qa={'pass' if qa_passed else 'fail'}",
+        ]
+        if qa_skipped:
+            reason_parts.append("qa_skipped=true")
+        if qa_penalty > 0:
+            reason_parts.append(f"qa_penalty={qa_penalty:.2f}")
+
+        split.update(
+            {
+                "selected_variant": str(manifest.ab_variant or "A"),
+                "selection_score": selection_score,
+                "selection_decision": selection_decision,
+                "selection_mode": "single_run_scoring",
+                "qa_gate_passed": bool(qa_passed),
+                "qa_skipped": bool(qa_skipped),
+                "qa_penalty": round(qa_penalty, 2),
+                "selection_reason": ", ".join(reason_parts)[:220],
+                "selection_timestamp": int(time.time() * 1000),
+            }
+        )
+        manifest.ab_visual_split = split
+
+        _add_decision(
+            "qa_post",
+            "A/B variant selection updated",
+            (
+                f"variant={split.get('selected_variant', 'A')}, "
+                f"decision={selection_decision}, score={selection_score:.2f}"
+            ),
+            severity=severity,
+            metadata={
+                "ab_visual_split": {
+                    "enabled": bool(split.get("enabled", False)),
+                    "multiplier": int(split.get("multiplier", 1) or 1),
+                    "selected_variant": str(split.get("selected_variant", "A") or "A"),
+                    "selection_score": selection_score,
+                    "selection_decision": selection_decision,
+                    "qa_gate_passed": bool(qa_passed),
+                    "qa_skipped": bool(qa_skipped),
+                }
+            },
+        )
+
+    def _is_non_blocking_composition_validator_error(message: str) -> bool:
+        text = str(message or "").strip().lower()
+        if not text:
+            return False
+        # Current CompositionValidator validates a legacy ExplainerProps schema
+        # using `cuts`, while V15 timeline JSON uses `scenes`.
+        return "no cuts defined in composition" in text
+
+    def _tool_checks_summary() -> dict:
+        checks = pre_render_tool_checks if isinstance(pre_render_tool_checks, dict) else {}
+        summary = {
+            "registered": sorted(checks.keys()),
+            "registered_count": len(checks),
+            "failing_count": 0,
+            "warning_count": 0,
+            "error_count": 0,
+        }
+
+        for payload in checks.values():
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("valid") is False:
+                summary["failing_count"] += 1
+
+            warnings = payload.get("warnings")
+            errors = payload.get("errors")
+            warning_count = payload.get("warning_count")
+            error_count = payload.get("error_count")
+
+            if warning_count is None and isinstance(warnings, list):
+                warning_count = len(warnings)
+            if error_count is None and isinstance(errors, list):
+                error_count = len(errors)
+
+            try:
+                summary["warning_count"] += int(warning_count or 0)
+            except (TypeError, ValueError):
+                pass
+            try:
+                summary["error_count"] += int(error_count or 0)
+            except (TypeError, ValueError):
+                pass
+
+        return summary
+
+    def _rollback_controls_snapshot() -> dict:
+        flags = manifest.feature_flags if isinstance(manifest.feature_flags, dict) else {}
+        return {
+            "quality_tools": {
+                "enabled": bool(flags.get("enable_openmontage_free_tools", False))
+                and bool(flags.get("openmontage_enable_analysis", False)),
+                "flag_enable_openmontage_free_tools": bool(flags.get("enable_openmontage_free_tools", False)),
+                "flag_openmontage_enable_analysis": bool(flags.get("openmontage_enable_analysis", False)),
+            },
+            "subtitle_bridge": {
+                "enabled": bool(flags.get("use_whisperx", False)) and bool(flags.get("openmontage_enable_subtitle", False)),
+                "flag_use_whisperx": bool(flags.get("use_whisperx", False)),
+                "flag_openmontage_enable_subtitle": bool(flags.get("openmontage_enable_subtitle", False)),
+                "flag_subtitles_use_script_text": bool(flags.get("subtitles_use_script_text", False)),
+            },
+            "ab_split": {
+                "enabled": bool(flags.get("enable_ab_visual_split", False)),
+            },
+            "post_tts": {
+                "smart_silence_trim": bool(flags.get("enable_smart_silence_trim", False)),
+                "loudnorm": bool(flags.get("enable_post_tts_loudnorm", False)),
+            },
+            "render_policy": {
+                "force_ffmpeg_renderer": bool(flags.get("force_ffmpeg_renderer", False)),
+                "allow_ffmpeg_fallback": bool(flags.get("allow_ffmpeg_fallback", False)),
+                "require_remotion": bool(flags.get("require_remotion", False)),
+            },
+        }
+
+    def _governance_snapshot() -> dict:
+        return {
+            "cost_estimate_usd": round(float(manifest.cost_estimate_usd or 0.0), 4),
+            "cost_reserved_usd": round(float(manifest.cost_reserved_usd or 0.0), 4),
+            "cost_actual_usd": round(float(manifest.cost_actual_usd or 0.0), 4),
+            "cost_breakdown": dict(manifest.cost_breakdown or {}),
+            "budget_blocked": bool(manifest.budget_blocked),
+            "budget_monthly_blocked": bool(manifest.budget_monthly_blocked),
+            "month_to_date_spend_usd": round(float(manifest.month_to_date_spend_usd or 0.0), 4),
+        }
 
     def _apply_research_edit_notes(notes: str) -> None:
         """Inject checkpoint edit notes back into research context before script stage."""
@@ -441,6 +641,12 @@ def run_pipeline_v15(
         elif stage_key == "combine":
             artifacts["edit_decisions"] = {
                 "timeline_json_path": manifest.timeline_json_path,
+                "director_json_path": manifest.director_json_path,
+                "director_meta_path": manifest.director_meta_path,
+            }
+        elif stage_key == "validated":
+            artifacts["pre_render_validation"] = {
+                "tool_checks": pre_render_tool_checks,
             }
         elif stage_key == "render":
             artifacts["render_report"] = {
@@ -453,12 +659,17 @@ def run_pipeline_v15(
                 "passed": manifest.qa_passed,
                 "issues": manifest.qa_issues,
                 "report": manifest.post_render_report,
+                "ab_visual_split": manifest.ab_visual_split,
             }
         elif stage_key == "publish":
             artifacts["publish_log"] = {
                 "status": manifest.status,
                 "drive_link": manifest.drive_link,
             }
+
+        artifacts["governance"] = _governance_snapshot()
+        artifacts["rollback_controls"] = _rollback_controls_snapshot()
+        artifacts["tool_checks_summary"] = _tool_checks_summary()
         return artifacts
 
     if settings.enable_openmontage_free_tools and settings.openmontage_enable_styles:
@@ -1253,18 +1464,54 @@ def run_pipeline_v15(
                 subtitles_path=ass_path if ass_path.exists() else None,
                 narration_audio_path=audio_path,
                 music_path=music_path if music_path and music_path.exists() else None,
+                composition_id=requested_remotion_composition,
             )
+
+            try:
+                director_path, director_meta_path, _, _ = build_director_artifacts(
+                    timeline_payload=timeline_payload,
+                    metadata={
+                        "timestamp": timestamp,
+                        "job_id": job_id,
+                        "composition_id": requested_remotion_composition,
+                        "titulo": manifest.titulo,
+                        "nicho": nicho_slug,
+                    },
+                    artifacts_dir=settings.temp_dir,
+                    subtitles_path=ass_path if ass_path.exists() else None,
+                )
+                manifest.director_json_path = str(director_path)
+                manifest.director_meta_path = str(director_meta_path)
+            except Exception as exc:
+                _stage_end("combine", "error", str(exc)[:180])
+                manifest.status = JobStatus.ERROR.value
+                manifest.error_stage = "combine"
+                manifest.error_message = f"Director artifact generation failed: {str(exc)[:180]}"
+                manifest.error_code = ErrorCode.JSON_SCHEMA_INVALID.value
+                state_mgr.save(manifest)
+                notify_error(manifest)
+                return manifest
+
             manifest.timeline_json_path = str(timeline_path)
             manifest.timings["combine"] = round(time.time() - combine_t0, 2)
             _stage_end(
                 "combine",
                 "completed",
-                metadata={"timeline_scenes": len(timeline_payload.get("scenes", []))},
+                metadata={
+                    "timeline_scenes": len(timeline_payload.get("scenes", [])),
+                    "composition_id": str(timeline_payload.get("composition_id", requested_remotion_composition)),
+                    "director_json_path": manifest.director_json_path,
+                    "director_meta_path": manifest.director_meta_path,
+                },
             )
             _add_decision(
                 "combine",
                 "Timeline assembled",
-                f"scenes={len(timeline_payload.get('scenes', []))}",
+                (
+                    f"scenes={len(timeline_payload.get('scenes', []))}, "
+                    f"composition={timeline_payload.get('composition_id', requested_remotion_composition)}, "
+                    f"director={Path(manifest.director_json_path).name if manifest.director_json_path else 'none'}"
+                ),
             )
 
             # Determine velocidad from dominant mood
@@ -1277,6 +1524,40 @@ def run_pipeline_v15(
             # Pre-render validation
             validated_t0 = time.time()
             _stage_start("validated", "Pre-render Validation")
+
+            composition_check: dict[str, object] = {}
+            composition_error_summary = ""
+            validator_tool = registry.get("composition_validator")
+            if validator_tool and timeline_path.exists():
+                try:
+                    validator_result = validator_tool.execute(
+                        {
+                            "composition_path": str(timeline_path),
+                            "assets_root": str(settings.workspace),
+                        }
+                    )
+                    result_data = getattr(validator_result, "data", {}) or {}
+                    if isinstance(result_data, dict):
+                        composition_check = dict(result_data)
+                        pre_render_tool_checks["composition_validator"] = composition_check
+
+                    if not bool(getattr(validator_result, "success", False)):
+                        composition_error_summary = str(getattr(validator_result, "error", "") or "")
+                        if composition_error_summary:
+                            _add_decision(
+                                "validated",
+                                "Composition validator reported issues",
+                                composition_error_summary[:180],
+                                severity="warning",
+                            )
+                except Exception as exc:
+                    _add_decision(
+                        "validated",
+                        "Composition validator execution skipped",
+                        str(exc)[:180],
+                        severity="warning",
+                    )
+
             pre_ok, pre_errors = validate_pre_render(
                 audio_path=audio_path,
                 subs_path=ass_path if ass_path.exists() else None,
@@ -1286,6 +1567,52 @@ def run_pipeline_v15(
                 platform=nicho.plataforma,
                 audio_duration=audio_duration,
             )
+
+            if composition_check:
+                warnings = composition_check.get("warnings", [])
+                if isinstance(warnings, list):
+                    for warning in warnings[:3]:
+                        _add_decision(
+                            "validated",
+                            "Composition validator warning",
+                            str(warning)[:180],
+                            severity="warning",
+                        )
+
+                if not bool(composition_check.get("valid", True)):
+                    comp_errors = composition_check.get("errors", [])
+                    if not isinstance(comp_errors, list):
+                        comp_errors = []
+                    if not comp_errors and composition_error_summary:
+                        comp_errors = [composition_error_summary]
+
+                    blocking_comp_errors = [
+                        issue for issue in comp_errors
+                        if not _is_non_blocking_composition_validator_error(str(issue))
+                    ]
+                    non_blocking_comp_errors = [
+                        issue for issue in comp_errors
+                        if _is_non_blocking_composition_validator_error(str(issue))
+                    ]
+
+                    if non_blocking_comp_errors:
+                        _add_decision(
+                            "validated",
+                            "Composition validator schema mismatch ignored",
+                            str(non_blocking_comp_errors[0])[:180],
+                            severity="warning",
+                        )
+
+                    for issue in blocking_comp_errors[:3]:
+                        pre_errors.append(
+                            (
+                                ErrorCode.ASSET_MISSING,
+                                f"Composition validator: {str(issue)[:180]}",
+                            )
+                        )
+
+                    if blocking_comp_errors:
+                        pre_ok = False
 
             if not pre_ok:
                 flagged_names = extract_flagged_greenscreen_clips(pre_errors)
@@ -1328,7 +1655,33 @@ def run_pipeline_v15(
                             subtitles_path=ass_path if ass_path.exists() else None,
                             narration_audio_path=audio_path,
                             music_path=music_path if music_path and music_path.exists() else None,
+                            composition_id=requested_remotion_composition,
                         )
+
+                        try:
+                            director_path, director_meta_path, _, _ = build_director_artifacts(
+                                timeline_payload=timeline_payload,
+                                metadata={
+                                    "timestamp": timestamp,
+                                    "job_id": job_id,
+                                    "composition_id": requested_remotion_composition,
+                                    "titulo": manifest.titulo,
+                                    "nicho": nicho_slug,
+                                },
+                                artifacts_dir=settings.temp_dir,
+                                subtitles_path=ass_path if ass_path.exists() else None,
+                            )
+                            manifest.director_json_path = str(director_path)
+                            manifest.director_meta_path = str(director_meta_path)
+                        except Exception as exc:
+                            _stage_end("validated", "error", str(exc)[:180])
+                            manifest.status = JobStatus.ERROR.value
+                            manifest.error_stage = "pre_render_validation"
+                            manifest.error_message = f"Director artifact regeneration failed: {str(exc)[:180]}"
+                            manifest.error_code = ErrorCode.JSON_SCHEMA_INVALID.value
+                            state_mgr.save(manifest)
+                            notify_error(manifest)
+                            return manifest
 
                         _add_decision(
                             "validated",
@@ -1349,7 +1702,15 @@ def run_pipeline_v15(
 
             if not pre_ok:
                 first_code = pre_errors[0][0] if pre_errors else ErrorCode.ASSET_MISSING
-                _stage_end("validated", "error", "; ".join(m for _, m in pre_errors)[:180])
+                _stage_end(
+                    "validated",
+                    "error",
+                    "; ".join(m for _, m in pre_errors)[:180],
+                    metadata={
+                        "error_count": len(pre_errors),
+                        "tool_checks": list(pre_render_tool_checks.keys()),
+                    },
+                )
                 manifest.status = JobStatus.ERROR.value
                 manifest.error_stage = "pre_render_validation"
                 manifest.error_message = "; ".join(m for _, m in pre_errors)[:200]
@@ -1359,7 +1720,17 @@ def run_pipeline_v15(
                 return manifest
 
             manifest.timings["validated"] = round(time.time() - validated_t0, 2)
-            _stage_end("validated", "completed")
+            validated_metadata = {
+                "tool_checks": list(pre_render_tool_checks.keys()),
+            }
+            if composition_check:
+                warning_count = composition_check.get("warning_count")
+                if warning_count is None and isinstance(composition_check.get("warnings"), list):
+                    warning_count = len(composition_check.get("warnings", []))
+                if warning_count is not None:
+                    validated_metadata["composition_warning_count"] = int(warning_count)
+
+            _stage_end("validated", "completed", metadata=validated_metadata)
 
             _stage_start("render", "Render")
             render_t0 = time.time()
@@ -1502,6 +1873,7 @@ def run_pipeline_v15(
                     "reference_promise": story.reference_delivery_promise,
                     "reference_avg_cut_seconds": story.reference_avg_cut_seconds,
                 }
+                _update_ab_variant_selection(qa_passed, qa_issues, qa_skipped=False)
 
                 if not qa_passed:
                     manifest.status = JobStatus.MANUAL_REVIEW.value
@@ -1530,6 +1902,7 @@ def run_pipeline_v15(
                     "skip_reason": str(e),
                     "checked_at": int(time.time() * 1000),
                 }
+                _update_ab_variant_selection(True, [], qa_skipped=True)
                 _stage_end("qa_post", "skipped", str(e)[:180])
             manifest.timings["qa_post"] = round(time.time() - qa_t0, 2)
 

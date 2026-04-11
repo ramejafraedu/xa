@@ -594,6 +594,43 @@ class AssetAgent:
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
+    @staticmethod
+    def _extract_playbook_primary_colors(playbook: Optional[Any]) -> list[str]:
+        """Extract primary color tokens from playbook in list/dict formats."""
+        if not playbook:
+            return []
+
+        visual = getattr(playbook, "visual_language", {}) or {}
+        if not isinstance(visual, dict):
+            return []
+
+        primary_colors = visual.get("primary_colors", {})
+
+        if isinstance(primary_colors, dict):
+            entries = list(primary_colors.values())
+        elif isinstance(primary_colors, list):
+            entries = list(primary_colors)
+        else:
+            entries = []
+
+        color_tokens: list[str] = []
+        for entry in entries:
+            if isinstance(entry, dict):
+                color_name = str(entry.get("name", "") or "").strip().lower()
+                hex_val = str(entry.get("hex", "") or "").strip()
+                if color_name and hex_val:
+                    color_tokens.append(f"{color_name} {hex_val}")
+                elif color_name:
+                    color_tokens.append(color_name)
+                elif hex_val:
+                    color_tokens.append(hex_val)
+            else:
+                token = str(entry or "").strip()
+                if token:
+                    color_tokens.append(token)
+
+        return color_tokens
+
     def _generate_images(
         self,
         state: StoryState,
@@ -630,17 +667,9 @@ class AssetAgent:
             
             # Add playbook colors if available (V16 Playbook System)
             if playbook and settings.playbook_enforce_colors:
-                primary_colors = playbook.visual_language.get('primary_colors', {})
-                if primary_colors:
-                    color_names = []
-                    for color_info in primary_colors.values():
-                        if isinstance(color_info, dict):
-                            color_name = color_info.get('name', '').lower()
-                            hex_val = color_info.get('hex', '')
-                            if color_name and hex_val:
-                                color_names.append(f"{color_name} {hex_val}")
-                    if color_names:
-                        prompt_base += f". Color palette: {', '.join(color_names[:3])}"
+                color_names = self._extract_playbook_primary_colors(playbook)
+                if color_names:
+                    prompt_base += f". Color palette: {', '.join(color_names[:3])}"
 
             ab_variant = raw_content.get("_ab_variant", "A")
 

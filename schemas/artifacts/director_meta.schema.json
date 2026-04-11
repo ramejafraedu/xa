@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openmontage/artifacts/director_meta",
+  "title": "Director Config Metadata",
+  "description": "Metadata companion for director.json to aid audit and reproducibility.",
+  "type": "object",
+  "required": [
+    "version",
+    "composition_id",
+    "timestamp",
+    "props_hash",
+    "render_item_count",
+    "asset_reference_count"
+  ],
+  "properties": {
+    "version": { "type": "string", "const": "1.0" },
+    "composition_id": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "integer", "minimum": 1 },
+    "job_id": { "type": "string" },
+    "props_hash": { "type": "string", "minLength": 8 },
+    "render_item_count": { "type": "integer", "minimum": 0 },
+    "asset_reference_count": { "type": "integer", "minimum": 0 },
+    "has_captions": { "type": "boolean" },
+    "has_soundtrack": { "type": "boolean" },
+    "has_music": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

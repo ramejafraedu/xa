@@ -5,6 +5,7 @@ Historial de cambios relevantes del proyecto Video Factory.
 ## V15 PRO (Abril 2026)
 
 ### Agregado
+
 - Sistema multi&#45;agente: Research → Script → Scene → Assets → Editor.
 - StoryState: memoria narrativa global para coherencia entre videos.
 - Director mode: checkpoints interactivos (--director) para revision humana.
@@ -24,6 +25,7 @@ Historial de cambios relevantes del proyecto Video Factory.
 - CHANGELOG.md.
 
 ### Cambiado
+
 - README actualizado a V15 con arbol de directorios y flags nuevos.
 - Subtitulos robustos con script-locked timing (ASS).
 - Edge-TTS fallback con cooldown tras errores 403.
@@ -31,15 +33,26 @@ Historial de cambios relevantes del proyecto Video Factory.
 - `.gitignore` actualizado para workspace/image_cache y music_cache.
 
 ### Corregido
+
 - Fallback a FFmpeg cuando Remotion output esta en silencio o desincronizado.
 - Dashboard tolera psutil opcional.
 - Sanitizacion de subtitulos para evitar crashes en Remotion.
+- AssetAgent: correccion de crash en generacion de imagenes cuando `visual_language.primary_colors` viene como lista (YAML) en lugar de diccionario.
+
+### Validado (Fase 1 cierre servidor - 11 Abril 2026)
+
+- Corrida end-to-end `finanzas` en servidor completada en estado `success`.
+- Integracion de validacion pre-render por ToolRegistry estabilizada para esquema V15 (`scenes`) sin bloquear por mismatch legacy (`cuts`).
+- Post-render QA en servidor aprobado con salida final MP4 y manifest archivado en `workspace/output`.
+- Observabilidad A/B extendida con metadatos de seleccion (variant/decision/score) en manifest y dashboard.
+- Resumen baseline -> post-cambios documentado: de error `pre_render_validation/ASSET_MISSING` a ejecucion completa con render Remotion + QA ok.
 
 ---
 
 ## V14 (Marzo 2026)
 
 ### Agregado
+
 - Pipeline completo end-to-end para 5 nichos.
 - Checkpoints por etapa con StateManager y resume de jobs fallidos.
 - Idempotencia por hashes de entrada — rerun seguro.
@@ -53,6 +66,7 @@ Historial de cambios relevantes del proyecto Video Factory.
 - Cost governance freemium con presupuesto diario/mensual.
 
 ### Cambiado
+
 - Migracion de n8n a Python puro con Typer CLI.
 - Audio filters identicos a MASTER V13 via FFmpeg.
 
