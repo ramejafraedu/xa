@@ -196,6 +196,8 @@ def _build_tts_provider_scores(provider_order: Optional[list[str]], strict_free:
     default_order = ["piper", "edge-tts", "gemini", "google_tts", "elevenlabs"]
     if not strict_free:
         default_order = ["elevenlabs", "google_tts", "gemini", "edge-tts", "piper"]
+    if settings.gemini_everywhere_mode and not strict_free:
+        default_order = ["gemini", "edge-tts", "piper", "google_tts", "elevenlabs"]
 
     merged: list[str] = []
     seen: set[str] = set()

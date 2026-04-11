@@ -664,6 +664,12 @@ class AssetAgent:
 
             if state.color_palette:
                 prompt_base += f", {state.color_palette}"
+
+            if settings.gemini_everywhere_mode and settings.gemini_visual_boost_prompt.strip():
+                prompt_base = (
+                    f"{prompt_base}. "
+                    f"{settings.gemini_visual_boost_prompt.strip()[:260]}"
+                )
             
             # Add playbook colors if available (V16 Playbook System)
             if playbook and settings.playbook_enforce_colors:

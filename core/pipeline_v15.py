@@ -283,6 +283,7 @@ def run_pipeline_v15(
         "media_cache_ttl_days",
         "enable_image_cache",
         "disable_image_cache",
+        "gemini_everywhere_mode",
         "ab_visual_split_enabled",
         "ab_visual_multiplier",
         "saar_composer_enabled",
@@ -1274,6 +1275,55 @@ def run_pipeline_v15(
                     if isinstance(value, list) and value:
                         stage_runtime_overrides[key] = value
 
+            strict_free_media = settings.v15_strict_free_media_tools or (
+                settings.free_mode and not settings.allow_freemium_in_free_mode
+            )
+            gemini_everywhere_enabled = bool(
+                stage_runtime_overrides.get("gemini_everywhere_mode", settings.gemini_everywhere_mode)
+            )
+            if gemini_everywhere_enabled and not strict_free_media:
+                try:
+                    current_image_count = int(
+                        stage_runtime_overrides.get("generated_images_count", settings.generated_images_count)
+                    )
+                except (TypeError, ValueError):
+                    current_image_count = int(settings.generated_images_count)
+
+                stage_runtime_overrides["provider_order_music_generation"] = [
+                    "lyria", "suno", "pixabay", "jamendo"
+                ]
+                stage_runtime_overrides["provider_order_tts"] = [
+                    "gemini", "edge-tts", "piper", "google_tts", "elevenlabs"
+                ]
+                # There is no dedicated Gemini image provider yet, so prefer AI image generators first.
+                stage_runtime_overrides["provider_order_image_generation"] = [
+                    "pollinations", "leonardo", "pexels", "pixabay"
+                ]
+                stage_runtime_overrides["prefer_stock_images"] = False
+                stage_runtime_overrides["generated_images_count"] = max(8, current_image_count)
+                stage_runtime_overrides["ab_visual_split_enabled"] = True
+                stage_runtime_overrides["saar_composer_enabled"] = True
+                stage_runtime_overrides["saar_composer_use_winner"] = True
+
+                _add_decision(
+                    "policy",
+                    "Gemini-everywhere mode active",
+                    "Gemini-first TTS/music + AI-first images + dynamic visual split",
+                    metadata={
+                        "provider_order_tts": stage_runtime_overrides.get("provider_order_tts"),
+                        "provider_order_music_generation": stage_runtime_overrides.get("provider_order_music_generation"),
+                        "provider_order_image_generation": stage_runtime_overrides.get("provider_order_image_generation"),
+                        "generated_images_count": stage_runtime_overrides.get("generated_images_count"),
+                    },
+                )
+            elif gemini_everywhere_enabled:
+                _add_decision(
+                    "policy",
+                    "Gemini-everywhere limited by strict-free policy",
+                    "Strict-free mode blocks freemium Gemini media providers",
+                    severity="warning",
+                )
+
             assets = asset_agent.run(
                 story,
                 nicho,
@@ -1357,7 +1407,12 @@ def run_pipeline_v15(
             progress.update(main_task, description="[cyan]🗣️ TTS...")
             _stage_start("tts", "Narration TTS")
 
-            if settings.elevenlabs_api_key and settings.provider_allowed("elevenlabs", usage="media"):
+            gemini_everywhere_enabled = bool(
+                stage_runtime_overrides.get("gemini_everywhere_mode", settings.gemini_everywhere_mode)
+            )
+            if gemini_everywhere_enabled and settings.provider_allowed("gemini", usage="media"):
+                preferred_tts_provider = "gemini"
+            elif settings.elevenlabs_api_key and settings.provider_allowed("elevenlabs", usage="media"):
                 preferred_tts_provider = "elevenlabs"
             elif settings.use_google_tts and settings.provider_allowed("google_tts", usage="media"):
                 preferred_tts_provider = "google_tts"

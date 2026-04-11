@@ -109,6 +109,7 @@ def test_dashboard_ab_routes_and_operations():
     original_ab_multiplier = dashboard.settings.ab_visual_split_multiplier
     original_saar_enabled = dashboard.settings.enable_saar_composer
     original_saar_use_winner = dashboard.settings.saar_composer_use_winner
+    original_gemini_everywhere = dashboard.settings.gemini_everywhere_mode
     original_silence_trim = dashboard.settings.enable_smart_silence_trim
     original_post_tts = dashboard.settings.enable_post_tts_loudnorm
 
@@ -174,6 +175,7 @@ def test_dashboard_ab_routes_and_operations():
             assert "ab_visual_split_multiplier" in cfg_body
             assert "enable_saar_composer" in cfg_body
             assert "saar_composer_use_winner" in cfg_body
+            assert "gemini_everywhere_mode" in cfg_body
             assert "enable_smart_silence_trim" in cfg_body
             assert "enable_post_tts_loudnorm" in cfg_body
 
@@ -184,6 +186,7 @@ def test_dashboard_ab_routes_and_operations():
                     "ab_visual_split_multiplier": 3,
                     "enable_saar_composer": True,
                     "saar_composer_use_winner": False,
+                    "gemini_everywhere_mode": True,
                     "enable_smart_silence_trim": True,
                     "enable_post_tts_loudnorm": True,
                     "persist": False,
@@ -195,6 +198,7 @@ def test_dashboard_ab_routes_and_operations():
             assert updated.get("ab_visual_split_multiplier") == 3
             assert updated.get("enable_saar_composer") is True
             assert updated.get("saar_composer_use_winner") is False
+            assert updated.get("gemini_everywhere_mode") is True
             assert updated.get("enable_smart_silence_trim") is True
             assert updated.get("enable_post_tts_loudnorm") is True
         finally:
@@ -203,6 +207,7 @@ def test_dashboard_ab_routes_and_operations():
             dashboard.settings.ab_visual_split_multiplier = original_ab_multiplier
             dashboard.settings.enable_saar_composer = original_saar_enabled
             dashboard.settings.saar_composer_use_winner = original_saar_use_winner
+            dashboard.settings.gemini_everywhere_mode = original_gemini_everywhere
             dashboard.settings.enable_smart_silence_trim = original_silence_trim
             dashboard.settings.enable_post_tts_loudnorm = original_post_tts
 

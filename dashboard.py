@@ -1744,6 +1744,7 @@ async def operations_config():
         "prefer_stock_images": bool(settings.prefer_stock_images),
         "enable_image_cache": bool(settings.enable_image_cache),
         "generated_images_count": int(settings.generated_images_count),
+        "gemini_everywhere_mode": bool(settings.gemini_everywhere_mode),
         "enable_ab_visual_split": bool(settings.enable_ab_visual_split),
         "ab_visual_split_multiplier": int(settings.ab_visual_split_multiplier),
         "enable_saar_composer": bool(settings.enable_saar_composer),
@@ -1805,6 +1806,12 @@ async def operations_config_update(payload: dict = Body(...)):
             env_updates["GENERATED_IMAGES_COUNT"] = str(value)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="generated_images_count must be an integer")
+
+    if "gemini_everywhere_mode" in payload:
+        value = _as_bool(payload.get("gemini_everywhere_mode"), default=settings.gemini_everywhere_mode)
+        settings.gemini_everywhere_mode = value
+        updates["gemini_everywhere_mode"] = value
+        env_updates["GEMINI_EVERYWHERE_MODE"] = "true" if value else "false"
 
     if "enable_ab_visual_split" in payload:
         value = _as_bool(payload.get("enable_ab_visual_split"), default=settings.enable_ab_visual_split)

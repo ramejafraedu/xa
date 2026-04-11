@@ -365,6 +365,8 @@ def fetch_music_with_fallback_source(
 
 def _build_music_provider_scores(provider_order: list[str] | None) -> dict[str, float]:
     default_order = ["suno", "lyria", "pixabay", "jamendo"]
+    if settings.gemini_everywhere_mode:
+        default_order = ["lyria", "suno", "pixabay", "jamendo"]
 
     merged: list[str] = []
     seen: set[str] = set()

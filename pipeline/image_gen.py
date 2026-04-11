@@ -81,6 +81,11 @@ def generate_images_with_stats(
         "clean focal subject, dramatic depth, subtle film grain, "
         "no text, no watermark, no logo"
     )
+    if settings.gemini_everywhere_mode:
+        base_style = (
+            f"{base_style}, energetic visual storytelling, vibrant color separation, "
+            "joyful cinematic mood, premium editorial finish"
+        )
 
     style_ab = (
         "dynamic dutch angle, kinetic motion accents"

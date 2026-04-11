@@ -155,6 +155,11 @@ class Settings(BaseSettings):
     use_lyria_music: bool = True
     use_suno_music: bool = True
     use_veo_clips: bool = False
+    gemini_everywhere_mode: bool = False
+    gemini_visual_boost_prompt: str = (
+        "dynamic composition, expressive emotion, vibrant cinematic color grading, "
+        "playful storytelling energy, premium polished detail"
+    )
 
     # WhisperX (local word-level subtitles)
     use_whisperx: bool = True
@@ -495,7 +500,9 @@ class Settings(BaseSettings):
             "enable_provider_cascade": self.enable_provider_cascade,
             "gemini_control_plane_enabled": self.gemini_control_plane_enabled,
             "gemini_control_plane_enforce_orders": self.gemini_control_plane_enforce_orders,
-            "gemini_control_plane_quality_default": bool(self.gemini_control_plane_quality_default),
+            "gemini_control_plane_quality_default": self.gemini_control_plane_quality_default,
+            "gemini_everywhere_mode": self.gemini_everywhere_mode,
+            "gemini_visual_boost_prompt": bool(self.gemini_visual_boost_prompt),
             "enable_crew_quality_gate": self.enable_crew_quality_gate,
             "enable_manim_animations": self.enable_manim_animations,
             "gemini_usage_stats": self.gemini_enable_usage_stats,
