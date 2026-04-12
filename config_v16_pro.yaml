@@ -1,0 +1,249 @@
+# Video Factory V16 PRO Configuration
+# Integración de 5 repositorios para pipeline de video generation enterprise
+
+version: "16.2"
+codename: "PRO Integration"
+
+# ============================================
+# Feature Flags - Integración de Repositorios
+# ============================================
+features:
+  # Fase 1: OpenMontage (completada)
+  openmontage_tools: true
+  openmontage_skills: true
+  openmontage_pipeline_defs: true
+  cost_tracking: true
+  quality_gates: true
+  post_render_analysis: true
+  
+  # Fase 2: ShortGPT (EML + Multi-idioma)
+  shortgpt_eml: true
+  shortgpt_translation: true
+  edge_tts_fallback: true
+  elevenlabs_voice: true
+  
+  # Fase 3: SaarD00 (A/B Testing + FFmpeg)
+  saard00_ab_testing: true
+  saard00_silence_trim: true
+  saard00_dual_assets: true
+  ffmpeg_advanced: true
+  
+  # Fase 4: ViMax (Character Consistency)
+  vimax_consistency: true
+  vimax_character_tracking: true
+  vimax_multi_agent: true
+  
+  # Fase 5: auto_CM_director (Themes)
+  autocm_themes: true
+  autocm_kinetic_text: true
+  autocm_universal_commercial: true
+
+# ============================================
+# Pipeline Configuration
+# ============================================
+pipeline:
+  order:
+    - research
+    - content_gen_with_eml
+    - ab_asset_selection
+    - character_consistency_check
+    - render_with_theme
+    - post_render_analysis
+  
+  # Renderer priority: Remotion > FFmpeg
+  renderer:
+    primary: "remotion"
+    fallback: "ffmpeg"
+    force_remotion: false
+    allow_ffmpeg_emergency: true
+
+# ============================================
+# Themes Disponibles (auto_CM_director)
+# ============================================
+themes:
+  default: "cyberpunk"
+  available:
+    - clean-professional
+    - flat-motion-graphics
+    - minimalist-diagram
+    - anime-ghibli
+    - cyberpunk
+    - minimal
+    - playful
+  
+  # Theme-specific settings
+  settings:
+    cyberpunk:
+      primary_font: "Orbitron"
+      accent_color: "#22D3EE"
+      background: "#020617"
+    minimal:
+      primary_font: "IBM Plex Sans"
+      accent_color: "#F97316"
+      background: "#F8FAFC"
+    playful:
+      primary_font: "Baloo 2"
+      accent_color: "#14B8A6"
+      background: "#FFF1F2"
+
+# ============================================
+# A/B Testing Configuration (SaarD00)
+# ============================================
+ab_testing:
+  enabled: true
+  variants_per_scene: 2
+  auto_select_best: true
+  selection_criteria: "visual_variety"
+  
+  # Variants configuration
+  variants:
+    method: "dual_pexels"
+    orientation: "9:16"
+    min_duration: 3.0
+    max_duration: 5.0
+
+# ============================================
+# Multi-Language Support (ShortGPT)
+# ============================================
+translation:
+  enabled: true
+  engine: "shortgpt"
+  target_languages:
+    - es    # Español (default)
+    - en    # English
+    - pt    # Português
+    - fr    # Français
+  
+  voice:
+    es: "es-ES-AlvaroNeural"
+    en: "en-US-GuyNeural"
+    pt: "pt-BR-AntonioNeural"
+    fr: "fr-FR-HenriNeural"
+
+# ============================================
+# Character Consistency (ViMax)
+# ============================================
+character_consistency:
+  enabled: true
+  tracking_method: "attribute_hash"
+  
+  # AutoCameo settings
+  autocameo:
+    enabled: true
+    max_characters: 5
+    persistence: "cross_video"
+    attributes_to_track:
+      - clothing
+      - hairstyle
+      - color_scheme
+
+# ============================================
+# Cost Tracking & Budget Governance (OpenMontage)
+# ============================================
+cost_tracking:
+  enabled: true
+  budget_total_usd: 10.0
+  reserve_pct: 0.10
+  single_action_approval_usd: 0.50
+  mode: "warn"  # warn | cap | strict
+  
+  # Cost per tool (estimates)
+  tool_costs:
+    gemini_pro: 0.001
+    gemini_ultra: 0.01
+    pexels_video: 0.0
+    remotion_render: 0.0
+    elevenlabs_tts: 0.02
+
+# ============================================
+# Quality Gates (OpenMontage)
+# ============================================
+quality_gates:
+  enabled: true
+  
+  stages:
+    pre_render:
+      - subtitle_sync_check
+      - audio_quality_check
+      - visual_continuity_check
+    
+    post_render:
+      - subtitle_jumps_check
+      - audio_video_sync
+      - retention_score_estimate
+
+# ============================================
+# Video Output Settings
+# ============================================
+video:
+  format: "mp4"
+  width: 1080
+  height: 1920
+  fps: 30
+  
+  # Quality settings
+  video_bitrate: "8000k"
+  audio_bitrate: "192k"
+  preset: "ultrafast"
+  video_codec: "h264"
+  audio_codec: "aac"
+  
+  # Duration
+  min_duration: 15
+  max_duration: 60
+  target_duration: 30
+
+# ============================================
+# Subtitle Configuration (ShortGPT EML)
+# ============================================
+subtitles:
+  enabled: true
+  style: "kinetic"
+  
+  # EML (Editing Markup Language) settings
+  eml:
+    enabled: true
+    sync_mode: "word_level"
+    highlight_active: true
+    animation_style: "bounce"
+  
+  # Safety settings
+  max_chars_per_line: 35
+  max_lines: 2
+  min_duration_on_screen: 1.0
+
+# ============================================
+# Audio Configuration
+# ============================================
+audio:
+  # TTS Priority
+  tts:
+    primary: "edge_tts"
+    fallback: "elevenlabs"
+    
+  # Post-processing (SaarD00)
+  post_process:
+    silence_trim: true
+    volume_boost: 1.2
+    normalize: true
+    noise_reduction: true
+
+# ============================================
+# Nichos Configurados
+# ============================================
+nichos:
+  - slug: "curiosidades"
+    name: "Curiosidades"
+    style: "playful"
+  - slug: "finanzas"
+    name: "Finanzas Personales"
+    style: "clean-professional"
+  - slug: "historia"
+    name: "Historia"
+    style: "minimalist-diagram"
+  - slug: "historias_reddit"
+    name: "Historias Reddit"
+    style: "anime-ghibli"
+  - slug: "ia_herramientas"
+    name: "IA y Herramientas"
+    style: "cyberpunk"

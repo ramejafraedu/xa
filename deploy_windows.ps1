@@ -1,7 +1,7 @@
 # Deploy Video Factory V16.1 to Ubuntu Server (Windows Native)
-# SSH_HOST=136.114.166.182, SSH_USER=xavierfranmen
+# SSH_HOST=34.121.107.238, SSH_USER=xavierfranmen
 
-$SSH_HOST = "136.114.166.182"
+$SSH_HOST = "34.121.107.238"
 $SSH_USER = "xavierfranmen"
 $SSH_KEY = "$PSScriptRoot\id_ed25519_xavito"
 $REMOTE_DIR = "/home/xavierfranmen/video_factory"

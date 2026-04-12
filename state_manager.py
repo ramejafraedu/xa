@@ -33,10 +33,18 @@ from loguru import logger
 from models.content import JobManifest, JobStatus
 
 try:
-    from tools.cost_tracker import CostTracker, BudgetMode
+    from cost_tracker import CostTracker, BudgetMode
 except ImportError:
-    CostTracker = None
-    BudgetMode = None
+    try:
+        from tools.cost_tracker import CostTracker, BudgetMode
+    except ImportError:
+        CostTracker = None
+        BudgetMode = None
+
+try:
+    from lib.scoring import QualityGate
+except ImportError:
+    QualityGate = None
 
 
 class StateManager:
@@ -48,6 +56,7 @@ class StateManager:
         self.checkpoints_root = self.temp_dir / "checkpoints"
         self.checkpoints_root.mkdir(parents=True, exist_ok=True)
         self.cost_tracker = None
+        self.quality_gate = QualityGate() if QualityGate else None
 
     def initialize_cost_tracker(self, budget: float, mode_str: str) -> None:
         if CostTracker:

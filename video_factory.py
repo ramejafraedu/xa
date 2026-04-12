@@ -981,6 +981,13 @@ def run_pipeline(
         raise ValueError(f"Unknown niche: {nicho_slug}. Available: {list(NICHOS.keys())}")
 
     state = StateManager(settings.temp_dir)
+    
+    # Initialize cost tracking (V16 PRO)
+    if hasattr(settings, 'budget_usd') and hasattr(settings, 'budget_mode'):
+        state.initialize_cost_tracker(settings.budget_usd, settings.budget_mode)
+    else:
+        # Default budget: $10 USD in warn mode
+        state.initialize_cost_tracker(10.0, "warn")
 
     # Resume or create new
     if resume_job_id:
