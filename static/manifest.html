@@ -96,6 +96,47 @@
         }
         .error { color: var(--err); }
     </style>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style id="modern-redesign-manifest">
+        :root {
+            --bg: #000000;
+            --card: #111111;
+            --border: rgba(255,255,255,0.1);
+            --text: #FFFFFF;
+            --muted: #A1A1AA;
+            --ok: #10B981;
+            --warn: #F59E0B;
+            --err: #EF4444;
+            --accent: #FFFFFF;
+        }
+        body {
+            font-family: "Inter", system-ui, sans-serif !important;
+            background: var(--bg) !important;
+            color: var(--text) !important;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.03) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 8px !important;
+            box-shadow: none !important;
+        }
+        .btn {
+            background: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid var(--border) !important;
+            color: var(--text) !important;
+            border-radius: 6px !important;
+        }
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.1) !important;
+        }
+        .json-block {
+            font-family: "JetBrains Mono", monospace !important;
+            background: #000000 !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 6px !important;
+        }
+    </style>
 </head>
 <body>
     <div class="wrap">
