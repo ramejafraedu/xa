@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import json
 import shutil
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -53,6 +54,9 @@ from core.openmontage_free import (
     apply_bg_remove,
     apply_upscale,
     apply_face_restore,
+    apply_color_grade,
+    apply_auto_reframe,
+    apply_video_trim,
 )
 from tools.tool_registry import ToolRegistry
 from core.reference_context import load_reference_context
@@ -137,8 +141,70 @@ def _build_saar_scene_data(media_paths: list[Path]) -> list[dict[str, str]]:
     return scene_data
 
 
-def _select_saar_variant(candidate_paths: list[Path]) -> tuple[Optional[Path], dict]:
-    """Select Saar winner with deterministic telemetry-friendly heuristics."""
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _probe_video_metrics(video_path: Path) -> dict[str, float]:
+    """Probe key media metrics used to validate Saar candidates."""
+    metrics = {
+        "format_duration": 0.0,
+        "video_duration": 0.0,
+        "audio_duration": 0.0,
+        "fps": 0.0,
+    }
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-print_format", "json",
+                "-show_format", "-show_streams",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=12,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return metrics
+
+        payload = json.loads(result.stdout)
+        metrics["format_duration"] = _safe_float(
+            (payload.get("format") or {}).get("duration"),
+            0.0,
+        )
+        for stream in payload.get("streams", []):
+            if not isinstance(stream, dict):
+                continue
+            codec_type = str(stream.get("codec_type") or "").strip().lower()
+            if codec_type == "video" and metrics["video_duration"] <= 0:
+                metrics["video_duration"] = _safe_float(stream.get("duration"), 0.0)
+                fps_raw = str(stream.get("r_frame_rate") or "0/1")
+                try:
+                    num_s, den_s = fps_raw.split("/", 1)
+                    num = float(num_s)
+                    den = float(den_s)
+                    if den > 0:
+                        metrics["fps"] = num / den
+                except Exception:
+                    metrics["fps"] = 0.0
+            elif codec_type == "audio" and metrics["audio_duration"] <= 0:
+                metrics["audio_duration"] = _safe_float(stream.get("duration"), 0.0)
+    except Exception:
+        return metrics
+
+    return metrics
+
+
+def _select_saar_variant(
+    candidate_paths: list[Path],
+    expected_duration: float = 0.0,
+) -> tuple[Optional[Path], dict]:
+    """Select Saar winner using sync and duration quality before size."""
+    expected_duration = max(0.0, _safe_float(expected_duration, 0.0))
     ranked: list[dict[str, object]] = []
     for candidate in candidate_paths:
         path = Path(candidate)
@@ -151,32 +217,92 @@ def _select_saar_variant(candidate_paths: list[Path]) -> tuple[Optional[Path], d
 
         name_upper = path.stem.upper()
         variant = "B" if "VARIANT_B" in name_upper else "A"
+        metrics = _probe_video_metrics(path)
+        format_duration = _safe_float(metrics.get("format_duration"), 0.0)
+        video_duration = _safe_float(metrics.get("video_duration"), 0.0)
+        audio_duration = _safe_float(metrics.get("audio_duration"), 0.0)
+        fps = _safe_float(metrics.get("fps"), 0.0)
+
+        av_delta_seconds = (
+            abs(video_duration - audio_duration)
+            if video_duration > 0 and audio_duration > 0
+            else 0.0
+        )
+        duration_reference = format_duration if format_duration > 0 else video_duration
+        duration_delta_seconds = (
+            abs(duration_reference - expected_duration)
+            if duration_reference > 0 and expected_duration > 0
+            else 0.0
+        )
+
+        fps_valid = fps <= 0.0 or (23.5 <= fps <= 61.0)
+        sync_valid = av_delta_seconds <= 0.25 if video_duration > 0 and audio_duration > 0 else True
+        duration_valid = (
+            duration_delta_seconds <= max(2.0, expected_duration * 0.20)
+            if duration_reference > 0 and expected_duration > 0
+            else True
+        )
+
+        quality_valid = bool(fps_valid and sync_valid and duration_valid)
+        quality_score = 0
+        quality_score += 3 if sync_valid else -5
+        quality_score += 2 if duration_valid else -4
+        quality_score += 1 if fps_valid else -2
+
         ranked.append(
             {
                 "variant": variant,
                 "path": str(path),
                 "size_bytes": size_bytes,
+                "format_duration_seconds": round(format_duration, 3),
+                "video_duration_seconds": round(video_duration, 3),
+                "audio_duration_seconds": round(audio_duration, 3),
+                "fps": round(fps, 3),
+                "av_delta_seconds": round(av_delta_seconds, 3),
+                "duration_delta_seconds": round(duration_delta_seconds, 3),
+                "quality_valid": quality_valid,
+                "quality_score": quality_score,
             }
         )
 
-    ranked.sort(key=lambda item: int(item.get("size_bytes", 0)), reverse=True)
+    ranked.sort(
+        key=lambda item: (
+            int(bool(item.get("quality_valid", False))),
+            int(item.get("quality_score", -99)),
+            -_safe_float(item.get("av_delta_seconds"), 9999.0),
+            -_safe_float(item.get("duration_delta_seconds"), 9999.0),
+            int(item.get("size_bytes", 0)),
+        ),
+        reverse=True,
+    )
+
     if not ranked:
         return None, {
             "saar_candidate_count": 0,
             "saar_candidates": [],
-            "saar_selection_mode": "size_bytes_desc",
+            "saar_selection_mode": "quality_score_desc",
             "saar_selection_reason": "no_valid_candidates",
             "saar_selected_variant": "",
             "saar_selected_path": "",
         }
 
     winner = ranked[0]
+    if not bool(winner.get("quality_valid", False)):
+        return None, {
+            "saar_candidate_count": len(ranked),
+            "saar_candidates": ranked,
+            "saar_selection_mode": "quality_score_desc",
+            "saar_selection_reason": "no_quality_valid_candidates",
+            "saar_selected_variant": "",
+            "saar_selected_path": "",
+        }
+
     winner_path = Path(str(winner.get("path", "")))
     return winner_path, {
         "saar_candidate_count": len(ranked),
         "saar_candidates": ranked,
-        "saar_selection_mode": "size_bytes_desc",
-        "saar_selection_reason": "winner=max_file_size_bytes",
+        "saar_selection_mode": "quality_score_desc",
+        "saar_selection_reason": "winner=quality_score_then_file_size",
         "saar_selected_variant": str(winner.get("variant", "A") or "A"),
         "saar_selected_path": str(winner_path),
     }
@@ -2100,7 +2226,10 @@ def run_pipeline_v15(
                             output_prefix=saar_prefix,
                         )
                         candidate_paths = [Path(path) for path in raw_candidates if path]
-                        selected_saar_path, saar_metadata = _select_saar_variant(candidate_paths)
+                        selected_saar_path, saar_metadata = _select_saar_variant(
+                            candidate_paths,
+                            expected_duration=float(manifest.duration_seconds or audio_duration or 0.0),
+                        )
                         split_state.update(saar_metadata)
 
                         selected_variant = str(saar_metadata.get("saar_selected_variant", "") or "")

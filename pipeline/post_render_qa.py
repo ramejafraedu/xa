@@ -86,8 +86,9 @@ def post_render_qa(
         try:
             num, den = fps_str.split("/")
             fps = int(num) / max(int(den), 1)
-            if fps < 24 or fps > 61:
-                issues.append(f"FPS out of range: {fps:.1f} (expected 24-60)")
+            # Accept NTSC-like 23.976fps as valid short-form baseline.
+            if fps < 23.5 or fps > 61:
+                issues.append(f"FPS out of range: {fps:.1f} (expected 23.5-60)")
         except Exception:
             pass
 
