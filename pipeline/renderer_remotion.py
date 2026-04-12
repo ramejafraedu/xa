@@ -1393,6 +1393,33 @@ def _normalize_static_asset_path(value: str) -> str:
     return normalized.replace("\\", "/")
 
 
+_NON_IMAGE_ASSET_EXTENSIONS = {
+    ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv", ".flv", ".mpeg", ".mpg", ".ts", ".m2ts", ".3gp",
+    ".mp3", ".wav", ".aac", ".m4a", ".ogg", ".flac", ".opus", ".aif", ".aiff", ".wma",
+}
+
+
+def _is_non_image_asset_path(value: str) -> bool:
+    """Return True when a path clearly points to video/audio media."""
+    src = str(value or "").strip()
+    if not src:
+        return False
+
+    lowered = src.lower()
+    if lowered.startswith("data:image/"):
+        return False
+
+    candidate = src.split("?", 1)[0].split("#", 1)[0].strip()
+    if candidate.lower().startswith("file://"):
+        candidate = unquote(candidate[7:])
+
+    suffix = Path(candidate).suffix.lower()
+    if not suffix:
+        return False
+
+    return suffix in _NON_IMAGE_ASSET_EXTENSIONS
+
+
 def _normalize_universal_commercial_props(timeline_payload: dict, metadata: dict) -> dict:
     """Normalize flexible payloads into UniversalCommercial props contract."""
     raw_style = timeline_payload.get("style") if isinstance(timeline_payload.get("style"), dict) else {}
@@ -1515,9 +1542,15 @@ def _normalize_universal_commercial_props(timeline_payload: dict, metadata: dict
         if not isinstance(item, dict):
             continue
 
-        image_path = _normalize_static_asset_path(
-            str(item.get("imagePath") or item.get("image") or item.get("src") or "")
-        )
+        image_candidate = str(item.get("imagePath") or item.get("image") or item.get("src") or "")
+        image_path = _normalize_static_asset_path(image_candidate)
+        if image_path and _is_non_image_asset_path(image_path):
+            logger.warning(
+                "UniversalCommercial skipped non-image feature asset: {}",
+                image_candidate,
+            )
+            image_path = ""
+
         feature = {
             "title": str(item.get("title") or item.get("name") or f"Feature {idx + 1}").strip(),
             "subtitle": str(item.get("subtitle") or item.get("description") or "Beneficio principal").strip(),
@@ -1606,7 +1639,16 @@ def _build_universal_features_from_scenes(scenes: list[dict]) -> list[dict]:
 
         title = str(scene.get("title") or scene.get("text") or scene.get("id") or "").strip()
         subtitle = str(scene.get("subtitle") or scene.get("sceneText") or "").strip()
-        image_path = _normalize_static_asset_path(str(scene.get("imagePath") or scene.get("src") or ""))
+        scene_kind = str(scene.get("kind") or "").strip().lower()
+        image_candidate = str(scene.get("imagePath") or "").strip()
+        if not image_candidate and scene_kind in {"image", "photo", "still"}:
+            image_candidate = str(scene.get("src") or "")
+        if not image_candidate and not scene_kind:
+            image_candidate = str(scene.get("src") or "")
+
+        image_path = _normalize_static_asset_path(image_candidate)
+        if image_path and _is_non_image_asset_path(image_path):
+            image_path = ""
 
         if not title:
             title = f"Feature {idx + 1}"
