@@ -128,6 +128,7 @@ class EditorAgent:
         narration_audio_path: Optional[Path] = None,
         music_path: Optional[Path] = None,
         composition_id: str = "UniversalCommercial",
+        style_playbook: str = "",
     ) -> dict:
         """Build and persist a Remotion-compatible timeline JSON.
 
@@ -141,6 +142,7 @@ class EditorAgent:
             subtitles_path=subtitles_path,
             narration_audio_path=narration_audio_path,
             music_path=music_path,
+            style_playbook=style_playbook,
         )
 
         resolved_composition = str(composition_id or "UniversalCommercial").strip() or "UniversalCommercial"
@@ -238,6 +240,7 @@ class EditorAgent:
         subtitles_path: Optional[Path],
         narration_audio_path: Optional[Path],
         music_path: Optional[Path],
+        style_playbook: str = "",
     ) -> dict:
         """Create timeline payload with scene timing, style and captions."""
         valid_media = [p for p in media_paths if p and p.exists()]
@@ -302,15 +305,54 @@ class EditorAgent:
                 )
 
         captions_words = self._parse_ass_word_captions(subtitles_path)
+        palette_hexes = self._extract_palette_hexes(state.color_palette)
+        theme_name = self._resolve_visual_theme(state, style_playbook)
+        heading_font = self._resolve_heading_font(theme_name)
+        body_font = self._resolve_body_font(theme_name)
+
+        caption_font_size = 52
+        subtitle_style = str(state.style_profile.subtitle_style or "").strip().lower()
+        if subtitle_style in {"readable_large", "bold_animated"}:
+            caption_font_size = 56
+        elif subtitle_style in {"minimal_elegant", "clean_modern"}:
+            caption_font_size = 50
+
+        caption_color = "#F8FAFC"
+        if theme_name in {"minimal", "minimalist-diagram", "clean-professional"}:
+            caption_color = "#111827"
+
+        caption_highlight = palette_hexes[1] if len(palette_hexes) > 1 else (
+            palette_hexes[0] if palette_hexes else "#FBBF24"
+        )
+
+        caption_background = "rgba(0, 0, 0, 0.60)"
+        if theme_name in {"minimal", "minimalist-diagram", "clean-professional"}:
+            caption_background = "rgba(255, 255, 255, 0.86)"
+
+        primary_color = palette_hexes[0] if palette_hexes else self._default_primary_for_theme(theme_name)
+        accent_color = caption_highlight
+
+        transitions = [str(x).strip().lower() for x in (state.style_profile.transitions or []) if str(x).strip()]
+        transition_preset = "swipe" if any(t in {"whip", "zoom_cut", "wipe"} for t in transitions) else "slide"
+
+        cut_speed = str(state.style_profile.cut_speed or "").strip().lower()
+        kinetic_level = "dynamic" if cut_speed in {"ultra_rapido", "rapido"} else "soft"
+        if cut_speed == "ultra_rapido":
+            kinetic_level = "intense"
+
+        layout_variant = "split"
+        if theme_name in {"minimal", "minimalist-diagram"}:
+            layout_variant = "stacked"
+
         captions = None
         if captions_words:
             captions = {
                 "words": captions_words,
                 "wordsPerPage": 4,
-                "fontSize": 52,
-                "color": "#F8FAFC",
-                "highlightColor": "#FBBF24",
-                "backgroundColor": "rgba(0, 0, 0, 0.60)",
+                "fontSize": caption_font_size,
+                "color": caption_color,
+                "highlightColor": caption_highlight,
+                "backgroundColor": caption_background,
             }
 
         soundtrack = None
@@ -326,10 +368,51 @@ class EditorAgent:
         if music_path and music_path.exists():
             music = {
                 "src": str(music_path.resolve().as_posix()),
-                "volume": 0.16,
+                "volume": max(0.05, min(0.65, float(state.style_profile.music_volume or 0.16))),
                 "fadeInSeconds": 0.5,
                 "fadeOutSeconds": 1.2,
             }
+
+        visual_style = {
+            "theme": theme_name,
+            "primaryColor": primary_color,
+            "accentColor": accent_color,
+            "fontFamily": f"{heading_font}, sans-serif",
+            "layoutVariant": layout_variant,
+            "kineticLevel": kinetic_level,
+            "transitionPreset": transition_preset,
+            "featureCardMode": "window",
+        }
+
+        theme_config = {
+            "primaryColor": primary_color,
+            "accentColor": accent_color,
+            "headingFont": heading_font,
+            "bodyFont": body_font,
+            "captionHighlightColor": caption_highlight,
+            "captionBackgroundColor": caption_background,
+            "transitionDuration": 0.3 if transition_preset == "swipe" else 0.45,
+        }
+
+        style_meta = {
+            "cut_speed": state.style_profile.cut_speed,
+            "subtitle_style": state.style_profile.subtitle_style,
+            "music_volume": float(state.style_profile.music_volume),
+            "transitions": list(state.style_profile.transitions or []),
+            "visual_base": state.style_profile.visual_base,
+            "aspect_ratio": state.style_profile.aspect_ratio,
+            "color_palette": state.color_palette,
+        }
+
+        caption_style = {
+            "fontSize": caption_font_size,
+            "color": caption_color,
+            "highlightColor": caption_highlight,
+            "backgroundColor": caption_background,
+            "wordsPerPage": 4,
+        }
+
+        playbook_slug = str(style_playbook or "").strip()
 
         return {
             "timelineVersion": "1.0",
@@ -339,7 +422,19 @@ class EditorAgent:
                 "platform": state.platform,
                 "audioDurationSeconds": round(audio_duration, 3),
                 "sceneCount": len(scenes),
+                "playbook": playbook_slug,
+                "theme": theme_name,
+                "style_profile": style_meta,
+                "captionStyle": caption_style,
             },
+            "playbook": playbook_slug,
+            "theme": theme_name,
+            "themeConfig": theme_config,
+            "style": visual_style,
+            "layoutVariant": layout_variant,
+            "kineticLevel": kinetic_level,
+            "transitionPreset": transition_preset,
+            "featureCardMode": "window",
             "scenes": scenes,
             "soundtrack": soundtrack,
             "music": music,
@@ -348,6 +443,93 @@ class EditorAgent:
             "titleWidth": 860,
             "signalLineCount": 18,
         }
+
+    @staticmethod
+    def _extract_palette_hexes(palette_text: str) -> list[str]:
+        if not palette_text:
+            return []
+        return [c.upper() for c in re.findall(r"#[0-9A-Fa-f]{3,8}", palette_text)]
+
+    @staticmethod
+    def _resolve_visual_theme(state: StoryState, style_playbook: str) -> str:
+        playbook = str(style_playbook or "").strip().lower()
+        if playbook in {
+            "clean-professional",
+            "flat-motion-graphics",
+            "minimalist-diagram",
+            "anime-ghibli",
+            "cyberpunk",
+            "minimal",
+            "playful",
+        }:
+            return playbook
+
+        playbook_map = {
+            "finanzas": "minimalist-diagram",
+            "curiosidades": "playful",
+            "historia": "clean-professional",
+            "historias_reddit": "minimal",
+            "ia_herramientas": "cyberpunk",
+        }
+        if playbook in playbook_map:
+            return playbook_map[playbook]
+
+        platform_map = {
+            "tiktok": "flat-motion-graphics",
+            "tiktok_reels": "flat-motion-graphics",
+            "reels": "playful",
+            "shorts": "clean-professional",
+            "facebook": "minimal",
+        }
+        platform = str(state.platform or "").strip().lower()
+        if platform in platform_map:
+            return platform_map[platform]
+
+        cut_speed = str(state.style_profile.cut_speed or "").strip().lower()
+        if cut_speed == "ultra_rapido":
+            return "flat-motion-graphics"
+        if cut_speed == "cinematografico":
+            return "clean-professional"
+        return "minimal"
+
+    @staticmethod
+    def _default_primary_for_theme(theme_name: str) -> str:
+        defaults = {
+            "clean-professional": "#2563EB",
+            "flat-motion-graphics": "#7C3AED",
+            "minimalist-diagram": "#1A1A2E",
+            "anime-ghibli": "#2D5016",
+            "cyberpunk": "#0F172A",
+            "minimal": "#334155",
+            "playful": "#BE123C",
+        }
+        return defaults.get(str(theme_name or "").strip().lower(), "#334155")
+
+    @staticmethod
+    def _resolve_heading_font(theme_name: str) -> str:
+        mapping = {
+            "clean-professional": "Inter",
+            "flat-motion-graphics": "Space Grotesk",
+            "minimalist-diagram": "IBM Plex Sans",
+            "anime-ghibli": "Noto Serif JP",
+            "cyberpunk": "Orbitron",
+            "minimal": "IBM Plex Sans",
+            "playful": "Baloo 2",
+        }
+        return mapping.get(str(theme_name or "").strip().lower(), "Space Grotesk")
+
+    @staticmethod
+    def _resolve_body_font(theme_name: str) -> str:
+        mapping = {
+            "clean-professional": "Inter",
+            "flat-motion-graphics": "Space Grotesk",
+            "minimalist-diagram": "IBM Plex Sans",
+            "anime-ghibli": "Noto Sans",
+            "cyberpunk": "Space Grotesk",
+            "minimal": "IBM Plex Sans",
+            "playful": "Nunito",
+        }
+        return mapping.get(str(theme_name or "").strip().lower(), "Space Grotesk")
 
     @staticmethod
     def _tone_for_grade(color_grade: str) -> str:

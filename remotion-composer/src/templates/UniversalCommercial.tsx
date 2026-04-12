@@ -13,14 +13,41 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
     projectInfo,
     style,
     script,
-    audio
+    audio,
+    theme,
+    playbook,
+    layoutVariant,
+    kineticLevel,
+    transitionPreset,
+    featureCardMode,
 }) => {
     const { width, height } = useVideoConfig();
     const isPortrait = height >= width;
+    const resolvedTheme = String(style.theme || theme || playbook || 'minimal').toLowerCase();
+    const resolvedLayout = style.layoutVariant || layoutVariant || (isPortrait ? 'stacked' : 'split');
+    const resolvedKinetic = style.kineticLevel || kineticLevel || 'dynamic';
+    const resolvedTransition = style.transitionPreset || transitionPreset || 'slide';
+    const resolvedFeatureCard = style.featureCardMode || featureCardMode || 'window';
+
+    const transitionDuration = resolvedTransition === 'swipe' ? 18 : resolvedTransition === 'pulse' ? 24 : 30;
+
+    const pickTransitionDirection = (idx: number): "from-right" | "from-left" | "from-top" | "from-bottom" => {
+        if (resolvedTransition === 'swipe') {
+            return idx % 2 === 0 ? 'from-right' : 'from-left';
+        }
+        if (resolvedTransition === 'pulse') {
+            return idx % 2 === 0 ? 'from-bottom' : 'from-top';
+        }
+        return idx % 2 === 0 ? 'from-right' : 'from-bottom';
+    };
 
     // Theme Styles
     const getBgColor = () => {
-        switch (style.theme) {
+        switch (resolvedTheme) {
+            case 'clean-professional': return '#ffffff';
+            case 'flat-motion-graphics': return '#0f172a';
+            case 'minimalist-diagram': return '#fafafa';
+            case 'anime-ghibli': return '#0a0a1a';
             case 'cyberpunk': return '#0f172a';
             case 'minimal': return '#f8f9fa';
             case 'playful': return '#fff1f2';
@@ -29,7 +56,11 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
     };
 
     const getTextColor = () => {
-        switch (style.theme) {
+        switch (resolvedTheme) {
+            case 'clean-professional': return '#1f2937';
+            case 'flat-motion-graphics': return '#f8fafc';
+            case 'minimalist-diagram': return '#1a1a2e';
+            case 'anime-ghibli': return '#f0e6d3';
             case 'cyberpunk': return '#ffffff';
             case 'minimal': return '#333333';
             case 'playful': return '#be123c';
@@ -48,10 +79,10 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
     const buttonFontSize = isPortrait ? 24 : 30;
 
     // Scene Timings
-    const HOOK_DURATION = 150; // Increased from 90
-    const SOLUTION_DURATION = 150; // Increased from 90
-    const FEATURE_DURATION = 180; // Increased from 150
-    const CTA_DURATION = 150; // Increased from 120
+    const HOOK_DURATION = resolvedKinetic === 'intense' ? 130 : 150;
+    const SOLUTION_DURATION = resolvedKinetic === 'intense' ? 130 : 150;
+    const FEATURE_DURATION = resolvedKinetic === 'soft' ? 210 : 180;
+    const CTA_DURATION = resolvedKinetic === 'intense' ? 135 : 150;
 
     return (
         <AbsoluteFill style={{ backgroundColor: bgColor, fontFamily }}>
@@ -85,8 +116,8 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
                 </TransitionSeries.Sequence>
 
                 <TransitionSeries.Transition
-                    presentation={slide({ direction: "from-right" })}
-                    timing={linearTiming({ durationInFrames: 30 })}
+                    presentation={slide({ direction: pickTransitionDirection(0) })}
+                    timing={linearTiming({ durationInFrames: transitionDuration })}
                 />
 
                 {/* Scene 2: Solution */}
@@ -106,8 +137,8 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
                 </TransitionSeries.Sequence>
 
                 <TransitionSeries.Transition
-                    presentation={slide({ direction: "from-bottom" })}
-                    timing={linearTiming({ durationInFrames: 30 })}
+                    presentation={slide({ direction: pickTransitionDirection(1) })}
+                    timing={linearTiming({ durationInFrames: transitionDuration })}
                 />
 
                 {/* Scene 3: Features */}
@@ -119,21 +150,24 @@ export const UniversalCommercial: React.FC<DirectorConfig> = ({
                                 textColor={textColor}
                                 accentColor={accentColor}
                                 fontFamily={fontFamily}
-                                theme={style.theme}
+                                theme={resolvedTheme}
+                                layoutVariant={resolvedLayout}
+                                kineticLevel={resolvedKinetic}
+                                featureCardMode={resolvedFeatureCard}
                             />
                         </TransitionSeries.Sequence>
                         {index < script.features.length - 1 && (
                             <TransitionSeries.Transition
-                                presentation={slide({ direction: "from-right" })}
-                                timing={linearTiming({ durationInFrames: 30 })}
+                                presentation={slide({ direction: pickTransitionDirection(index + 2) })}
+                                timing={linearTiming({ durationInFrames: transitionDuration })}
                             />
                         )}
                     </React.Fragment>
                 ))}
 
                 <TransitionSeries.Transition
-                    presentation={slide({ direction: "from-top" })}
-                    timing={linearTiming({ durationInFrames: 30 })}
+                    presentation={slide({ direction: pickTransitionDirection(8) })}
+                    timing={linearTiming({ durationInFrames: transitionDuration })}
                 />
 
                 {/* Scene 4: CTA */}
@@ -173,14 +207,23 @@ const FeatureScene: React.FC<{
     textColor: string;
     accentColor: string;
     fontFamily: string;
-    theme: "cyberpunk" | "minimal" | "playful";
-}> = ({ feature, textColor, accentColor, fontFamily, theme }) => {
+    theme: string;
+    layoutVariant: "split" | "stacked" | "spotlight";
+    kineticLevel: "soft" | "dynamic" | "intense";
+    featureCardMode: "window" | "plain";
+}> = ({ feature, textColor, accentColor, fontFamily, theme, layoutVariant, kineticLevel, featureCardMode }) => {
     const frame = useCurrentFrame();
     const { fps, width, height } = useVideoConfig();
     const isPortrait = height >= width;
 
-    const scale = spring({ frame, fps, config: { damping: 12 } });
-    const y = interpolate(frame, [0, 30], [50, 0], { extrapolateRight: 'clamp' });
+    const springConfig = kineticLevel === 'intense'
+        ? { damping: 10, stiffness: 150, mass: 0.9 }
+        : kineticLevel === 'soft'
+            ? { damping: 18, stiffness: 90, mass: 1.0 }
+            : { damping: 12, stiffness: 110, mass: 1.0 };
+    const scale = spring({ frame, fps, config: springConfig });
+    const yOffset = kineticLevel === 'intense' ? 70 : kineticLevel === 'soft' ? 30 : 50;
+    const y = interpolate(frame, [0, 30], [yOffset, 0], { extrapolateRight: 'clamp' });
     const mediaWidth = isPortrait ? Math.min(Math.floor(width * 0.86), 860) : 800;
     const mediaHeight = isPortrait ? Math.min(Math.floor(height * 0.34), 620) : 500;
     const placeholderWidth = isPortrait ? Math.min(Math.floor(width * 0.76), 720) : 600;
@@ -189,6 +232,11 @@ const FeatureScene: React.FC<{
     // --- Theme Specific Styles ---
     const isCyberpunk = theme === 'cyberpunk';
     const isMinimal = theme === 'minimal';
+    const effectiveLayout = layoutVariant === 'spotlight'
+        ? 'spotlight'
+        : layoutVariant === 'stacked'
+            ? 'stacked'
+            : (isPortrait ? 'stacked' : 'split');
 
     // Cyberpunk specific glitch/skew
     const skew = isCyberpunk ? Math.sin(frame / 10) * 5 : 0;
@@ -201,21 +249,21 @@ const FeatureScene: React.FC<{
         <AbsoluteFill style={{
             justifyContent: 'center',
             alignItems: 'center',
-            flexDirection: isPortrait ? 'column' : 'row',
+            flexDirection: effectiveLayout === 'split' ? 'row' : 'column',
             gap: isPortrait ? 28 : 60,
             fontFamily,
             opacity: isMinimal ? minimalOpacity : 1
         }}>
             {/* Text Side */}
             <div style={{
-                flex: isPortrait ? '0 0 auto' : 1,
-                width: isPortrait ? '88%' : 'auto',
-                paddingLeft: isPortrait ? 0 : 100,
+                flex: effectiveLayout === 'split' ? 1 : '0 0 auto',
+                width: effectiveLayout === 'split' ? 'auto' : '88%',
+                paddingLeft: effectiveLayout === 'split' ? 100 : 0,
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
-                alignItems: isPortrait ? 'center' : 'flex-start',
-                textAlign: isPortrait ? 'center' : 'left',
+                alignItems: effectiveLayout === 'split' ? 'flex-start' : 'center',
+                textAlign: effectiveLayout === 'split' ? 'left' : 'center',
             }}>
                 <h2 style={{
                     color: accentColor,
@@ -240,26 +288,39 @@ const FeatureScene: React.FC<{
 
             {/* Image Side */}
             <div style={{
-                flex: isPortrait ? '0 0 auto' : 1.5,
-                width: isPortrait ? '100%' : 'auto',
+                flex: effectiveLayout === 'split' ? 1.5 : '0 0 auto',
+                width: effectiveLayout === 'split' ? 'auto' : '100%',
                 display: 'flex',
                 justifyContent: 'center',
                 alignItems: 'center',
-                paddingRight: isPortrait ? 0 : 100,
+                paddingRight: effectiveLayout === 'split' ? 100 : 0,
             }}>
                 {feature.imagePath ? (
                     <div style={{
                         transform: `scale(${scale}) rotate(${isMinimal ? 0 : -2}deg)`,
                         filter: isCyberpunk ? 'contrast(1.2) brightness(1.1)' : 'none'
                     }}>
-                        <MacWindow title={feature.title} style={{
-                            width: mediaWidth,
-                            height: mediaHeight,
-                            boxShadow: isCyberpunk ? `0 0 40px ${accentColor}88` : '0 30px 60px rgba(0,0,0,0.3)',
-                            borderRadius: isMinimal ? 4 : 12
-                        }}>
-                            <Img src={staticFile(feature.imagePath)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        </MacWindow>
+                        {featureCardMode === 'plain' ? (
+                            <div style={{
+                                width: mediaWidth,
+                                height: mediaHeight,
+                                overflow: 'hidden',
+                                borderRadius: isMinimal ? 8 : 16,
+                                border: `2px solid ${accentColor}`,
+                                boxShadow: isCyberpunk ? `0 0 40px ${accentColor}88` : '0 30px 60px rgba(0,0,0,0.25)',
+                            }}>
+                                <Img src={staticFile(feature.imagePath)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+                        ) : (
+                            <MacWindow title={feature.title} style={{
+                                width: mediaWidth,
+                                height: mediaHeight,
+                                boxShadow: isCyberpunk ? `0 0 40px ${accentColor}88` : '0 30px 60px rgba(0,0,0,0.3)',
+                                borderRadius: isMinimal ? 4 : 12
+                            }}>
+                                <Img src={staticFile(feature.imagePath)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </MacWindow>
+                        )}
                     </div>
                 ) : (
                     <div style={{

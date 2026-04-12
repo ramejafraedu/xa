@@ -25,6 +25,43 @@ from config import settings
 REMOTION_DIR = Path(__file__).resolve().parent.parent / "remotion-composer"
 ALLOWED_REMOTION_COMPOSITIONS = {"CinematicRenderer", "UniversalCommercial"}
 DEFAULT_REMOTION_COMPOSITION = "UniversalCommercial"
+UNIVERSAL_THEME_DEFAULTS = {
+    "clean-professional": {
+        "primaryColor": "#2563EB",
+        "accentColor": "#F59E0B",
+        "fontFamily": "Inter, sans-serif",
+    },
+    "flat-motion-graphics": {
+        "primaryColor": "#7C3AED",
+        "accentColor": "#EC4899",
+        "fontFamily": "Space Grotesk, sans-serif",
+    },
+    "minimalist-diagram": {
+        "primaryColor": "#1A1A2E",
+        "accentColor": "#E94560",
+        "fontFamily": "IBM Plex Sans, sans-serif",
+    },
+    "anime-ghibli": {
+        "primaryColor": "#2D5016",
+        "accentColor": "#FFB347",
+        "fontFamily": "Noto Serif JP, sans-serif",
+    },
+    "cyberpunk": {
+        "primaryColor": "#0F172A",
+        "accentColor": "#22D3EE",
+        "fontFamily": "Orbitron, sans-serif",
+    },
+    "minimal": {
+        "primaryColor": "#334155",
+        "accentColor": "#F97316",
+        "fontFamily": "IBM Plex Sans, sans-serif",
+    },
+    "playful": {
+        "primaryColor": "#BE123C",
+        "accentColor": "#14B8A6",
+        "fontFamily": "Baloo 2, sans-serif",
+    },
+}
 
 
 def _resolve_remotion_runner() -> tuple[list[str], str]:
@@ -136,6 +173,7 @@ def render_with_remotion(
     metadata: dict,
     timeline_path: Optional[Path] = None,
     timeline_payload: Optional[dict] = None,
+    director_path: Optional[Path] = None,
 ) -> bool:
     """Render video using the selected Remotion composition."""
     if not is_remotion_available():
@@ -160,6 +198,23 @@ def render_with_remotion(
             props = _normalize_timeline_props(
                 timeline_payload,
                 metadata,
+                subtitles_path=subtitles_path,
+                composition_id=composition_id,
+            )
+        elif director_path and director_path.exists():
+            director_doc = json.loads(director_path.read_text(encoding="utf-8"))
+            director_props = director_doc.get("props") if isinstance(director_doc, dict) else {}
+            if not isinstance(director_props, dict):
+                director_props = {}
+
+            metadata_from_director = dict(metadata)
+            if isinstance(director_doc, dict) and director_doc.get("composition_id"):
+                metadata_from_director["composition_id"] = str(director_doc.get("composition_id"))
+
+            composition_id = _resolve_composition_id(metadata_from_director, director_props)
+            props = _normalize_timeline_props(
+                director_props,
+                metadata_from_director,
                 subtitles_path=subtitles_path,
                 composition_id=composition_id,
             )
@@ -288,6 +343,8 @@ def render_video_with_fallback(
     timeline_path: Optional[Path] = None,
     timeline_payload: Optional[dict] = None,
     render_fixes: Optional[dict] = None,
+    director_path: Optional[Path] = None,
+    style_playbook: str = "",
 ) -> tuple[Optional[Path], Optional[Path], str, str]:
     """Try Remotion first (when enabled), then fallback to FFmpeg renderer."""
     from pipeline.renderer import render_video
@@ -339,6 +396,7 @@ def render_video_with_fallback(
                 "duration": duracion_audio,
                 "transition": "crossfade",
                 "composition_id": requested_composition,
+                "style_playbook": str(style_playbook or "").strip(),
             }
 
             # Build a timeline dynamically for image-only jobs so Remotion can render
@@ -359,6 +417,7 @@ def render_video_with_fallback(
                 metadata=remotion_meta,
                 timeline_path=timeline_path,
                 timeline_payload=timeline_payload,
+                director_path=director_path,
             ):
                 thumb = _extract_thumbnail(remotion_output, temp_dir, timestamp)
                 return remotion_output, thumb, "", "remotion"
@@ -1339,28 +1398,26 @@ def _normalize_universal_commercial_props(timeline_payload: dict, metadata: dict
     raw_style = timeline_payload.get("style") if isinstance(timeline_payload.get("style"), dict) else {}
     raw_project = timeline_payload.get("projectInfo") if isinstance(timeline_payload.get("projectInfo"), dict) else {}
     raw_script = timeline_payload.get("script") if isinstance(timeline_payload.get("script"), dict) else {}
+    raw_meta = timeline_payload.get("meta") if isinstance(timeline_payload.get("meta"), dict) else {}
+    raw_theme_config = timeline_payload.get("themeConfig")
+    if not isinstance(raw_theme_config, dict):
+        raw_theme_config = raw_style.get("themeConfig") if isinstance(raw_style.get("themeConfig"), dict) else {}
+    if not isinstance(raw_theme_config, dict):
+        raw_theme_config = raw_meta.get("themeConfig") if isinstance(raw_meta.get("themeConfig"), dict) else {}
 
-    theme = str(raw_style.get("theme") or timeline_payload.get("theme") or "minimal").strip().lower()
-    if theme not in {"cyberpunk", "minimal", "playful"}:
+    theme = str(
+        raw_style.get("theme")
+        or timeline_payload.get("theme")
+        or raw_meta.get("theme")
+        or raw_meta.get("playbook")
+        or timeline_payload.get("playbook")
+        or metadata.get("style_playbook")
+        or "minimal"
+    ).strip().lower()
+    if theme not in UNIVERSAL_THEME_DEFAULTS:
         theme = "minimal"
 
-    theme_defaults = {
-        "cyberpunk": {
-            "primaryColor": "#0F172A",
-            "accentColor": "#22D3EE",
-            "fontFamily": "Orbitron, sans-serif",
-        },
-        "minimal": {
-            "primaryColor": "#334155",
-            "accentColor": "#F97316",
-            "fontFamily": "IBM Plex Sans, sans-serif",
-        },
-        "playful": {
-            "primaryColor": "#BE123C",
-            "accentColor": "#14B8A6",
-            "fontFamily": "Baloo 2, sans-serif",
-        },
-    }[theme]
+    theme_defaults = UNIVERSAL_THEME_DEFAULTS[theme]
 
     project_name = str(
         raw_project.get("name")
@@ -1369,11 +1426,81 @@ def _normalize_universal_commercial_props(timeline_payload: dict, metadata: dict
         or "Video Factory"
     ).strip()
 
+    playbook = str(
+        timeline_payload.get("playbook")
+        or raw_meta.get("playbook")
+        or metadata.get("style_playbook")
+        or ""
+    ).strip().lower()
+
+    style_profile = raw_meta.get("style_profile") if isinstance(raw_meta.get("style_profile"), dict) else {}
+    layout_variant = str(
+        raw_style.get("layoutVariant")
+        or timeline_payload.get("layoutVariant")
+        or raw_meta.get("layoutVariant")
+        or ("stacked" if theme in {"minimal", "minimalist-diagram"} else "split")
+    ).strip().lower()
+    if layout_variant not in {"split", "stacked", "spotlight"}:
+        layout_variant = "split"
+
+    kinetic_level = str(
+        raw_style.get("kineticLevel")
+        or timeline_payload.get("kineticLevel")
+        or raw_meta.get("kineticLevel")
+        or ""
+    ).strip().lower()
+    if not kinetic_level:
+        cut_speed = str(style_profile.get("cut_speed") or "").strip().lower()
+        if cut_speed == "ultra_rapido":
+            kinetic_level = "intense"
+        elif cut_speed in {"rapido", "mixto"}:
+            kinetic_level = "dynamic"
+        else:
+            kinetic_level = "soft"
+    if kinetic_level not in {"soft", "dynamic", "intense"}:
+        kinetic_level = "dynamic"
+
+    transition_preset = str(
+        raw_style.get("transitionPreset")
+        or timeline_payload.get("transitionPreset")
+        or raw_meta.get("transitionPreset")
+        or ""
+    ).strip().lower()
+    if not transition_preset:
+        transitions = style_profile.get("transitions") if isinstance(style_profile.get("transitions"), list) else []
+        normalized_transitions = {str(x).strip().lower() for x in transitions if str(x).strip()}
+        transition_preset = "swipe" if normalized_transitions.intersection({"whip", "zoom_cut", "wipe"}) else "slide"
+    if transition_preset not in {"slide", "swipe", "pulse"}:
+        transition_preset = "slide"
+
+    feature_card_mode = str(
+        raw_style.get("featureCardMode")
+        or timeline_payload.get("featureCardMode")
+        or raw_meta.get("featureCardMode")
+        or "window"
+    ).strip().lower()
+    if feature_card_mode not in {"window", "plain"}:
+        feature_card_mode = "window"
+
+    custom_style = {}
+    for key in ("primaryColor", "accentColor", "fontFamily"):
+        value = raw_theme_config.get(key)
+        if value is None:
+            value = raw_theme_config.get(key[0].lower() + key[1:])
+        if value is None and key == "fontFamily":
+            value = raw_theme_config.get("headingFont") or raw_theme_config.get("bodyFont")
+        if value:
+            custom_style[key] = str(value)
+
     style = {
         "theme": theme,
-        "primaryColor": str(raw_style.get("primaryColor") or theme_defaults["primaryColor"]),
-        "accentColor": str(raw_style.get("accentColor") or theme_defaults["accentColor"]),
-        "fontFamily": str(raw_style.get("fontFamily") or theme_defaults["fontFamily"]),
+        "primaryColor": str(raw_style.get("primaryColor") or custom_style.get("primaryColor") or theme_defaults["primaryColor"]),
+        "accentColor": str(raw_style.get("accentColor") or custom_style.get("accentColor") or theme_defaults["accentColor"]),
+        "fontFamily": str(raw_style.get("fontFamily") or custom_style.get("fontFamily") or theme_defaults["fontFamily"]),
+        "layoutVariant": layout_variant,
+        "kineticLevel": kinetic_level,
+        "transitionPreset": transition_preset,
+        "featureCardMode": feature_card_mode,
     }
 
     raw_features = raw_script.get("features") if isinstance(raw_script.get("features"), list) else []
@@ -1453,10 +1580,19 @@ def _normalize_universal_commercial_props(timeline_payload: dict, metadata: dict
         "audio": {
             "volume": volume,
         },
+        "theme": theme,
+        "playbook": playbook,
+        "layoutVariant": layout_variant,
+        "kineticLevel": kinetic_level,
+        "transitionPreset": transition_preset,
+        "featureCardMode": feature_card_mode,
     }
 
     if bgm:
         normalized["audio"]["bgmPath"] = bgm
+
+    if raw_theme_config:
+        normalized["themeConfig"] = dict(raw_theme_config)
 
     return normalized
 

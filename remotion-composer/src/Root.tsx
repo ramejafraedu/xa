@@ -150,14 +150,11 @@ export const DEFAULT_THEME = THEMES["flat-motion-graphics"];
 
 export function resolveTheme(props: Record<string, unknown>): ThemeConfig {
   const themeName = (props.theme as string) || (props.playbook as string);
-  if (themeName && THEMES[themeName]) {
-    return THEMES[themeName];
-  }
-  // Allow custom theme passed as full object
+  const baseTheme = (themeName && THEMES[themeName]) ? THEMES[themeName] : DEFAULT_THEME;
   if (props.themeConfig && typeof props.themeConfig === "object") {
-    return { ...DEFAULT_THEME, ...(props.themeConfig as Partial<ThemeConfig>) };
+    return { ...baseTheme, ...(props.themeConfig as Partial<ThemeConfig>) };
   }
-  return DEFAULT_THEME;
+  return baseTheme;
 }
 
 const calculateMetadata: CalculateMetadataFunction<ExplainerProps> = async ({

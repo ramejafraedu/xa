@@ -76,6 +76,46 @@ def test_universal_commercial_normalization() -> None:
     assert normalized["audio"].get("bgmPath", "").startswith("workspace/")
 
 
+def test_universal_commercial_extended_theme_and_config() -> None:
+    payload = {
+        "theme": "anime-ghibli",
+        "playbook": "finanzas",
+        "themeConfig": {
+            "primaryColor": "#123456",
+            "accentColor": "#FEDCBA",
+            "headingFont": "Raleway",
+        },
+        "style": {
+            "layoutVariant": "spotlight",
+            "kineticLevel": "intense",
+            "transitionPreset": "swipe",
+            "featureCardMode": "plain",
+        },
+        "script": {
+            "hook": "Hook",
+            "solution": "Solution",
+            "cta": "CTA",
+            "features": [{"title": "Feature A", "subtitle": "Benefit"}],
+        },
+    }
+
+    normalized = _normalize_timeline_props(
+        payload,
+        metadata={"titulo": "Fallback title"},
+        composition_id="UniversalCommercial",
+    )
+
+    assert normalized["style"]["theme"] == "anime-ghibli"
+    assert normalized["style"]["primaryColor"] == "#123456"
+    assert normalized["style"]["accentColor"] == "#FEDCBA"
+    assert normalized["style"]["layoutVariant"] == "spotlight"
+    assert normalized["style"]["kineticLevel"] == "intense"
+    assert normalized["style"]["transitionPreset"] == "swipe"
+    assert normalized["style"]["featureCardMode"] == "plain"
+    assert normalized.get("playbook") == "finanzas"
+    assert isinstance(normalized.get("themeConfig"), dict)
+
+
 def test_editor_timeline_embeds_composition_id() -> None:
     timeline_path = settings.temp_dir / "timeline_universal_commercial_smoke.json"
     timeline_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +138,38 @@ def test_editor_timeline_embeds_composition_id() -> None:
     persisted = json.loads(timeline_path.read_text(encoding="utf-8"))
     assert persisted.get("composition_id") == "UniversalCommercial"
     assert persisted.get("meta", {}).get("composition_id") == "UniversalCommercial"
+
+    timeline_path.unlink(missing_ok=True)
+
+
+def test_editor_timeline_visual_contract() -> None:
+    timeline_path = settings.temp_dir / "timeline_visual_contract_smoke.json"
+    timeline_path.parent.mkdir(parents=True, exist_ok=True)
+
+    editor = EditorAgent()
+    state = StoryState(topic="Demo topic", hook="Demo hook", platform="tiktok")
+    state.style_profile.cut_speed = "ultra_rapido"
+    state.style_profile.subtitle_style = "bold_animated"
+    state.style_profile.transitions = ["whip", "cut"]
+    state.style_profile.music_volume = 0.22
+    state.color_palette = "#112233, #FFAA00"
+
+    payload = editor.build_timeline_json(
+        state=state,
+        media_paths=[],
+        decisions=[],
+        audio_duration=6.0,
+        timeline_path=timeline_path,
+        composition_id="UniversalCommercial",
+        style_playbook="finanzas",
+    )
+
+    assert payload.get("playbook") == "finanzas"
+    assert payload.get("theme") == "minimalist-diagram"
+    assert payload.get("style", {}).get("transitionPreset") == "swipe"
+    assert payload.get("style", {}).get("kineticLevel") == "intense"
+    assert payload.get("meta", {}).get("style_profile", {}).get("cut_speed") == "ultra_rapido"
+    assert payload.get("captions", None) is None or payload.get("captions", {}).get("fontSize", 0) >= 50
 
     timeline_path.unlink(missing_ok=True)
 
@@ -257,8 +329,14 @@ def main() -> int:
     test_universal_commercial_normalization()
     print("PASS: universal payload normalization")
 
+    test_universal_commercial_extended_theme_and_config()
+    print("PASS: universal extended theme + config")
+
     test_editor_timeline_embeds_composition_id()
     print("PASS: editor timeline composition wiring")
+
+    test_editor_timeline_visual_contract()
+    print("PASS: editor timeline visual contract")
 
     test_director_artifacts_generation()
     print("PASS: director artifacts generation")

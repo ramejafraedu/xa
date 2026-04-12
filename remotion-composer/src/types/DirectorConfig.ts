@@ -1,4 +1,23 @@
-export type DirectorTheme = "cyberpunk" | "minimal" | "playful";
+export type DirectorTheme =
+  | "clean-professional"
+  | "flat-motion-graphics"
+  | "minimalist-diagram"
+  | "anime-ghibli"
+  | "cyberpunk"
+  | "minimal"
+  | "playful"
+  | string;
+
+export interface DirectorThemeConfig {
+  primaryColor?: string;
+  accentColor?: string;
+  headingFont?: string;
+  bodyFont?: string;
+  fontFamily?: string;
+  captionHighlightColor?: string;
+  captionBackgroundColor?: string;
+  transitionDuration?: number;
+}
 
 export interface DirectorProjectInfo {
   name: string;
@@ -12,6 +31,10 @@ export interface DirectorStyle {
   primaryColor: string;
   accentColor: string;
   fontFamily?: string;
+  layoutVariant?: "split" | "stacked" | "spotlight";
+  kineticLevel?: "soft" | "dynamic" | "intense";
+  transitionPreset?: "slide" | "swipe" | "pulse";
+  featureCardMode?: "window" | "plain";
 }
 
 export interface DirectorFeature {
@@ -37,4 +60,11 @@ export interface DirectorConfig {
   style: DirectorStyle;
   script: DirectorScript;
   audio?: DirectorAudio;
+  theme?: DirectorTheme;
+  playbook?: string;
+  themeConfig?: DirectorThemeConfig;
+  layoutVariant?: "split" | "stacked" | "spotlight";
+  kineticLevel?: "soft" | "dynamic" | "intense";
+  transitionPreset?: "slide" | "swipe" | "pulse";
+  featureCardMode?: "window" | "plain";
 }

@@ -1625,6 +1625,7 @@ def run_pipeline_v15(
                 narration_audio_path=audio_path,
                 music_path=music_path if music_path and music_path.exists() else None,
                 composition_id=requested_remotion_composition,
+                style_playbook=manifest.style_playbook or "",
             )
             incremental_eml_seed = editor_agent.build_incremental_eml_seed(
                 state=story,
@@ -1841,6 +1842,7 @@ def run_pipeline_v15(
                             narration_audio_path=audio_path,
                             music_path=music_path if music_path and music_path.exists() else None,
                             composition_id=requested_remotion_composition,
+                            style_playbook=manifest.style_playbook or "",
                         )
                         incremental_eml_seed = editor_agent.build_incremental_eml_seed(
                             state=story,
@@ -1961,6 +1963,8 @@ def run_pipeline_v15(
                 duraciones_clips=duraciones,
                 timeline_path=timeline_path,
                 timeline_payload=timeline_payload,
+                director_path=Path(manifest.director_json_path) if manifest.director_json_path else None,
+                style_playbook=manifest.style_playbook or "",
             )
 
             if render_error or not video_path:
@@ -1994,6 +1998,8 @@ def run_pipeline_v15(
                             timeline_path=timeline_path,
                             timeline_payload=timeline_payload,
                             render_fixes=render_fixes,
+                            director_path=Path(manifest.director_json_path) if manifest.director_json_path else None,
+                            style_playbook=manifest.style_playbook or "",
                         )
                         render_backend = render_backend2
                         if render_error2:
