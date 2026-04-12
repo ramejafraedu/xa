@@ -237,6 +237,13 @@ def render_with_remotion(
             )
             composition_id = _resolve_composition_id(metadata, None)
 
+        pre_sanitized = _sanitize_non_image_sources_in_props(props, composition_id)
+        if pre_sanitized > 0:
+            logger.warning(
+                "Remotion props sanitized before render: removed/converted {} non-image references",
+                pre_sanitized,
+            )
+
         _materialize_workspace_assets(props)
 
         props_file = output_path.parent / f"remotion_props_{metadata.get('timestamp', 0)}.json"
@@ -251,27 +258,29 @@ def render_with_remotion(
             return False
 
         output_path_str = str(output_path.resolve().as_posix())
-        props_json = json.dumps(props, ensure_ascii=False)
 
-        cmd = [
-            *remotion_runner,
-            "render",
-            "src/index.tsx",
-            composition_id,
-            output_path_str,
-            "--props", props_json,
-            "--codec", "h264",
-            "--concurrency", str(remotion_concurrency),
-        ]
+        def _run_remotion_once(payload: dict) -> subprocess.CompletedProcess:
+            payload_json = json.dumps(payload, ensure_ascii=False)
+            cmd = [
+                *remotion_runner,
+                "render",
+                "src/index.tsx",
+                composition_id,
+                output_path_str,
+                "--props", payload_json,
+                "--codec", "h264",
+                "--concurrency", str(remotion_concurrency),
+            ]
+            return subprocess.run(
+                cmd,
+                cwd=str(REMOTION_DIR),
+                capture_output=True,
+                text=True,
+                timeout=remotion_timeout,
+                shell=False,
+            )
 
-        result = subprocess.run(
-            cmd,
-            cwd=str(REMOTION_DIR),
-            capture_output=True,
-            text=True,
-            timeout=remotion_timeout,
-            shell=False,
-        )
+        result = _run_remotion_once(props)
 
         props_file.unlink(missing_ok=True)
 
@@ -279,6 +288,29 @@ def render_with_remotion(
             logger.debug(f"Remotion stdout: {result.stdout[:2000]}")
         if result.stderr:
             logger.debug(f"Remotion stderr: {result.stderr[:2000]}")
+
+        if result.returncode != 0:
+            failed_sources = _extract_failed_image_sources(result.stderr or "")
+            if failed_sources:
+                repaired = _sanitize_non_image_sources_in_props(
+                    props,
+                    composition_id,
+                    blocked_sources=failed_sources,
+                )
+                if repaired > 0:
+                    logger.warning(
+                        "Remotion retry: sanitized {} invalid image source(s) detected at runtime",
+                        repaired,
+                    )
+                    _materialize_workspace_assets(props)
+                    props_file.write_text(json.dumps(props, indent=2), encoding="utf-8")
+                    result = _run_remotion_once(props)
+                    props_file.unlink(missing_ok=True)
+
+                    if result.stdout:
+                        logger.debug(f"Remotion retry stdout: {result.stdout[:2000]}")
+                    if result.stderr:
+                        logger.debug(f"Remotion retry stderr: {result.stderr[:2000]}")
 
         if result.returncode != 0:
             stderr_snippet = (result.stderr or "").strip().replace("\n", " ")[:500]
@@ -727,7 +759,11 @@ def _normalize_timeline_props(
             "filter": str(raw.get("filter", "contrast(1.06) saturate(0.90) brightness(0.98)")),
         }
 
-        if kind == "image":
+        if kind == "image" and _is_non_image_asset_path(str(scene.get("src") or "")):
+            # Defensive normalization: malformed timelines may tag video files as image scenes.
+            scene["kind"] = "video"
+
+        if scene.get("kind") == "image":
             if "animation" in raw:
                 scene["animation"] = str(raw["animation"])
             if "animationIntensity" in raw:
@@ -1695,6 +1731,93 @@ def _to_file_uri(value: str) -> str:
         return str(path)
     except Exception:
         return src
+
+
+def _canonical_asset_reference(value: str) -> str:
+    """Normalize an asset reference to compare across URL/static/file forms."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    raw = unquote(raw)
+    lowered = raw.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        marker = "/public/"
+        idx = lowered.find(marker)
+        if idx >= 0:
+            raw = raw[idx + len(marker):]
+    elif lowered.startswith("file://"):
+        raw = raw[7:]
+
+    raw = raw.split("?", 1)[0].split("#", 1)[0]
+    return raw.replace("\\", "/").lstrip("/")
+
+
+def _extract_failed_image_sources(stderr_text: str) -> set[str]:
+    """Extract image URLs Remotion failed to decode from stderr."""
+    if not stderr_text:
+        return set()
+
+    sources: set[str] = set()
+    matches = re.findall(r"Could not load image with source ([^,\s]+)", stderr_text, flags=re.IGNORECASE)
+    for source in matches:
+        normalized = _canonical_asset_reference(source)
+        if normalized:
+            sources.add(normalized)
+    return sources
+
+
+def _sanitize_non_image_sources_in_props(
+    props: dict,
+    composition_id: str,
+    blocked_sources: Optional[set[str]] = None,
+) -> int:
+    """Remove/convert image-like props that actually point to video/audio assets."""
+    blocked = {
+        _canonical_asset_reference(item)
+        for item in (blocked_sources or set())
+        if str(item or "").strip()
+    }
+
+    def _must_strip(source_value: str) -> bool:
+        normalized = _canonical_asset_reference(source_value)
+        if not normalized:
+            return False
+        if blocked and normalized in blocked:
+            return True
+        return _is_non_image_asset_path(normalized)
+
+    sanitized = 0
+
+    if composition_id == "UniversalCommercial":
+        script = props.get("script") if isinstance(props.get("script"), dict) else {}
+        features = script.get("features") if isinstance(script.get("features"), list) else []
+        for feature in features:
+            if not isinstance(feature, dict):
+                continue
+            image_path = str(feature.get("imagePath") or "").strip()
+            if image_path and _must_strip(image_path):
+                feature.pop("imagePath", None)
+                sanitized += 1
+        return sanitized
+
+    scenes = props.get("scenes") if isinstance(props.get("scenes"), list) else []
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+        if str(scene.get("kind") or "").strip().lower() != "image":
+            continue
+
+        src = str(scene.get("src") or "").strip()
+        if src and _must_strip(src):
+            scene["kind"] = "video"
+            scene.pop("animation", None)
+            scene.pop("animationIntensity", None)
+            scene.pop("animationDirection", None)
+            scene.pop("overlayParticles", None)
+            sanitized += 1
+
+    return sanitized
 
 
 def _materialize_workspace_assets(props: dict) -> None:
