@@ -110,6 +110,11 @@ def test_dashboard_ab_routes_and_operations():
     original_saar_enabled = dashboard.settings.enable_saar_composer
     original_saar_use_winner = dashboard.settings.saar_composer_use_winner
     original_gemini_everywhere = dashboard.settings.gemini_everywhere_mode
+    original_remotion_theme = dashboard.settings.remotion_theme
+    original_remotion_layout_variant = dashboard.settings.remotion_layout_variant
+    original_remotion_kinetic_level = dashboard.settings.remotion_kinetic_level
+    original_remotion_transition_preset = dashboard.settings.remotion_transition_preset
+    original_remotion_feature_card_mode = dashboard.settings.remotion_feature_card_mode
     original_silence_trim = dashboard.settings.enable_smart_silence_trim
     original_post_tts = dashboard.settings.enable_post_tts_loudnorm
 
@@ -176,6 +181,11 @@ def test_dashboard_ab_routes_and_operations():
             assert "enable_saar_composer" in cfg_body
             assert "saar_composer_use_winner" in cfg_body
             assert "gemini_everywhere_mode" in cfg_body
+            assert "remotion_theme" in cfg_body
+            assert "remotion_layout_variant" in cfg_body
+            assert "remotion_kinetic_level" in cfg_body
+            assert "remotion_transition_preset" in cfg_body
+            assert "remotion_feature_card_mode" in cfg_body
             assert "enable_smart_silence_trim" in cfg_body
             assert "enable_post_tts_loudnorm" in cfg_body
 
@@ -187,6 +197,11 @@ def test_dashboard_ab_routes_and_operations():
                     "enable_saar_composer": True,
                     "saar_composer_use_winner": False,
                     "gemini_everywhere_mode": True,
+                    "remotion_theme": "anime-ghibli",
+                    "remotion_layout_variant": "spotlight",
+                    "remotion_kinetic_level": "intense",
+                    "remotion_transition_preset": "swipe",
+                    "remotion_feature_card_mode": "plain",
                     "enable_smart_silence_trim": True,
                     "enable_post_tts_loudnorm": True,
                     "persist": False,
@@ -199,6 +214,11 @@ def test_dashboard_ab_routes_and_operations():
             assert updated.get("enable_saar_composer") is True
             assert updated.get("saar_composer_use_winner") is False
             assert updated.get("gemini_everywhere_mode") is True
+            assert updated.get("remotion_theme") == "anime-ghibli"
+            assert updated.get("remotion_layout_variant") == "spotlight"
+            assert updated.get("remotion_kinetic_level") == "intense"
+            assert updated.get("remotion_transition_preset") == "swipe"
+            assert updated.get("remotion_feature_card_mode") == "plain"
             assert updated.get("enable_smart_silence_trim") is True
             assert updated.get("enable_post_tts_loudnorm") is True
         finally:
@@ -208,6 +228,11 @@ def test_dashboard_ab_routes_and_operations():
             dashboard.settings.enable_saar_composer = original_saar_enabled
             dashboard.settings.saar_composer_use_winner = original_saar_use_winner
             dashboard.settings.gemini_everywhere_mode = original_gemini_everywhere
+            dashboard.settings.remotion_theme = original_remotion_theme
+            dashboard.settings.remotion_layout_variant = original_remotion_layout_variant
+            dashboard.settings.remotion_kinetic_level = original_remotion_kinetic_level
+            dashboard.settings.remotion_transition_preset = original_remotion_transition_preset
+            dashboard.settings.remotion_feature_card_mode = original_remotion_feature_card_mode
             dashboard.settings.enable_smart_silence_trim = original_silence_trim
             dashboard.settings.enable_post_tts_loudnorm = original_post_tts
 

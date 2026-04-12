@@ -1745,6 +1745,11 @@ async def operations_config():
         "enable_image_cache": bool(settings.enable_image_cache),
         "generated_images_count": int(settings.generated_images_count),
         "gemini_everywhere_mode": bool(settings.gemini_everywhere_mode),
+        "remotion_theme": str(settings.remotion_theme or ""),
+        "remotion_layout_variant": str(settings.remotion_layout_variant or ""),
+        "remotion_kinetic_level": str(settings.remotion_kinetic_level or ""),
+        "remotion_transition_preset": str(settings.remotion_transition_preset or ""),
+        "remotion_feature_card_mode": str(settings.remotion_feature_card_mode or ""),
         "enable_ab_visual_split": bool(settings.enable_ab_visual_split),
         "ab_visual_split_multiplier": int(settings.ab_visual_split_multiplier),
         "enable_saar_composer": bool(settings.enable_saar_composer),
@@ -1812,6 +1817,60 @@ async def operations_config_update(payload: dict = Body(...)):
         settings.gemini_everywhere_mode = value
         updates["gemini_everywhere_mode"] = value
         env_updates["GEMINI_EVERYWHERE_MODE"] = "true" if value else "false"
+
+    if "remotion_theme" in payload:
+        value = str(payload.get("remotion_theme") or "").strip().lower()
+        allowed = {
+            "",
+            "clean-professional",
+            "flat-motion-graphics",
+            "minimalist-diagram",
+            "anime-ghibli",
+            "cyberpunk",
+            "minimal",
+            "playful",
+        }
+        if value not in allowed:
+            raise HTTPException(status_code=400, detail="remotion_theme must be a supported theme slug")
+        settings.remotion_theme = value
+        updates["remotion_theme"] = value
+        env_updates["REMOTION_THEME"] = value
+
+    if "remotion_layout_variant" in payload:
+        value = str(payload.get("remotion_layout_variant") or "").strip().lower()
+        allowed = {"", "split", "stacked", "spotlight"}
+        if value not in allowed:
+            raise HTTPException(status_code=400, detail="remotion_layout_variant must be split|stacked|spotlight")
+        settings.remotion_layout_variant = value
+        updates["remotion_layout_variant"] = value
+        env_updates["REMOTION_LAYOUT_VARIANT"] = value
+
+    if "remotion_kinetic_level" in payload:
+        value = str(payload.get("remotion_kinetic_level") or "").strip().lower()
+        allowed = {"", "soft", "dynamic", "intense"}
+        if value not in allowed:
+            raise HTTPException(status_code=400, detail="remotion_kinetic_level must be soft|dynamic|intense")
+        settings.remotion_kinetic_level = value
+        updates["remotion_kinetic_level"] = value
+        env_updates["REMOTION_KINETIC_LEVEL"] = value
+
+    if "remotion_transition_preset" in payload:
+        value = str(payload.get("remotion_transition_preset") or "").strip().lower()
+        allowed = {"", "slide", "swipe", "pulse"}
+        if value not in allowed:
+            raise HTTPException(status_code=400, detail="remotion_transition_preset must be slide|swipe|pulse")
+        settings.remotion_transition_preset = value
+        updates["remotion_transition_preset"] = value
+        env_updates["REMOTION_TRANSITION_PRESET"] = value
+
+    if "remotion_feature_card_mode" in payload:
+        value = str(payload.get("remotion_feature_card_mode") or "").strip().lower()
+        allowed = {"", "window", "plain"}
+        if value not in allowed:
+            raise HTTPException(status_code=400, detail="remotion_feature_card_mode must be window|plain")
+        settings.remotion_feature_card_mode = value
+        updates["remotion_feature_card_mode"] = value
+        env_updates["REMOTION_FEATURE_CARD_MODE"] = value
 
     if "enable_ab_visual_split" in payload:
         value = _as_bool(payload.get("enable_ab_visual_split"), default=settings.enable_ab_visual_split)

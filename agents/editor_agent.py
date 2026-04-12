@@ -129,6 +129,11 @@ class EditorAgent:
         music_path: Optional[Path] = None,
         composition_id: str = "UniversalCommercial",
         style_playbook: str = "",
+        visual_theme: str = "",
+        layout_variant: str = "",
+        kinetic_level: str = "",
+        transition_preset: str = "",
+        feature_card_mode: str = "",
     ) -> dict:
         """Build and persist a Remotion-compatible timeline JSON.
 
@@ -143,6 +148,11 @@ class EditorAgent:
             narration_audio_path=narration_audio_path,
             music_path=music_path,
             style_playbook=style_playbook,
+            visual_theme=visual_theme,
+            layout_variant=layout_variant,
+            kinetic_level=kinetic_level,
+            transition_preset=transition_preset,
+            feature_card_mode=feature_card_mode,
         )
 
         resolved_composition = str(composition_id or "UniversalCommercial").strip() or "UniversalCommercial"
@@ -241,6 +251,11 @@ class EditorAgent:
         narration_audio_path: Optional[Path],
         music_path: Optional[Path],
         style_playbook: str = "",
+        visual_theme: str = "",
+        layout_variant: str = "",
+        kinetic_level: str = "",
+        transition_preset: str = "",
+        feature_card_mode: str = "",
     ) -> dict:
         """Create timeline payload with scene timing, style and captions."""
         valid_media = [p for p in media_paths if p and p.exists()]
@@ -307,6 +322,9 @@ class EditorAgent:
         captions_words = self._parse_ass_word_captions(subtitles_path)
         palette_hexes = self._extract_palette_hexes(state.color_palette)
         theme_name = self._resolve_visual_theme(state, style_playbook)
+        theme_override = self._normalize_theme_name(visual_theme)
+        if theme_override:
+            theme_name = theme_override
         heading_font = self._resolve_heading_font(theme_name)
         body_font = self._resolve_body_font(theme_name)
 
@@ -333,16 +351,30 @@ class EditorAgent:
         accent_color = caption_highlight
 
         transitions = [str(x).strip().lower() for x in (state.style_profile.transitions or []) if str(x).strip()]
-        transition_preset = "swipe" if any(t in {"whip", "zoom_cut", "wipe"} for t in transitions) else "slide"
+        transition_preset_value = "swipe" if any(t in {"whip", "zoom_cut", "wipe"} for t in transitions) else "slide"
 
         cut_speed = str(state.style_profile.cut_speed or "").strip().lower()
-        kinetic_level = "dynamic" if cut_speed in {"ultra_rapido", "rapido"} else "soft"
+        kinetic_level_value = "dynamic" if cut_speed in {"ultra_rapido", "rapido"} else "soft"
         if cut_speed == "ultra_rapido":
-            kinetic_level = "intense"
+            kinetic_level_value = "intense"
 
-        layout_variant = "split"
+        layout_variant_value = "split"
         if theme_name in {"minimal", "minimalist-diagram"}:
-            layout_variant = "stacked"
+            layout_variant_value = "stacked"
+
+        layout_override = self._normalize_layout_variant(layout_variant)
+        if layout_override:
+            layout_variant_value = layout_override
+
+        kinetic_override = self._normalize_kinetic_level(kinetic_level)
+        if kinetic_override:
+            kinetic_level_value = kinetic_override
+
+        transition_override = self._normalize_transition_preset(transition_preset)
+        if transition_override:
+            transition_preset_value = transition_override
+
+        feature_card_mode_value = self._normalize_feature_card_mode(feature_card_mode) or "window"
 
         captions = None
         if captions_words:
@@ -378,10 +410,10 @@ class EditorAgent:
             "primaryColor": primary_color,
             "accentColor": accent_color,
             "fontFamily": f"{heading_font}, sans-serif",
-            "layoutVariant": layout_variant,
-            "kineticLevel": kinetic_level,
-            "transitionPreset": transition_preset,
-            "featureCardMode": "window",
+            "layoutVariant": layout_variant_value,
+            "kineticLevel": kinetic_level_value,
+            "transitionPreset": transition_preset_value,
+            "featureCardMode": feature_card_mode_value,
         }
 
         theme_config = {
@@ -391,7 +423,7 @@ class EditorAgent:
             "bodyFont": body_font,
             "captionHighlightColor": caption_highlight,
             "captionBackgroundColor": caption_background,
-            "transitionDuration": 0.3 if transition_preset == "swipe" else 0.45,
+            "transitionDuration": 0.3 if transition_preset_value == "swipe" else 0.45,
         }
 
         style_meta = {
@@ -426,15 +458,19 @@ class EditorAgent:
                 "theme": theme_name,
                 "style_profile": style_meta,
                 "captionStyle": caption_style,
+                "layoutVariant": layout_variant_value,
+                "kineticLevel": kinetic_level_value,
+                "transitionPreset": transition_preset_value,
+                "featureCardMode": feature_card_mode_value,
             },
             "playbook": playbook_slug,
             "theme": theme_name,
             "themeConfig": theme_config,
             "style": visual_style,
-            "layoutVariant": layout_variant,
-            "kineticLevel": kinetic_level,
-            "transitionPreset": transition_preset,
-            "featureCardMode": "window",
+            "layoutVariant": layout_variant_value,
+            "kineticLevel": kinetic_level_value,
+            "transitionPreset": transition_preset_value,
+            "featureCardMode": feature_card_mode_value,
             "scenes": scenes,
             "soundtrack": soundtrack,
             "music": music,
@@ -530,6 +566,40 @@ class EditorAgent:
             "playful": "Nunito",
         }
         return mapping.get(str(theme_name or "").strip().lower(), "Space Grotesk")
+
+    @staticmethod
+    def _normalize_theme_name(value: str) -> str:
+        clean = str(value or "").strip().lower()
+        allowed = {
+            "clean-professional",
+            "flat-motion-graphics",
+            "minimalist-diagram",
+            "anime-ghibli",
+            "cyberpunk",
+            "minimal",
+            "playful",
+        }
+        return clean if clean in allowed else ""
+
+    @staticmethod
+    def _normalize_layout_variant(value: str) -> str:
+        clean = str(value or "").strip().lower()
+        return clean if clean in {"split", "stacked", "spotlight"} else ""
+
+    @staticmethod
+    def _normalize_kinetic_level(value: str) -> str:
+        clean = str(value or "").strip().lower()
+        return clean if clean in {"soft", "dynamic", "intense"} else ""
+
+    @staticmethod
+    def _normalize_transition_preset(value: str) -> str:
+        clean = str(value or "").strip().lower()
+        return clean if clean in {"slide", "swipe", "pulse"} else ""
+
+    @staticmethod
+    def _normalize_feature_card_mode(value: str) -> str:
+        clean = str(value or "").strip().lower()
+        return clean if clean in {"window", "plain"} else ""
 
     @staticmethod
     def _tone_for_grade(color_grade: str) -> str:

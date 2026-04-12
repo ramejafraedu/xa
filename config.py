@@ -234,6 +234,11 @@ class Settings(BaseSettings):
     remotion_quality: int = 80
     remotion_preset: str = "ultrafast"
     remotion_composition_id: str = "UniversalCommercial"
+    remotion_theme: str = ""
+    remotion_layout_variant: str = ""
+    remotion_kinetic_level: str = ""
+    remotion_transition_preset: str = ""
+    remotion_feature_card_mode: str = ""
     
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True
@@ -478,6 +483,11 @@ class Settings(BaseSettings):
             "allow_freemium_in_free_mode": self.allow_freemium_in_free_mode,
             "use_remotion": self.use_remotion,
             "remotion_composition_id": self.remotion_composition_id,
+            "remotion_theme": self.remotion_theme,
+            "remotion_layout_variant": self.remotion_layout_variant,
+            "remotion_kinetic_level": self.remotion_kinetic_level,
+            "remotion_transition_preset": self.remotion_transition_preset,
+            "remotion_feature_card_mode": self.remotion_feature_card_mode,
             "force_ffmpeg_renderer": self.force_ffmpeg_renderer,
             "require_remotion": self.require_remotion,
             "allow_ffmpeg_fallback": self.allow_ffmpeg_fallback,

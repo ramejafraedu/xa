@@ -284,6 +284,11 @@ def run_pipeline_v15(
         "enable_image_cache",
         "disable_image_cache",
         "gemini_everywhere_mode",
+        "remotion_theme",
+        "remotion_layout_variant",
+        "remotion_kinetic_level",
+        "remotion_transition_preset",
+        "remotion_feature_card_mode",
         "ab_visual_split_enabled",
         "ab_visual_multiplier",
         "saar_composer_enabled",
@@ -1626,6 +1631,26 @@ def run_pipeline_v15(
                 music_path=music_path if music_path and music_path.exists() else None,
                 composition_id=requested_remotion_composition,
                 style_playbook=manifest.style_playbook or "",
+                visual_theme=str(
+                    stage_runtime_overrides.get("remotion_theme", settings.remotion_theme)
+                    or ""
+                ),
+                layout_variant=str(
+                    stage_runtime_overrides.get("remotion_layout_variant", settings.remotion_layout_variant)
+                    or ""
+                ),
+                kinetic_level=str(
+                    stage_runtime_overrides.get("remotion_kinetic_level", settings.remotion_kinetic_level)
+                    or ""
+                ),
+                transition_preset=str(
+                    stage_runtime_overrides.get("remotion_transition_preset", settings.remotion_transition_preset)
+                    or ""
+                ),
+                feature_card_mode=str(
+                    stage_runtime_overrides.get("remotion_feature_card_mode", settings.remotion_feature_card_mode)
+                    or ""
+                ),
             )
             incremental_eml_seed = editor_agent.build_incremental_eml_seed(
                 state=story,
@@ -1843,6 +1868,26 @@ def run_pipeline_v15(
                             music_path=music_path if music_path and music_path.exists() else None,
                             composition_id=requested_remotion_composition,
                             style_playbook=manifest.style_playbook or "",
+                            visual_theme=str(
+                                stage_runtime_overrides.get("remotion_theme", settings.remotion_theme)
+                                or ""
+                            ),
+                            layout_variant=str(
+                                stage_runtime_overrides.get("remotion_layout_variant", settings.remotion_layout_variant)
+                                or ""
+                            ),
+                            kinetic_level=str(
+                                stage_runtime_overrides.get("remotion_kinetic_level", settings.remotion_kinetic_level)
+                                or ""
+                            ),
+                            transition_preset=str(
+                                stage_runtime_overrides.get("remotion_transition_preset", settings.remotion_transition_preset)
+                                or ""
+                            ),
+                            feature_card_mode=str(
+                                stage_runtime_overrides.get("remotion_feature_card_mode", settings.remotion_feature_card_mode)
+                                or ""
+                            ),
                         )
                         incremental_eml_seed = editor_agent.build_incremental_eml_seed(
                             state=story,
