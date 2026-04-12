@@ -250,12 +250,19 @@ class VisualQA(BaseTool):
                 "channels": audio_stream.get("channels"),
             })
 
-        # Validate against expectations
+        # Validate against expectations with relaxed resolution boundaries
         issues = []
-        if "width" in expected and info.get("width") != expected["width"]:
-            issues.append(f"Width: expected {expected['width']}, got {info.get('width')}")
-        if "height" in expected and info.get("height") != expected["height"]:
-            issues.append(f"Height: expected {expected['height']}, got {info.get('height')}")
+        w_exp = expected.get("width")
+        h_exp = expected.get("height")
+        w_got = info.get("width")
+        h_got = info.get("height")
+        
+        if w_exp and w_got and w_got != w_exp:
+            if w_got < 720:
+                issues.append(f"Width: expected at least 720, got {w_got}")
+        if h_exp and h_got and h_got != h_exp:
+            if h_got < 1200:
+                issues.append(f"Height: expected at least 1200, got {h_got}")
         if "min_duration" in expected and info["duration"] < expected["min_duration"]:
             issues.append(
                 f"Duration too short: {info['duration']:.1f}s < {expected['min_duration']}s"

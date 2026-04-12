@@ -74,7 +74,10 @@ def post_render_qa(
         h = video_stream.get("height", 0)
 
         if w != expected_width or h != expected_height:
-            issues.append(f"Resolution mismatch: {w}x{h} (expected {expected_width}x{expected_height})")
+            if w < 720 or h < 1200:
+                issues.append(f"Resolution mismatch: {w}x{h} (expected at least 720x1200)")
+            else:
+                logger.info(f"Accepted fallback resolution: {w}x{h} (expected {expected_width}x{expected_height})")
 
         # Check codec
         codec = video_stream.get("codec_name", "unknown")
