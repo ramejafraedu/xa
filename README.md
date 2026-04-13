@@ -6,6 +6,107 @@ Fabrica automatizada de videos verticales (formato short) para "Faceless Channel
 
 > **V14 → V15**: Pipeline multi-agente con director humano-en-el-loop.
 
+---
+
+## 🚀 Novedades V16.1 PRO
+
+> **13 de abril 2026 — Video Factory V16.1 PRO**
+
+### ✅ Mejoras implementadas en esta versión:
+
+| # | Mejora | Archivo | Estado |
+|---|--------|---------|--------|
+| 1 | **Thumbnail Generator** con Gemini Imagen 3 | `tools/graphics/thumbnail_generator.py` | ✅ NUEVO |
+| 2 | **Full EditingEngine ShortGPT** con JSON Markup inteligente | `tools/editing/EditingEngine.py` | ✅ NUEVO |
+| 3 | **SaarD00 Composer PRO** — A/B split + avatar injection + xfade | `tools/video/composer_saar.py` | ✅ NUEVO |
+| 4 | **Generador de Títulos/Descripciones/Hashtags** SEO automático | `agents/title_generator.py` | ✅ NUEVO |
+| 5 | **LICENSE MIT** | `LICENSE` | ✅ NUEVO |
+| 6 | **Demo videos + Screenshots** — guías y ejemplos | `README.md` (esta sección) | ✅ NUEVO |
+| 7 | **Integración pipeline** — hooks en video_factory.py | `video_factory.py` (stage_render) | ✅ NUEVO |
+
+### Detalles técnicos V16.1:
+
+- **ThumbnailGeneratorTool**: genera thumbnails 9:16 con hook emocional vía LLM + Imagen 3. Auto-detecta nicho, construye prompt visual optimizado y guarda en `workspace/output/thumbnails/`.
+- **FullEditingEngine**: reemplaza los hooks opcionales de ShortGPT con un motor completo. Genera `schema.json` con `visual_assets`, `audio_assets`, timing por capa, efecto por preset (cinematic/energetic/mystery) y transiciones inteligentes.
+- **SaarComposerPRO**: 2 variantes por video (visual_1/visual_2), silence trim -50dB, volume boost configurable, xfade dinámico (fade/dissolve/wiperight), avatar overlay con chroma key opcional.
+- **TitleGeneratorAgent**: Gemini Flash 2.5 con prompts especializados por nicho. 3 variantes por metadato. Pool curado de hashtags virales + generación LLM complementaria.
+
+---
+
+## 🎬 Demo — Prompts de Prueba
+
+Usa estos 3 prompts en el pipeline para crear videos de demostración:
+
+### Demo 1 — Curiosidades (Thumbnail + Metadata automáticos)
+```bash
+python video_factory.py --test curiosidades
+# Genera: thumbnail 9:16 + título clickbait + 12 hashtags
+```
+**Prompt interno sugerido para el script:**
+> *"5 datos sobre el cerebro humano que los científicos no esperaban descubrir. El #3 cambia todo lo que creías saber sobre la memoria."*
+
+### Demo 2 — Misterio + SaarD00 A/B Split
+```bash
+python video_factory.py --v15 misterio
+# Genera: variant_A.mp4 + variant_B.mp4 con diferente visual stock
+```
+**Prompt interno sugerido:**
+> *"La historia oculta del FBI que el gobierno quiere que olvides. La conspiración más grande de los últimos 50 años explicada en 60 segundos."*
+
+### Demo 3 — Thumbnail + FullEditingEngine Standalone
+```python
+# test_v161.py
+from tools.graphics.thumbnail_generator import generate_thumbnail
+from tools.editing.EditingEngine import build_editing_schema
+from agents.title_generator import generate_metadata
+
+# 1. Generar thumbnail
+thumb = generate_thumbnail("El secreto que Newton ocultó", nicho="ciencia")
+print(f"Thumbnail: {thumb['thumbnail_path']}")
+
+# 2. Generar metadata
+meta = generate_metadata("Guion sobre las leyes de Newton...", nicho="ciencia")
+print(f"Título: {meta['titulo_recomendado']}")
+
+# 3. Construir schema de edición
+schema = build_editing_schema(
+    scene_data=[{"visual_1": "clip1.mp4", "duration": 4.0}],
+    fx_preset="cinematic",
+    export_path="workspace/output/schema_test.json"
+)
+```
+
+---
+
+## 📸 Screenshots
+
+> **Añadir aquí**: screenshots del dashboard, output de videos y thumbnails generados.
+>
+> **Cómo agregar screenshots al README:**
+> 1. Guarda tus capturas en `docs/screenshots/` (crear la carpeta si no existe)
+> 2. Usa la sintaxis: `![descripción](docs/screenshots/nombre.png)`
+> 3. Para videos demo externos: `[![Ver demo](docs/screenshots/thumbnail_demo.png)](URL_youtube)`
+
+**Estructura sugerida de screenshots:**
+```
+docs/
+├── screenshots/
+│   ├── dashboard_main.png       # Dashboard web en puerto 8000
+│   ├── pipeline_running.png     # Pipeline V15 en ejecución
+│   ├── thumbnail_example.png    # Ejemplo de thumbnail 9:16 generado
+│   ├── ab_variants.png          # Variantes A y B del SaarComposer
+│   └── title_generator.png      # Output del generador de metadatos
+└── demos/
+    └── demo_curiosidades.mp4    # Video demo renderizado
+```
+
+**Ejemplo de embed (cuando tengas el screenshot):**
+```markdown
+![Dashboard V16.1](docs/screenshots/dashboard_main.png)
+```
+
+---
+
 ## Caracteristicas V16
 
 - **Verificación Factual**: Verifica automáticamente datos, universidades, términos psicológicos

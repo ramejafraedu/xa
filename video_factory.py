@@ -413,6 +413,33 @@ def _stage_quality_gate(ctx: dict) -> dict:
     manifest.publish_hashtags = publish_pkg["hashtags"]
     manifest.publish_hashtags_text = publish_pkg["hashtags_text"]
     manifest.publish_comment = publish_pkg["comment"]
+
+    # ── V16.1: Mejora automática de metadatos con TitleGeneratorAgent ─────
+    # Enriquece títulos, descripciones y hashtags usando Gemini Flash + SEO
+    try:
+        from agents.title_generator import generate_metadata
+        nicho_actual = ctx.get("nicho", None)
+        nicho_slug_actual = ctx.get("nicho_slug", "default")
+        meta_seo = generate_metadata(
+            guion=content.guion[:800],
+            nicho=nicho_slug_actual,
+            titulo_actual=manifest.titulo,
+            variantes=3,
+        )
+        # Actualizar metadatos con versión SEO-optimizada
+        if meta_seo.get("titulo_recomendado"):
+            manifest.publish_title = meta_seo["titulo_recomendado"]
+        if meta_seo.get("descripcion_recomendada"):
+            manifest.publish_description = meta_seo["descripcion_recomendada"]
+        if meta_seo.get("hashtags_string"):
+            manifest.publish_hashtags_text = meta_seo["hashtags_string"]
+        # Guardar variantes para A/B testing en el manifest
+        manifest.seo_title_variants = meta_seo.get("titulos", [])
+        manifest.seo_description_variants = meta_seo.get("descripciones", [])
+        manifest.seo_hashtags = meta_seo.get("hashtags", [])
+        logger.info(f"V16.1 TitleGenerator: título SEO → '{manifest.publish_title[:60]}'")
+    except Exception as e:
+        logger.warning(f"V16.1 TitleGenerator: falló (no bloqueante) — {e}")
     manifest.quality_score = quality.quality_score
     manifest.viral_score = content.viral_score
     manifest.hook_score = quality.block_scores.hook
@@ -772,6 +799,47 @@ def _stage_render(ctx: dict) -> dict:
     manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
     if manifest.thumbnail_path:
         manifest.publish_cover_path = manifest.thumbnail_path
+
+    # ── V16.1: Thumbnail con IA si no fue generado por el renderer ────────
+    # Genera thumbnail 9:16 con Gemini Imagen 3 si no existe un thumbnail
+    if not manifest.thumbnail_path or not Path(manifest.thumbnail_path).exists():
+        try:
+            from tools.graphics.thumbnail_generator import generate_thumbnail
+            thumb_result = generate_thumbnail(
+                titulo=manifest.titulo or ctx.get("nicho_slug", "video"),
+                nicho=ctx.get("nicho_slug", "default"),
+                hook=manifest.gancho or "",
+            )
+            if thumb_result.get("thumbnail_path") and Path(thumb_result["thumbnail_path"]).exists():
+                manifest.thumbnail_path = thumb_result["thumbnail_path"]
+                manifest.publish_cover_path = thumb_result["thumbnail_path"]
+                logger.info(f"V16.1 ThumbnailGenerator: generado → {manifest.thumbnail_path}")
+        except Exception as e:
+            logger.warning(f"V16.1 ThumbnailGenerator: falló (no bloqueante) — {e}")
+
+    # ── V16.1: Exportar schema de edición con FullEditingEngine ───────────
+    # Genera el JSON markup completo para auditoría y posible re-render
+    try:
+        from tools.editing.EditingEngine import build_editing_schema
+        schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
+        scene_data_for_schema = [
+            {"visual_1": str(p), "duration": 4.0}
+            for p in ctx.get("clips", [])[:10]
+        ]
+        if scene_data_for_schema:
+            build_editing_schema(
+                scene_data=scene_data_for_schema,
+                voiceover_path=str(ctx.get("audio_path", "")),
+                music_path=str(ctx.get("music_path", "")),
+                thumbnail_path=manifest.thumbnail_path or "",
+                fx_preset="default",
+                export_path=str(schema_path),
+            )
+            manifest.stage_artifacts["editing_schema"] = str(schema_path)
+            logger.info(f"V16.1 FullEditingEngine: schema exportado → {schema_path.name}")
+    except Exception as e:
+        logger.warning(f"V16.1 FullEditingEngine: falló (no bloqueante) — {e}")
+
     state.mark_stage(manifest, "render", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
 
