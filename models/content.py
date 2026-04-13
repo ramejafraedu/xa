@@ -221,6 +221,22 @@ class VideoContent(BaseModel):
         normalized = dict(data)
         normalized["viral_score"] = _clamp_score(normalized.get("viral_score"), default=7.0)
         normalized["hook_score"] = _clamp_score(normalized.get("hook_score"), default=7.0)
+        
+        nc = normalized.get("num_clips")
+        if isinstance(nc, (int, float, str)) and str(nc).isdigit():
+            normalized["num_clips"] = max(4, min(15, int(nc)))
+
+        # Fix literal pipe values copied from prompt
+        for key in ["velocidad_cortes", "mood_musica"]:
+            val = str(normalized.get(key, "") or "")
+            if not val:
+                continue
+            if "|" in val:
+                val = val.split("|")[0].strip()
+            if key == "velocidad_cortes":
+                val = val.lower().replace(" ", "_")
+                if val == "cinematico": val = "cinematografico"
+            normalized[key] = val
 
         source_text = " ".join(
             str(normalized.get(k, "") or "")

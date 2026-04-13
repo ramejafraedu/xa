@@ -1744,7 +1744,15 @@ def run_pipeline_v15(
             duraciones = [d.duration for d in edit_decisions] if edit_decisions else None
 
             # Build structured timeline JSON for Remotion (Phase 1 integration)
-            render_inputs = clips if clips else images
+            render_inputs = []
+            if clips and images:
+                # Interleave clips and images for a dynamic montage
+                for i in range(max(len(clips), len(images))):
+                    if i < len(clips): render_inputs.append(clips[i])
+                    if i < len(images): render_inputs.append(images[i])
+            else:
+                render_inputs = clips if clips else images
+                
             timeline_path = settings.temp_dir / f"timeline_{timestamp}.json"
             timeline_payload = editor_agent.build_timeline_json(
                 state=story,
@@ -1982,7 +1990,14 @@ def run_pipeline_v15(
                         # Recompute edit decisions/timeline to keep durations consistent after clip removal.
                         edit_decisions = editor_agent.run(story, nicho, len(clips), audio_duration)
                         duraciones = [d.duration for d in edit_decisions] if edit_decisions else None
-                        render_inputs = clips if clips else images
+                        render_inputs = []
+                        if clips and images:
+                            for i in range(max(len(clips), len(images))):
+                                if i < len(clips): render_inputs.append(clips[i])
+                                if i < len(images): render_inputs.append(images[i])
+                        else:
+                            render_inputs = clips if clips else images
+                            
                         timeline_payload = editor_agent.build_timeline_json(
                             state=story,
                             media_paths=render_inputs,

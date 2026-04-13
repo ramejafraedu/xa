@@ -55,13 +55,14 @@ def validate_and_score(
     try:
         content = VideoContent(**raw_data)
     except ValidationError as e:
+        import json
+        logger.error(f"Validation Error raw data dump:\n{json.dumps(raw_data, ensure_ascii=False, indent=2)}")
         error_msgs = []
         for err in e.errors():
             field = ".".join(str(loc) for loc in err["loc"])
             msg = err["msg"]
             error_msgs.append(f"{field}: {msg}")
         errors.extend(error_msgs)
-        logger.warning(f"Pydantic validation failed: {error_msgs}")
         return None, QualityScores(
             block_scores=BlockScores(),
             quality_score=0,

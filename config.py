@@ -233,7 +233,7 @@ class Settings(BaseSettings):
     remotion_timeout_seconds: int = 900
     remotion_quality: int = 80
     remotion_preset: str = "ultrafast"
-    remotion_composition_id: str = "UniversalCommercial"
+    remotion_composition_id: str = "CinematicRenderer"
     remotion_theme: str = ""
     remotion_layout_variant: str = ""
     remotion_kinetic_level: str = ""

@@ -85,6 +85,68 @@ _static_dir = Path(__file__).resolve().parent / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
+settings.video_cache_dir.mkdir(parents=True, exist_ok=True)
+settings.image_cache_dir.mkdir(parents=True, exist_ok=True)
+settings.temp_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/video", StaticFiles(directory=str(settings.video_cache_dir)), name="video")
+app.mount("/image", StaticFiles(directory=str(settings.image_cache_dir)), name="image")
+app.mount("/temp", StaticFiles(directory=str(settings.temp_dir)), name="temp")
+
+# Cache manager endpoints
+@app.get("/api/cache")
+async def get_cache():
+    cache_dirs = {
+        "video": settings.video_cache_dir,
+        "image": settings.image_cache_dir,
+        "temp": settings.temp_dir,
+    }
+    items = []
+    for ctype, cdir in cache_dirs.items():
+        if not cdir.exists(): continue
+        try:
+            for f in cdir.iterdir():
+                if f.is_file():
+                    ext = f.suffix.lower()
+                    if ext in {'.mp4', '.jpg', '.jpeg', '.png', '.webp', '.mp3'}:
+                        items.append({
+                            "name": f.name,
+                            "type": ctype,
+                            "size": f.stat().st_size,
+                            "date": f.stat().st_mtime,
+                            "url": f"/{ctype}/{f.name}"
+                        })
+        except Exception:
+            pass
+    items.sort(key=lambda x: x["date"], reverse=True)
+    return {"items": items}
+
+@app.delete("/api/cache/{ctype}/{filename}")
+async def delete_cache_item(ctype: str, filename: str):
+    dir_map = {"video": settings.video_cache_dir, "image": settings.image_cache_dir, "temp": settings.temp_dir}
+    if ctype in dir_map:
+        fpath = dir_map[ctype] / filename
+        try:
+            if fpath.exists():
+                fpath.unlink()
+                return {"status": "ok"}
+        except Exception:
+            pass
+    raise HTTPException(status_code=404, detail="File not found")
+
+@app.delete("/api/cache_all")
+async def clear_all_cache():
+    dir_map = {"video": settings.video_cache_dir, "image": settings.image_cache_dir, "temp": settings.temp_dir}
+    count = 0
+    for ctype, cdir in dir_map.items():
+        if cdir.exists():
+            for f in cdir.iterdir():
+                if f.is_file() and f.suffix.lower() in {'.mp4', '.jpg', '.jpeg', '.png', '.webp', '.mp3'}:
+                    try:
+                        f.unlink()
+                        count += 1
+                    except: pass
+    return {"status": "ok", "deleted": count}
+
 # Active pipeline runs
 _active_runs: dict[str, dict] = {}
 _theme_proposals_path = settings.temp_dir / "theme_proposals.json"

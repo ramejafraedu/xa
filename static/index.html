@@ -113,8 +113,7 @@
         }
 
         .app {
-            display: grid;
-            grid-template-columns: 86px minmax(0, 1fr);
+            display: block;
             min-height: 100vh;
         }
 
@@ -1715,202 +1714,7 @@
     </style>
 
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <style id="modern-redesign">
-        :root {
-            --bg-0: #000000;
-            --bg-1: #0A0A0A;
-            --bg-2: #111111;
-            --bg-card: rgba(255, 255, 255, 0.03);
-            --bg-card-solid: #111111;
-            --bg-ink: #000000;
-            --line: rgba(255, 255, 255, 0.1);
-            --line-strong: rgba(255, 255, 255, 0.2);
-            --text-0: #FFFFFF;
-            --text-1: #A1A1AA;
-            --text-2: #71717A;
-            --accent-a: #FFFFFF;
-            --accent-b: #3B82F6;
-            --accent-c: #10B981;
-            --accent-d: #8B5CF6;
-            --accent-purple: #8B5CF6;
-            --accent-yellow: #F59E0B;
-            --danger: #EF4444;
-            --warn: #F59E0B;
-            --success: #10B981;
-            --radius-xl: 12px;
-            --radius-lg: 8px;
-            --radius-md: 6px;
-            --radius-sm: 4px;
-            --radius-xs: 4px;
-            --shadow-soft: 0 4px 12px rgba(0, 0, 0, 0.3);
-            --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.5);
-        }
-
-        body {
-            font-family: "Inter", system-ui, -apple-system, sans-serif !important;
-            background: var(--bg-0) !important;
-            color: var(--text-0) !important;
-        }
-        body::before, body::after {
-            display: none !important;
-        }
-        .header-copy h1 {
-            background: none !important;
-            -webkit-text-fill-color: var(--text-0) !important;
-            color: var(--text-0) !important;
-        }
-        .sidebar {
-            background: var(--bg-0) !important;
-            border-right: 1px solid var(--line) !important;
-            backdrop-filter: none !important;
-        }
-        .sidebar-logo {
-            background: #FFFFFF !important;
-            color: #000000 !important;
-            border: none !important;
-            box-shadow: none !important;
-        }
-        .sidebar-logo::before { display: none !important; }
-        .sidebar-logo:hover { transform: scale(1.05) !important; box-shadow: none !important; }
-        
-        .header {
-            background: var(--bg-0) !important;
-            border-bottom: 1px solid var(--line) !important;
-            border-radius: 0 !important;
-            border-left: none !important;
-            border-right: none !important;
-            border-top: none !important;
-            box-shadow: none !important;
-            margin-top: -28px !important;
-            margin-left: -32px !important;
-            margin-right: -32px !important;
-            padding: 24px 32px !important;
-            backdrop-filter: none !important;
-        }
-
-        .btn-primary {
-            background: #FFFFFF !important;
-            color: #000000 !important;
-            border: none !important;
-            box-shadow: none !important;
-        }
-        .btn-primary:hover {
-            background: #E4E4E7 !important;
-            transform: translateY(-1px) !important;
-            box-shadow: 0 4px 12px rgba(255,255,255,0.1) !important;
-        }
-
-        .btn-secondary {
-            background: rgba(255,255,255,0.05) !important;
-            color: #FAFAFA !important;
-            border: 1px solid var(--line) !important;
-        }
-        .btn-secondary:hover {
-            background: rgba(255,255,255,0.1) !important;
-        }
-
-        .run-controls, .panel, .detail-panel, .nicho-card, .table-shell, .video-card {
-            background: var(--bg-card) !important;
-            border: 1px solid var(--line) !important;
-            box-shadow: none !important;
-            backdrop-filter: none !important;
-        }
-        .nicho-card:hover {
-            border-color: var(--line-strong) !important;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.4) !important;
-            transform: translateY(-2px) !important;
-        }
-        .nicho-card::before { display: none !important; }
-
-        .jobs-table th {
-            background: rgba(255,255,255,0.02) !important;
-            border-bottom: 1px solid var(--line) !important;
-            color: var(--text-1) !important;
-        }
-        .jobs-table tr:hover {
-            background: rgba(255, 255, 255, 0.03) !important;
-        }
-
-        .status-chip {
-            background: rgba(255,255,255,0.03) !important;
-            border: 1px solid var(--line) !important;
-            border-radius: 6px !important;
-            backdrop-filter: none !important;
-            font-family: "Inter", system-ui, sans-serif !important;
-            color: var(--text-0) !important;
-        }
-        .status-badge {
-            border-radius: 4px !important;
-            font-family: "Inter", system-ui, sans-serif !important;
-        }
-        .jobs-table th {
-            background: rgba(255,255,255,0.02) !important;
-            border-bottom: 1px solid var(--line) !important;
-            color: var(--text-1) !important;
-            font-family: "Inter", system-ui, sans-serif !important;
-        }
-        
-        .toast {
-            background: #18181b !important;
-            border: 1px solid var(--line-strong) !important;
-            box-shadow: 0 16px 32px rgba(0,0,0,0.5) !important;
-            font-family: "Inter", system-ui, sans-serif !important;
-        }
-
-        /* Better Scrollbar */
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: var(--bg-0); }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-        
-        .modal-overlay {
-            background: rgba(0,0,0,0.8) !important;
-            backdrop-filter: blur(4px) !important;
-        }
-
-            color: var(--text-2) !important;
-        }
-        .nav-btn:hover {
-            background: rgba(255,255,255,0.05) !important;
-            border-color: transparent !important;
-        }
-        .nav-btn.active {
-            background: rgba(255,255,255,0.1) !important;
-            border-color: transparent !important;
-            box-shadow: none !important;
-            color: #FFFFFF !important;
-        }
-        .nav-btn.active::before { display: none !important; }
-        .nav-btn.active .nav-emoji { filter: none !important; transform: none !important; }
-
-        .control-input, .control-textarea {
-            background: var(--bg-0) !important;
-            border: 1px solid var(--line) !important;
-            color: var(--text-0) !important;
-            font-family: "Inter", system-ui, sans-serif !important;
-        }
-        .control-input:focus, .control-textarea:focus {
-            border-color: var(--text-1) !important;
-            box-shadow: none !important;
-            background: var(--bg-0) !important;
-        }
-
-        .log-console, .manifest-box {
-            font-family: "JetBrains Mono", monospace !important;
-            background: var(--bg-0) !important;
-            border: 1px solid var(--line) !important;
-        }
-        
-        .modal {
-            background: var(--bg-0) !important;
-            border: 1px solid var(--line-strong) !important;
-        }
-        .modal-header, .modal-footer {
-            background: rgba(255,255,255,0.02) !important;
-            border-color: var(--line) !important;
-        }
-    </style>
-</head>
+    </head>
 <body>
     <div class="app">
         <nav class="sidebar" aria-label="Navigation">
@@ -1930,6 +1734,10 @@
             <button class="nav-btn" data-page="videos" title="Videos">
                 <span class="nav-emoji">🎥</span>
                 <span class="nav-label">Videos</span>
+            </button>
+            <button class="nav-btn" data-page="cache" title="Cache">
+                <span class="nav-emoji">📂</span>
+                <span class="nav-label">Cache</span>
             </button>
             <button class="nav-btn" data-page="logs" title="Logs">
                 <span class="nav-emoji">🧾</span>
@@ -2166,6 +1974,14 @@
                 <div class="videos-grid" id="videos-grid"></div>
             </section>
 
+            <section class="page" id="page-cache">
+                <div class="section-header">
+                    <span class="section-title">📂 Cache & Media Explorer</span>
+                    <button class="btn btn-danger" onclick="clearAllCache()" style="background-color: var(--danger); color: white;">🗑 Clear All Cache</button>
+                </div>
+                <div class="videos-grid" id="cache-grid"></div>
+            </section>
+
             <section class="page" id="page-logs">
                 <div class="section-header">
                     <span class="section-title">🧾 Logs en tiempo real</span>
@@ -2192,6 +2008,10 @@
         <button class="mobile-nav-btn" data-page="videos">
             <span class="nav-emoji">🎥</span>
             <span>Videos</span>
+        </button>
+        <button class="mobile-nav-btn" data-page="cache">
+            <span class="nav-emoji">📂</span>
+            <span>Cache</span>
         </button>
         <button class="mobile-nav-btn" data-page="logs">
             <span class="nav-emoji">🧾</span>
@@ -3422,6 +3242,73 @@
             }
         }
 
+        async function fetchCache() {
+            try {
+                const data = await fetchJson("/api/cache");
+                const grid = document.getElementById("cache-grid");
+                if (!grid) return;
+                grid.innerHTML = "";
+                
+                const items = data.items || [];
+                if (!items.length) {
+                    grid.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🧹</div><div>Cache limpio.</div></div>';
+                    return;
+                }
+
+                items.forEach((item) => {
+                    const card = document.createElement("article");
+                    card.className = "video-card"; 
+                    
+                    const isVideo = item.name.toLowerCase().endsWith(".mp4");
+                    const icon = isVideo ? "🎬" : (item.name.toLowerCase().endsWith(".mp3") ? "🎵" : "🖼️");
+                    const sizeMb = (item.size / (1024 * 1024)).toFixed(2);
+                    const dt = new Date(item.date * 1000).toLocaleString();
+
+                    card.innerHTML =
+                        '<div class="video-name">' + icon + ' ' + escapeHtml(item.name || "-") + '</div>' +
+                        '<div class="video-meta">' + sizeMb + ' MB • ' + escapeHtml(dt) + ' • <span class="tag-status">[' + escapeHtml(item.type) + ']</span></div>' +
+                        '<div style="margin-top: 10px; display: flex; gap: 8px;">' +
+                        '<a href="' + item.url + '" target="_blank" class="btn btn-secondary">👁 Ver</a>' +
+                        '<button class="btn btn-danger" style="background-color: var(--danger); color: white; margin-left: auto;" onclick="deleteCacheItem(\'' + item.type + '\', \'' + item.name + '\')">🗑 Borrar</button>' +
+                        '</div>';
+                        
+                    grid.appendChild(card);
+                });
+            } catch (err) {
+                console.error("fetchCache err:", err);
+            }
+        }
+
+        async function deleteCacheItem(ctype, filename) {
+            if(!confirm("¿Borrar " + filename + " del caché?")) return;
+            try {
+                const res = await fetch("/api/cache/" + encodeURIComponent(ctype) + "/" + encodeURIComponent(filename), { method: "DELETE" });
+                if (res.ok) {
+                    toast("Archivo eliminado (" + ctype + ")", "success");
+                    fetchCache();
+                } else {
+                    toast("Error al borrar", "error");
+                }
+            } catch (err) {
+                console.error("deleteCacheItem err:", err);
+            }
+        }
+
+        async function clearAllCache() {
+            if(!confirm("¿Estás seguro de que deseas VACIAR TODO el caché?")) return;
+            try {
+                const res = await fetch("/api/cache_all", { method: "DELETE" });
+                if (res.ok) {
+                    toast("Caché vaciado exitosamente", "success");
+                    fetchCache();
+                } else {
+                    toast("Error al vaciar", "error");
+                }
+            } catch (err) {
+                console.error("clearAllCache err:", err);
+            }
+        }
+
         async function fetchCosts() {
             try {
                 const costs = await fetchJson("/api/costs");
@@ -3612,6 +3499,7 @@
                 fetchJobs(),
                 fetchVideos(),
                 fetchCosts(),
+                fetchCache(),
             ]);
         }
 

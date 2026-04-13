@@ -20,6 +20,7 @@ class ProviderSelector:
             "coverr": 0.64,
         },
         "image_generation": {
+            "google_imagen": 1.95,
             "pexels": 0.93,
             "pixabay": 0.86,
             "leonardo": 0.90,

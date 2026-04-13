@@ -53,6 +53,7 @@ class StateManager:
     def __init__(self, temp_dir: Path):
         self.temp_dir = temp_dir
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        
         self.checkpoints_root = self.temp_dir / "checkpoints"
         self.checkpoints_root.mkdir(parents=True, exist_ok=True)
         self.cost_tracker = None
