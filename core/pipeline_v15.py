@@ -2152,6 +2152,37 @@ def run_pipeline_v15(
                 director_path=Path(manifest.director_json_path) if manifest.director_json_path else None,
                 style_playbook=manifest.style_playbook or "",
             )
+            # Optional: post-process rendered video with local EditingEngine (EML)
+            try:
+                use_editing = bool(runtime_overrides.get("use_editing_engine", getattr(settings, "use_editing_engine", False)))
+            except Exception:
+                use_editing = False
+
+            if video_path and not render_error and use_editing:
+                try:
+                    from tools.editing.editing_engine import EditingEngine, EditingStep
+
+                    # Determine duration to set action end times
+                    try:
+                        metrics = _probe_video_metrics(Path(video_path))
+                        duration_seconds = _safe_float(metrics.get("format_duration") or metrics.get("video_duration") or metrics.get("audio_duration"), 30.0)
+                    except Exception:
+                        duration_seconds = 30.0
+
+                    engine = EditingEngine()
+                    engine.addEditingStep(EditingStep.ADD_BACKGROUND_VIDEO, {"url": str(video_path), "set_time_start": 0, "set_time_end": duration_seconds})
+                    caption_text = manifest.titulo or str(story.topic or "")
+                    engine.addEditingStep(EditingStep.ADD_CAPTION_SHORT, {"text": caption_text, "set_time_start": 0, "set_time_end": duration_seconds})
+
+                    edited_output = Path(output_target) / f"{Path(video_path).stem}_edited.mp4"
+                    # Ensure output dir exists
+                    os.makedirs(Path(edited_output).parent, exist_ok=True)
+                    engine.renderVideo(str(edited_output), logger=logger)
+                    video_path = str(edited_output)
+                    manifest.feature_flags["editing_engine_used"] = True
+                    _add_decision("render", "Applied EditingEngine post-process", f"edited_output={edited_output}")
+                except Exception as exc:
+                    logger.warning(f"EditingEngine post-process failed: {exc}")
 
             if render_error or not video_path:
                 render_error_code = _infer_render_error_code(render_backend, render_error)
@@ -2297,6 +2328,36 @@ def run_pipeline_v15(
                         )
 
                 manifest.ab_visual_split = split_state
+
+            # Optional: Avatar injection using EditingEngine (show_top_image)
+            try:
+                avatar_path = runtime_overrides.get("avatar_image_path") or getattr(settings, "avatar_image_path", None)
+                use_avatar = bool(runtime_overrides.get("enable_avatar_injection", getattr(settings, "enable_avatar_injection", False)))
+            except Exception:
+                avatar_path = None
+                use_avatar = False
+
+            if video_path and avatar_path and use_avatar:
+                try:
+                    from tools.editing.editing_engine import EditingEngine, EditingStep
+
+                    metrics = _probe_video_metrics(Path(video_path))
+                    duration_seconds = _safe_float(metrics.get("format_duration") or metrics.get("video_duration") or metrics.get("audio_duration"), 30.0)
+
+                    engine = EditingEngine()
+                    engine.addEditingStep(EditingStep.ADD_BACKGROUND_VIDEO, {"url": str(video_path), "set_time_start": 0, "set_time_end": duration_seconds})
+                    # place avatar near top-center for a short duration
+                    avatar_duration = min(5.0, max(1.0, duration_seconds * 0.15))
+                    engine.addEditingStep(EditingStep.SHOW_IMAGE, {"url": str(avatar_path), "set_time_start": 0, "set_time_end": avatar_duration})
+
+                    avatar_output = Path(output_target) / f"{Path(video_path).stem}_avatar.mp4"
+                    os.makedirs(Path(avatar_output).parent, exist_ok=True)
+                    engine.renderVideo(str(avatar_output), logger=logger)
+                    video_path = str(avatar_output)
+                    manifest.feature_flags["avatar_injected"] = True
+                    _add_decision("render", "Avatar injected via EditingEngine", f"avatar_output={avatar_output}")
+                except Exception as exc:
+                    logger.warning(f"Avatar injection failed: {exc}")
 
             # Optional OpenMontage enhancement chain (free/local).
             if settings.enable_openmontage_free_tools and settings.openmontage_enable_enhancement:
