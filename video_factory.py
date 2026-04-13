@@ -578,8 +578,12 @@ def _stage_subtitles(ctx: dict) -> dict:
 
 
 def _stage_media(ctx: dict) -> dict:
-    """Stage 6: Media (Stock clips, Images, Music, SFX)."""
-    from pipeline.video_stock import fetch_stock_videos
+    """Stage 6: Media (Stock clips, Images, Music, SFX).
+
+    V16.1: Usa VideoCompositionMasterPRO para clips 100% frescos y temáticos.
+    Nunca reutiliza clips de videos anteriores. Analiza el guion escena por
+    escena y selecciona clips directamente relevantes al contenido narrado.
+    """
     from pipeline.image_gen import generate_images
     from pipeline.music import fetch_music
     from pipeline.sfx import fetch_sfx
@@ -597,8 +601,38 @@ def _stage_media(ctx: dict) -> dict:
 
     keywords = content.palabras_clave[:nicho.keywords_count]
 
-    stock_clips = fetch_stock_videos(keywords, nicho.num_clips)
-    logger.info(f"📦 Stock: fetching {len(stock_clips)} clips from Pexels")
+    # ── V16.1: VideoCompositionMasterPRO ───────────────────────────────────
+    # Clips 100% frescos, temáticos y sin repetición histórica.
+    # Analiza el guion escena por escena con LLM antes de buscar.
+    stock_clips = []
+    try:
+        from pipeline.composition_master import fetch_fresh_stock_videos
+        ctx["progress"].update(
+            ctx["task_id"],
+            description="[cyan]🎬 CompositionMaster: buscando clips frescos..."
+        )
+        stock_clips = fetch_fresh_stock_videos(
+            guion=content.guion or "",
+            tema=content.titulo or " ".join(keywords[:3]),
+            nicho_slug=nicho_slug,
+            keywords=keywords,
+            num_clips=nicho.num_clips,
+            job_id=manifest.job_id,
+        )
+        logger.info(
+            f"🎬 CompositionMaster: {len(stock_clips)} clips frescos y temáticos "
+            f"seleccionados para '{content.titulo[:50]}'"
+        )
+        # Guardar info de composición en el manifest para auditoría
+        manifest.stage_artifacts["composition_clips"] = len(stock_clips)
+    except Exception as e:
+        # Fallback: sistema legacy de video_stock si hay error
+        logger.warning(f"CompositionMaster: fallo (usando sistema legacy) — {e}")
+        from pipeline.video_stock import fetch_stock_videos
+        stock_clips = fetch_stock_videos(keywords, nicho.num_clips)
+        logger.info(f"📦 Stock (legacy): {len(stock_clips)} clips recuperados")
+
+    ctx["progress"].update(ctx["task_id"], description="[cyan]🎨 Generating images...")
 
     images = generate_images(
         content.prompt_imagen or (keywords[0] if keywords else nicho.nombre),
@@ -635,6 +669,8 @@ def _stage_media(ctx: dict) -> dict:
     ctx["sfx_paths"] = sfx_paths
     ctx["keywords"] = keywords
     return ctx
+
+
 
 
 def _stage_download(ctx: dict) -> dict:
