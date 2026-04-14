@@ -1,0 +1,63 @@
+# Nicho: Misterios del Universo y Curiosidades Espaciales
+# Canal: ÚltimaFrontera — lo que el cosmos oculta y la ciencia apenas entiende
+
+slug: misterios_universo
+nombre: "misterios del universo y curiosidades espaciales"
+tono: "asombrado y epico"
+plataforma: "tiktok_reels"
+genero_musica: "epic"
+num_clips: 10
+keywords_count: 10
+tipo_cortes: "cinematograficos con aceleraciones"
+estilo_narrativo: >
+  Estructura obligatoria: dato cosmico imposible de creer (8-12s) + profundizacion cientifica (40-55s) + perspectiva que cambia todo (6-10s).
+  Objetivo de script: 180-220 palabras para pieza de 65-75 segundos con revelacion cosmica real.
+  Gancho: comenzar con el dato espacial mas impactante del tema — numero, distancia, escala temporal o fenomeno que rompa la intuicion.
+  Ejemplo: "Si te movieras a la velocidad de la luz tardarias 2.5 millones de años en llegar a la galaxia mas cercana..." o
+  "Hay un agujero negro cuya masa equivale a 66 mil millones de soles y NADIE sabe como se formo."
+  Desarrollo: explicar el fenomeno con analogias de escala humana comprensible, incluir 1 dato de mision espacial real reciente
+  (James Webb, Artemis, Mars perseverance 2025-2026), nombrar a 1 cientifico o institucion real.
+  Perspectiva final: como ese dato cambia la forma en que el espectador ve su lugar en el cosmos.
+  Temas preferentes: agujeros negros, materia oscura, energia oscura, exoplanetas habitables, paradoja de Fermi,
+  multiverso, quantum entanglement cosmico, ondas gravitacionales, Big Bang alternativas, fin del universo,
+  estrellas de neutrones, magnetares, quasares, Webb telescope discoveries 2025-2026, vida extraterrestre probabilidades,
+  cosmologia cuantica, universo observable vs total, tiempo cosmico, singularidades, wormholes, Sagitario A*,
+  colision Andromeda, death of stars, colonizacion marciana, Voyager en espacio interestelar.
+  VARIEDAD OBLIGATORIA: Cada video sobre un fenomeno o misterio diferente del cosmos.
+  NUNCA repitas el mismo objeto celeste o fenomeno si ya fue cubierto recientemente.
+  Prohibido: pseudociencia cosmica, astrologia, teorias de conspiracion sin base cientifica, ovnis sin contexto cientifico.
+  Ritmo: crescendo narrativo hacia el dato mas impactante, pausa epica antes del reveal cosmico.
+voz_gemini: "Kore"
+voz_edge: "es-MX-JorgeNeural"
+rate_tts: "+0%"
+pitch_tts: "+0Hz"
+horas: [21, 9, 15]
+direccion_visual: "epic space NASA cinematic, nebula deep field, dark cosmic background, glowing stars wide"
+clip_selector_rules:
+  fresh_only: true
+  never_reuse: true
+  relevance_minimum: 88
+  preferred_shots:
+    - "NASA deep space footage nebula 4K cinematic"
+    - "black hole accretion disk visualization"
+    - "James Webb telescope imagery colorful nebula"
+    - "earth from space orbital view cinematic"
+    - "astronaut spacewalk dramatic wide shot"
+    - "galaxy collision simulation aerial"
+    - "time lapse night sky stars milky way"
+    - "rocket launch slow motion dramatic"
+    - "planet surface alien landscape wide"
+    - "solar flare sun surface cinematic"
+  forbidden_clips:
+    - "flat earth conspiracy imagery"
+    - "UFO conspiracist footage"
+    - "cartoon space animations unscientific"
+    - "any clip used in previous universe videos"
+    - "generic stock office people unrelated"
+verification_sources:
+  - "https://science.nasa.gov"
+  - "https://www.esa.int/Newsroom"
+  - "https://www.space.com"
+  - "https://arxiv.org/list/astro-ph/recent"
+  - "https://webb.nasa.gov/content/news"
+  - "https://apod.nasa.gov/apod/archivepix.html"

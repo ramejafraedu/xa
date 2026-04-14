@@ -1,0 +1,61 @@
+# Nicho: Longevity & Biohacking Micro-Facts
+# Canal: CódigoInmortal — hacks científicos para vivir más y mejor
+
+slug: longevity_biohacking
+nombre: "longevidad y biohacking micro datos"
+tono: "cientifico y urgente"
+plataforma: "tiktok_reels"
+genero_musica: "electronic"
+num_clips: 9
+keywords_count: 10
+tipo_cortes: "mixto"
+estilo_narrativo: >
+  Estructura obligatoria: dato de longevidad impactante (6-10s) + mecanismo biologico (40-50s) + protocolo aplicable hoy (8-12s).
+  Objetivo de script: 170-210 palabras para pieza de 60-70 segundos con ciencia aplicable real.
+  Gancho: comenzar con un numero o hallazgo de longevidad que desafie la logica comun del espectador.
+  Ejemplo de gancho: "La mayoria de personas que llegan a 100 anos duermen exactamente X horas..." o
+  "Tu telomeros determinan si tienes 40 o 70 anos biologicos — aqui el hack que los alarga."
+  Desarrollo: explicar el mecanismo biologico (telomeros, autofagia, mitocondrias, inflamacion cronica,
+  hormesis, eje intestino-cerebro, senescencia celular, mTOR, sirtuinas, NAD+, ayuno intermitente,
+  cold exposure, zone 2 cardio, HRV). Incluir 1 estudio o ensayo clinico real con resultado cuantificado.
+  Protocolo: 1 accion concreta, dosificada, con costo cero o minimo, aplicable esta semana.
+  Temas preferentes: protocolos de longevidad de Attia/Huberman/Sinclair, autofagia y ayuno, optimizacion
+  del sueno, ejercicio de zona 2, suplementos basados en evidencia (NMN, berberina, magnesio, creatina),
+  exposicion al frio, sauna, restriccion calorica, microbioma, estres hormético, cronobiologia,
+  glucosa en sangre, VO2max, fuerza muscular, inflamacion sistemica, epigenetica.
+  VARIEDAD OBLIGATORIA: Cada video cubre un protocolo o biomarcador diferente.
+  NUNCA repitas el mismo suplemento o protocolo si ya fue cubierto recientemente.
+  Prohibido: promesas milagrosas sin evidencia, productos comerciales especificos, advertencias medicas evadidas.
+  Ritmo: tono de urgencia cientifica moderada, datos concretos cada 8 segundos, cierre con accion clara.
+voz_gemini: "Fenrir"
+voz_edge: "es-MX-JorgeNeural"
+rate_tts: "-5%"
+pitch_tts: "+0Hz"
+horas: [6, 12, 21]
+direccion_visual: "futuristic lab biohacking, DNA helix glowing, clean white medical aesthetic, green bioluminescent"
+clip_selector_rules:
+  fresh_only: true
+  never_reuse: true
+  relevance_minimum: 90
+  preferred_shots:
+    - "laboratory scientist working microscope close-up"
+    - "DNA strand helix animation glowing blue"
+    - "athlete training zone 2 cardio cinematic slow motion"
+    - "cold ice bath immersion dramatic"
+    - "healthy food Mediterranean diet overhead"
+    - "sleep tracking smartwatch wrist close-up"
+    - "mitochondria cell biology 3d visualization"
+    - "elderly person running marathon strong"
+    - "brain MRI scan glowing neural activity"
+  forbidden_clips:
+    - "generic hospital stock footage unrelated"
+    - "cartoon animations biology"
+    - "any clip used in previous longevity videos"
+    - "supplement products commercial shots"
+verification_sources:
+  - "https://pubmed.ncbi.nlm.nih.gov"
+  - "https://www.biorxiv.org"
+  - "https://www.nejm.org"
+  - "https://jamanetwork.com"
+  - "https://www.foundmyfitness.com"
+  - "https://hubermanlab.com/newsletter"

@@ -1,0 +1,136 @@
+name: misterios-universo-epic
+description: Epic, awe-inspiring cosmic content with cinematic grandeur and universe-scale perspective
+mood: Awe, cosmic wonder, existential curiosity, epic scientific revelation
+best_for: Space facts, black holes, exoplanets, James Webb discoveries, cosmic mysteries, universe scale
+target_audience: Science enthusiasts 16-45, curious minds, space fans, TikTok/Shorts science community
+
+identity:
+  primary_emotion: Cosmic awe, wonder, intellectual vertigo, existential curiosity
+  energy_level: Epic build (starts 5/10, peaks at 10/10 at reveal)
+  formality: Accessible science, enthusiastic but accurate
+  pace: Cinematic crescendo — slow build to breathtaking reveal
+
+visual_language:
+  primary_colors:
+    - name: "Cosmic Void Black"
+      hex: "#030307"
+      usage: "Background, space darkness, dominant atmosphere"
+    - name: "Nebula Blue-Purple"
+      hex: "#4a1d8c"
+      usage: "Nebula gradients, cosmic clouds, deep space"
+    - name: "Solar Gold"
+      hex: "#fbbf24"
+      usage: "Stars, accretion disks, energy highlights"
+
+  secondary_colors:
+    - name: "Gamma Ray Cyan"
+      hex: "#06b6d4"
+      usage: "Data overlays, scientific annotations, quasar jets"
+    - name: "Supernova Pink"
+      hex: "#ec4899"
+      usage: "Explosion moments, energy bursts, reveal accents"
+    - name: "Ghost White"
+      hex: "#f8fafc"
+      usage: "Text, star points, contrast elements"
+
+  composition:
+    - rule: "Deep space background in EVERY scene — no white backgrounds"
+    - rule: "Scale comparisons using Earth as reference size"
+    - rule: "Light years and distances shown as animated infographics"
+    - rule: "Always include at least 1 NASA or ESA real image per video"
+    - rule: "Particle effects (stars, nebula dust) as ambient layer"
+
+typography:
+  heading:
+    font: "Orbitron, Space Mono, or Exo 2"
+    size: "800px - 1400px on 1080p"
+    color: "#fbbf24 or #06b6d4"
+    weight: "900"
+    effect: "Star field reveal animation or cosmic wipe"
+
+  body:
+    font: "Exo 2, Rajdhani, or Roboto Condensed"
+    size: "70px - 120px on 1080p"
+    color: "#f8fafc"
+    weight: "600"
+
+  scale_callout:
+    font: "Orbitron Bold"
+    size: "150px - 250px on 1080p"
+    color: "#fbbf24"
+    weight: "900"
+    usage: "Astronomical numbers, light years, solar masses"
+
+motion:
+  average_shot_hold: 2.2s
+  transition_style: "Epic zoom through stars, black dissolve, cosmic wipe"
+  transition_duration: 0.5s - 0.8s
+
+  pacing_rules:
+    - "Open with 3-second wide establishing shot of cosmic subject"
+    - "Slow zoom INTO the object during scale explanation (2-4 seconds)"
+    - "Hard cut on the most shocking number — hold 1.5s minimum"
+    - "Final perspective shift: cut from cosmic scale to Earth POV"
+    - "Music crescendo synced with most impactful visual"
+    - "Never rush through astronomical scale comparisons"
+
+audio:
+  voice_style: "Epicly calm authority. Neil deGrasse Tyson meets Carl Sagan energy."
+  voice_pace: "Measured (100-120 wpm) with strategic epic pauses on key numbers"
+
+  music:
+    genre: "Orchestral epic, Hans Zimmer-style, space ambient"
+    tempo: "60-80 BPM base, builds to 120+ BPM at climax"
+    energy: "Starts low (4/10), builds to maximum at cosmic reveal (10/10)"
+    layering:
+      - "String orchestra baseline throughout"
+      - "Percussion and brass entrance at 30-second mark"
+      - "Full orchestral swell at the most mind-bending fact"
+      - "Fade to silence (0.5s) before final perspective shift"
+
+  sfx:
+    - "Deep space resonance drone at start"
+    - "Gravitational wave sound (chirp) for black hole content"
+    - "Radio telescope static for signal discoveries"
+    - "Whoosh for scale change transitions"
+
+asset_generation:
+  image_prompt_template: |
+    Epic cosmic visual for YouTube Shorts about {topic}.
+    Style: NASA-grade cinematic space photography, Hubble/Webb aesthetic.
+    Colors: Deep black space background, nebula purple-blue gradients, gold star accents.
+    Subject: {subject_description} — photorealistic, scientifically plausible.
+    Mood: Awe-inspiring, cosmic scale, existential wonder, breathtaking beauty.
+    No text in image. Vertical 9:16 format. Ultra HD 4K space photography quality.
+    Include: star field background, cosmic light sources, scale reference if applicable.
+
+  clip_selector:
+    strategy: "fresh_first"
+    history_check: true
+    relevance_threshold: 88
+    providers_priority: ["pexels", "pixabay"]
+    banned_content_tags:
+      - "flat earth"
+      - "UFO conspiracy"
+      - "pseudoscience space"
+      - "earth close-up unrelated"
+      - "previously_used"
+
+quality_rules:
+  - rule: "At least 1 real NASA/ESA image or footage reference per video"
+    check: "Source attribution in narration"
+  - rule: "Scale comparison must be verbalized (Earth = X grain of sand)"
+    check: "Scale metaphor presence flag"
+  - rule: "Every astronomical claim must include citation or source agency"
+    check: "Fact-check citation count >= 1"
+  - rule: "Opening shot must establish cosmic subject within first 3 seconds"
+    check: "Establishing shot timing"
+
+validation_scoring:
+  cosmic_awe_impact: 0.30
+  scientific_accuracy: 0.25
+  scale_comprehension: 0.20
+  cinematic_quality: 0.15
+  hook_wonder_factor: 0.10
+
+  acceptable_score: 7.5/10

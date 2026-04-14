@@ -1,0 +1,56 @@
+# Nicho: Psicología Oscura y Hechos Psicológicos
+# Canal: MenteSombría — verdades incómodas sobre la mente humana
+
+slug: psicologia_oscura
+nombre: "psicologia oscura y manipulacion mental"
+tono: "inquietante y revelador"
+plataforma: "tiktok_reels"
+genero_musica: "dark"
+num_clips: 8
+keywords_count: 10
+tipo_cortes: "rapido con pausas dramaticas"
+estilo_narrativo: >
+  Estructura obligatoria: gancho perturbador (6-10s) + revelacion central (40-50s) + insight de proteccion (8-12s).
+  Objetivo de script: 160-210 palabras para pieza de 55-65 segundos con impacto psicologico real.
+  Gancho: comenzar con una afirmacion que desafie la autoimagen del espectador o revele que fue manipulado sin saberlo.
+  Desarrollo: explicar el mecanismo psicologico oscuro, como funciona en la mente, quien lo usa y en que situaciones cotidianas.
+  Incluir minimo 2 experimentos reales o estudios citables (Milgram, Stanford, Cialdini, Kahneman, Hare) con datos concretos.
+  Cierre: herramienta practica de defensa contra esa tecnica + pregunta que deja pensando.
+  Temas preferentes: manipulacion emocional, efecto Dunning-Kruger, sesgos de supervivencia, gaslighting, tecnicas de control mental,
+  narcisismo, efecto halo, sesgo de confirmacion, disonancia cognitiva, DARVO, triangulacion, lovebombing, dark triad personalities,
+  psicologia del crimen, tecnicas de interrogatorio, influencia social, pensamiento de grupo, obediencia a la autoridad,
+  toma de decisiones bajo presion, miedo a la exclusion social, psicologia del dinero.
+  VARIEDAD OBLIGATORIA: Cada video debe explorar un mecanismo diferente que la audiencia no haya visto antes.
+  NUNCA repitas el mismo sesgo o tecnica si ya fue cubierta en los ultimos 5 videos.
+  Prohibido: contenido que enseñe a manipular activamente, frases vagas sin respaldo cientifico, clickbait falso.
+  Ritmo: tension creciente hasta el reveal, pausa dramática de 0.5s antes de cada dato clave.
+voz_gemini: "Kore"
+voz_edge: "es-MX-JorgeNeural"
+rate_tts: "+0%"
+pitch_tts: "-3Hz"
+horas: [20, 8, 14]
+direccion_visual: "dark psychology shadows, noir cinematic, silhouettes, neural patterns, low-key dramatic lighting"
+clip_selector_rules:
+  fresh_only: true
+  never_reuse: true
+  relevance_minimum: 85
+  preferred_shots:
+    - "close-up of human eyes or face expressions"
+    - "dark office or interrogation room cinematic"
+    - "neural network abstract visualization"
+    - "person in shadow dramatic silhouette"
+    - "brain scan MRI glowing dark background"
+    - "crowd manipulation social experiment footage"
+    - "chess pieces or strategy board overhead"
+    - "security camera footage dramatic"
+  forbidden_clips:
+    - "cartoons or animations"
+    - "bright cheerful colors"
+    - "nature landscapes unrelated to topic"
+    - "any clip already used in previous videos"
+verification_sources:
+  - "https://scholar.google.com"
+  - "https://pubmed.ncbi.nlm.nih.gov"
+  - "https://www.apa.org/news"
+  - "https://www.sciencedirect.com"
+  - "https://psycnet.apa.org"

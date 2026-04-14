@@ -1,0 +1,131 @@
+name: longevity-biohacking-clinical
+description: Clean, scientific, futuristic aesthetic for evidence-based longevity and biohacking content
+mood: Urgent, scientific, optimistic about human potential, data-driven
+best_for: Biohacking protocols, longevity science, sleep optimization, supplements, exercise science, metabolic health
+target_audience: Health-conscious millennials and Gen X, 25-55, interest in optimization and longevity
+
+identity:
+  primary_emotion: Scientific urgency, hope, empowerment through biology
+  energy_level: Medium-High (7/10) — authoritative not chaotic
+  formality: Semi-formal, scientific but accessible
+  pace: Measured, data-forward, protocol-driven
+
+visual_language:
+  primary_colors:
+    - name: "Bioluminescent Teal"
+      hex: "#00d4aa"
+      usage: "Primary accent, data highlights, DNA strands"
+    - name: "Clinical White"
+      hex: "#f0f4f8"
+      usage: "Background, clean lab aesthetic"
+    - name: "Deep Navy"
+      hex: "#0d1b2a"
+      usage: "Text, contrast, night protocols"
+
+  secondary_colors:
+    - name: "Vital Green"
+      hex: "#22c55e"
+      usage: "Positive outcomes, health gains"
+    - name: "Warning Orange"
+      hex: "#f97316"
+      usage: "Risk factors, deficiency alerts"
+    - name: "Cellular Purple"
+      hex: "#7c3aed"
+      usage: "Cellular biology, mitochondria, NAD+"
+
+  composition:
+    - rule: "Clean, minimal layouts with data-forward design"
+    - rule: "Split screen: before/after biological comparisons"
+    - rule: "Infographic overlays for numerical data"
+    - rule: "White space used intentionally for scientific credibility"
+    - rule: "Progress bar or timeline for protocols"
+
+typography:
+  heading:
+    font: "Inter, Poppins, or SF Pro Display"
+    size: "700px - 1100px on 1080p"
+    color: "#00d4aa or #0d1b2a"
+    weight: "800"
+
+  body:
+    font: "Inter Regular, Roboto"
+    size: "65px - 100px on 1080p"
+    color: "#0d1b2a"
+    weight: "500"
+
+  data_callout:
+    font: "IBM Plex Mono or Courier"
+    size: "120px - 180px on 1080p"
+    color: "#00d4aa"
+    weight: "900"
+    usage: "Key statistics, percentages, age numbers"
+
+motion:
+  average_shot_hold: 1.8s
+  transition_style: "Clean dissolve, horizontal slide, data wipe"
+  transition_duration: 0.25s - 0.45s
+
+  pacing_rules:
+    - "Hold on infographic data for minimum 1.5s"
+    - "Smooth zoom-in on cell biology footage during explanation"
+    - "Protocol steps appear one at a time with 0.2s delay"
+    - "Cut to close-up of relevant body part when naming organ/system"
+    - "Slow motion for exercise form demonstrations"
+
+audio:
+  voice_style: "Clear, confident, scientific authority. Think Huberman tone."
+  voice_pace: "Medium (120-135 wpm) — clear pronunciation of scientific terms"
+
+  music:
+    genre: "Minimalist electronic, ambient techno, clinical beats"
+    tempo: "90-115 BPM"
+    energy: "Focused, clean (6/10)"
+    layering:
+      - "Subtle pulse baseline during protocol explanation"
+      - "Light lift at positive outcome moments"
+      - "Near-silence during key statistics for impact"
+
+  sfx:
+    - "Subtle notification ping for each protocol step"
+    - "Heartbeat normalization sound for HRV content"
+    - "Lab beep for scientific term introduction"
+
+asset_generation:
+  image_prompt_template: |
+    Futuristic biohacking visual for YouTube Shorts about {topic}.
+    Style: Clean clinical laboratory aesthetic, bioluminescent accents.
+    Colors: Teal (#00d4aa) on deep navy background, white accent elements.
+    Subject: {subject_description} — DNA helix, cell visualization, athletic body.
+    Mood: Scientific optimism, cutting-edge, evidence-based authority.
+    No text in image. Ultra clean 9:16 vertical format.
+    4K photorealistic or high-quality 3D render of biological subject.
+
+  clip_selector:
+    strategy: "fresh_first"
+    history_check: true
+    relevance_threshold: 90
+    providers_priority: ["pexels", "pixabay"]
+    banned_content_tags:
+      - "supplement product commercial"
+      - "pseudoscience unverified claims"
+      - "miracle cure imagery"
+      - "previously_used"
+
+quality_rules:
+  - rule: "Every statistic must appear as text overlay with exact number"
+    check: "Data callout presence per 15 seconds"
+  - rule: "Protocol must have numbered steps visible in last 10 seconds"
+    check: "Protocol clarity score"
+  - rule: "No more than 2 cuts per second during explanation phase"
+    check: "Shot pace during info-dense segments"
+  - rule: "Science source must be mentioned in narration or overlay"
+    check: "Citation mention flag"
+
+validation_scoring:
+  scientific_credibility: 0.30
+  protocol_actionability: 0.25
+  visual_data_design: 0.20
+  hook_biological_impact: 0.15
+  audio_clarity: 0.10
+
+  acceptable_score: 7.5/10

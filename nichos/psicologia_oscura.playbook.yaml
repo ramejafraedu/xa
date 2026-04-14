@@ -1,0 +1,126 @@
+name: psicologia-oscura-noir
+description: Dark, suspenseful psychological content with noir cinematic aesthetic and tension-driven pacing
+mood: Unsettling, revealing, empowering through knowledge, intellectually disturbing
+best_for: Dark psychology, manipulation tactics, cognitive biases, social experiments, true crime psychology
+target_audience: Millennials and Gen Z curious about human behavior, self-protection, critical thinking
+
+identity:
+  primary_emotion: Unease, revelation, intellectual empowerment
+  energy_level: High tension (8/10) with strategic pauses
+  formality: Semi-formal, confident, slightly dark
+  pace: Controlled tempo with sudden accelerations at reveal moments
+
+visual_language:
+  primary_colors:
+    - name: "Deep Void Black"
+      hex: "#0a0a0f"
+      usage: "Background, dominant atmosphere"
+    - name: "Blood Crimson"
+      hex: "#8b0000"
+      usage: "Accent, danger moments, manipulation reveals"
+    - name: "Cold Steel Blue"
+      hex: "#2c3e6b"
+      usage: "Secondary accent, scientific context"
+
+  secondary_colors:
+    - name: "Pale Ghost White"
+      hex: "#e8e8f0"
+      usage: "Text overlays, key data points"
+    - name: "Toxic Green"
+      hex: "#39ff14"
+      usage: "Rare accent, shocking statistics"
+
+  composition:
+    - rule: "Heavy use of shadows and negative space"
+    - rule: "Low-key dramatic lighting, single source preferred"
+    - rule: "Silhouettes for ambiguity and tension"
+    - rule: "Text appears with typewriter or glitch effect"
+    - rule: "Split-screen for contrast (before/after manipulation)"
+
+typography:
+  heading:
+    font: "Bebas Neue, Oswald, or Anton"
+    size: "900px - 1400px on 1080p"
+    color: "#ffffff or #8b0000"
+    weight: "900"
+    effect: "Glitch distortion or flicker on reveal"
+
+  body:
+    font: "Roboto Condensed, IBM Plex Mono"
+    size: "70px - 110px on 1080p"
+    color: "#e8e8f0"
+    weight: "600"
+
+  captions:
+    style: "Bold white text with dark red outline"
+    animation: "Word by word reveal sync with TTS"
+
+motion:
+  average_shot_hold: 1.4s
+  transition_style: "Hard cuts, glitch transitions, slow zoom-in on faces"
+  transition_duration: 0.1s - 0.3s
+
+  pacing_rules:
+    - "Hold still for 0.5s before revealing key psychological term"
+    - "Rapid cut sequence (0.3s each) during climax moments"
+    - "Slow zoom into eyes or hands during manipulation explanation"
+    - "Black frame flash (0.05s) between major sections"
+    - "Never cut during narrated numbers — hold + zoom"
+
+audio:
+  voice_style: "Calm, authoritative, slightly unsettling. Never hysterical."
+  voice_pace: "Medium (110-130 wpm) with deliberate pauses"
+
+  music:
+    genre: "Dark ambient, noir jazz, psychological thriller OST"
+    tempo: "60-90 BPM"
+    energy: "Tension baseline (6/10) peaking at 8/10 during reveal"
+    layering:
+      - "Subtle drone baseline throughout"
+      - "Percussion accent on each key data point reveal"
+      - "Silence (0.3s) before the most impactful fact"
+
+  sfx:
+    - "Heartbeat for manipulation reveals"
+    - "Typewriter sound for text overlays"
+    - "Glitch static for section transitions"
+
+asset_generation:
+  image_prompt_template: |
+    Dark psychology visual for Shorts video about {topic}.
+    Style: Film noir, dramatic chiaroscuro lighting, deep shadows.
+    Colors: Deep black background, crimson red accent, cold blue highlights.
+    Subject: {subject_description} — silhouette or partial face obscured.
+    Mood: Unsettling, revealing, intellectually disturbing.
+    No text in image. Cinematic 9:16 vertical format.
+    Ultra HD, photorealistic, dramatic single-source lighting.
+
+  clip_selector:
+    strategy: "fresh_first"
+    history_check: true
+    relevance_threshold: 85
+    providers_priority: ["pexels", "pixabay"]
+    banned_content_tags:
+      - "cheerful upbeat unrelated"
+      - "nature outdoor landscape unrelated"
+      - "cartoon animation"
+      - "previously_used"
+
+quality_rules:
+  - rule: "Dark tones dominate — no bright cheerful screenshots"
+    check: "Color temperature analysis (< 5000K average)"
+  - rule: "Shot hold >= 1.2s unless in rapid-cut climax sequence"
+    check: "Shot duration histogram"
+  - rule: "Every key psychological term must have text overlay"
+    check: "Caption density per 10 seconds"
+  - rule: "NO claims without study citation in narration"
+    check: "Fact-check flag count"
+
+validation_scoring:
+  tension_buildup: 0.30
+  information_density: 0.25
+  visual_atmosphere: 0.20
+  audio_design: 0.15
+  hook_strength: 0.10
+
+  acceptable_score: 7.5/10
