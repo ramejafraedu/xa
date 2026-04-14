@@ -270,81 +270,12 @@ class Settings(BaseSettings):
     playbook_quality_gate_enabled: bool = True
     playbook_enforce_colors: bool = True
     playbook_enforce_typography: bool = True
-    playbook_enforce_motion: bool = False  # advisory-only for now
-    playbook_acceptable_score_threshold: float = 8.0
-    
-    # --- V16 Integration: Provider Selector ---
+
+    # Integrations
+    avatar_pipeline_enabled: bool = False
     provider_selector_enabled: bool = True
-    provider_routing_config: str = "core/selector_logic.yaml"
-    provider_show_decisions: bool = True
-    provider_log_level: str = "info"  # debug | info | warning
-
-    # --- V16 Integration: Gemini Control Plane ---
-    gemini_control_plane_enabled: bool = True
-    gemini_control_plane_enforce_orders: bool = True
-    gemini_control_plane_quality_default: str = "balanced"  # budget | balanced | premium
+    clipfactory_enabled: bool = False
     
-    # Provider-specific toggles
-    tts_smart_routing_enabled: bool = True
-    image_smart_routing_enabled: bool = True
-    music_smart_routing_enabled: bool = True
-    
-    # Cost optimization targets
-    target_cost_per_video_usd: float = 0.20
-    prefer_free_providers: bool = True
-    
-    
-    
-    
-
-    # Budget governance (USD)
-    daily_budget_usd: float = 0.0
-    monthly_budget_usd: float = 1.0
-
-    # Stage estimates used by cost governance
-    est_cost_research_usd: float = 0.0
-    est_cost_script_usd: float = 0.0
-    est_cost_scene_usd: float = 0.0
-    est_cost_assets_usd: float = 0.10
-    est_cost_tts_usd: float = 0.03
-    est_cost_render_usd: float = 0.0
-
-    # Backup Gemini API key (for rotation/rate limits)
-    gemini_api_key_backup: str = ""
-
-    # Workspace
-    workspace_dir: str = "./workspace"
-    output_retention_days: int = 0
-    min_disk_space_gb: float = 2.0
-    # niches_config_path: str = "" # No longer needed, load from fixed path
-
-    nichos: list[NichoConfig] = []
-
-    @field_validator("nichos", mode="before")
-    @classmethod
-    def _load_nichos_from_yaml(cls, v: list[NichoConfig]) -> list[NichoConfig]:
-        """Load niche configurations from nichos/nichos_data.yaml."""
-        nichos_yaml_path = Path(__file__).resolve().parent / "nichos" / "nichos_data.yaml"
-        if not nichos_yaml_path.exists():
-            logger.warning(f"Niche configuration file not found: {nichos_yaml_path}. Using empty niche list.")
-            return []
-        
-        with open(nichos_yaml_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        
-        if not isinstance(data, list):
-            raise ValueError(f"Niche configuration file {nichos_yaml_path} must contain a list of niches.")
-        
-        return [NichoConfig(**niche_data) for niche_data in data]
-    
-    # Vertex AI (Enterprise)
-    use_vertex_ai: bool = False
-    vertex_project_id: str = ""
-    vertex_location: str = "global"
-    enable_image_cache: bool = True
-    media_cache_ttl_days: int = 7
-    generated_images_count: int = 6
-
     # Scheduler rollout
     scheduler_canary_mode: bool = False
     scheduler_canary_nichos: str = ""
@@ -992,5 +923,5 @@ except Exception as _e:
     logger.debug(f"YAML niche loader not available ({_e}), trying JSON config path...")
 
 # JSON override on top (if NICHES_CONFIG_PATH is set)
-if settings.niches_config_path:
-    NICHOS = _load_nichos_from_file(NICHOS, settings.niches_config_path, settings.base_dir)
+if getattr(settings, "niches_config_path", None):
+    NICHOS = _load_nichos_from_file(NICHOS, getattr(settings, "niches_config_path", ""), settings.base_dir)

@@ -323,28 +323,95 @@ def run_composition_validator(composition_path: Path, assets_root: Optional[Path
     return result.get("data") if result else None
 
 
-def apply_color_grade(input_path: Path, output_path: Path, profile: str = "cinematic_warm") -> Optional[Path]:
-    if not (_om_enabled() and settings.openmontage_enable_enhancement):
-        return None
-    if not input_path.exists():
-        return None
-
-    result = _run_tool(
-        module_name="tools.enhancement.color_grade",
-        class_name="ColorGrade",
-        inputs={
-            "input_path": str(input_path),
-            "output_path": str(output_path),
-            "profile": profile,
-        },
-    )
-    if not result:
+def apply_color_grade(
+    input_path: Path | str,
+    output_path: Path | str,
+    profile: str = "cinematic_warm",
+) -> Path | None:
+    """Apply color grade to image/video using OpenMontage."""
+    if not _ensure_openmontage_path():
         return None
 
-    out = Path(str((result.get("data") or {}).get("output", "") or ""))
-    if out.exists():
-        return out
-    return None
+    try:
+        from tools.enhancement.color_grade import ColorGrade
+
+        tool = ColorGrade()
+        result = tool.run(
+            input_path=str(input_path),
+            output_path=str(output_path),
+            profile=profile,
+        )
+
+        if result.success:
+            return Path(result.data.get("output_path", output_path))
+        else:
+            logger.warning(f"ColorGrade failed: {exc}")
+            return None
+    except Exception as exc:
+        logger.warning(f"ColorGrade failed: {exc}")
+        return None
+
+
+def apply_audio_enhance(
+    input_path: Path | str,
+    output_path: Path | str,
+    preset: str = "clean_speech",
+) -> Path | None:
+    """Enhance audio (noise reduction, EQ, normalization) using OpenMontage."""
+    if not _ensure_openmontage_path():
+        return None
+
+    try:
+        from tools.audio.audio_enhance import AudioEnhance
+
+        tool = AudioEnhance()
+        result = tool.run(
+            input_path=str(input_path),
+            output_path=str(output_path),
+            preset=preset,
+        )
+
+        if result.success:
+            return Path(result.data.get("output_path", output_path))
+        else:
+            logger.warning(f"AudioEnhance returned failure: {result.error}")
+            return None
+    except Exception as exc:
+        logger.warning(f"AudioEnhance failed: {exc}")
+        return None
+
+
+def apply_silence_cutter(
+    input_path: Path | str,
+    output_path: Path | str,
+    mode: str = "remove",
+    silence_threshold_db: float = -35.0,
+    min_silence_duration: float = 0.5,
+) -> Path | None:
+    """Cut or speed up silences in audio/video using OpenMontage."""
+    if not _ensure_openmontage_path():
+        return None
+
+    try:
+        from tools.video.silence_cutter import SilenceCutter
+
+        tool = SilenceCutter()
+        result = tool.run(
+            input_path=str(input_path),
+            output_path=str(output_path),
+            mode=mode,
+            silence_threshold_db=silence_threshold_db,
+            min_silence_duration=min_silence_duration,
+        )
+
+        if result.success:
+            return Path(result.data.get("output_path", output_path))
+        else:
+            logger.warning(f"SilenceCutter returned failure: {result.error}")
+            return None
+    except Exception as exc:
+        logger.warning(f"SilenceCutter failed: {exc}")
+        return None
 
 
 def apply_auto_reframe(

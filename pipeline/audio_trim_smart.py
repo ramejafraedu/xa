@@ -54,7 +54,37 @@ def apply_post_tts_audio_processing(audio_path: Path, timestamp: int, temp_dir: 
     if not current.exists() or current.stat().st_size <= 1000:
         return audio_path, steps
 
-    # Trim short/leading/trailing silence segments.
+    # Integración con @OpenMontage para procesamiento de audio avanzado
+    if settings.enable_openmontage_free_tools:
+        from core.openmontage_free import apply_audio_enhance, apply_silence_cutter
+
+        # 1. Enhancement (EQ, Gate, Loudnorm avanzado)
+        if settings.enable_post_tts_loudnorm:
+            enhance_out = temp_dir / f"audio_enhanced_om_{timestamp}.mp3"
+            result_path = apply_audio_enhance(current, enhance_out, preset="clean_speech")
+            if result_path and result_path.exists():
+                current = result_path
+                steps.append("om_audio_enhance")
+
+        # 2. Silence Cutter (Jump cuts dinámicos en vez de solo trim en los bordes)
+        if settings.enable_smart_silence_trim:
+            noise_db = float(settings.audio_trim_silence_db)
+            min_silence = float(settings.audio_trim_min_silence_seconds)
+            cutter_out = temp_dir / f"audio_silence_cut_om_{timestamp}.mp3"
+            result_path = apply_silence_cutter(
+                current, 
+                cutter_out, 
+                mode="remove", 
+                silence_threshold_db=noise_db, 
+                min_silence_duration=min_silence
+            )
+            if result_path and result_path.exists():
+                current = result_path
+                steps.append("om_silence_cutter")
+        
+        return current, steps
+
+    # Trim short/leading/trailing silence segments. (Fallback Legacy)
     if settings.enable_smart_silence_trim:
         noise_db = float(settings.audio_trim_silence_db)
         min_silence = float(settings.audio_trim_min_silence_seconds)
