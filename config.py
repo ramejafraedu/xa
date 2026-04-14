@@ -11,10 +11,11 @@ import platform
 import shutil
 from pathlib import Path
 from typing import Optional
+import yaml
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 from models.config_models import NichoConfig, AppConfig
@@ -77,9 +78,9 @@ class Settings(BaseSettings):
     gemini_api_key2: str = ""
     gemini_api_key3: str = ""
     gemini_api_key4: str = ""
-    gemini_chat_models: str = "gemini-3.1-pro-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash-001"
+    gemini_chat_models: str = "gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash-001"
     # PRIMARY_LLM is accepted as compatibility alias when GEMINI_TEXT_MODEL is not set.
-    gemini_text_model: str = os.getenv("PRIMARY_LLM", "gemini-3.1-pro-preview")
+    gemini_text_model: str = os.getenv("PRIMARY_LLM", "gemini-2.5-pro")
     gemini_vision_model: str = "gemini-2.5-pro"
     gemini_tts_model: str = "gemini-2.5-flash-preview-tts"
     image_generation_model: str = "gemini-2.0-flash-preview-image-generation"
@@ -188,11 +189,11 @@ class Settings(BaseSettings):
     piper_model_path: str = ""
 
     # Remotion (premium renderer)
-    use_remotion: bool = True
-    force_ffmpeg_renderer: bool = False
+    use_remotion: bool = False
+    force_ffmpeg_renderer: bool = True
     # V16 policy: Remotion is mandatory by default; FFmpeg is emergency-only.
-    require_remotion: bool = True
-    allow_ffmpeg_fallback: bool = False
+    require_remotion: bool = False
+    allow_ffmpeg_fallback: bool = True
 
     # --- V16 rollout feature flags ---
     free_mode: bool = False
@@ -292,29 +293,9 @@ class Settings(BaseSettings):
     target_cost_per_video_usd: float = 0.20
     prefer_free_providers: bool = True
     
-    # --- V16 Integration: Avatar Pipeline (Future) ---
-    avatar_pipeline_enabled: bool = False
-    avatar_provider: str = "heygen"  # heygen | wan | d-id
-    avatar_provider_keys: str = ""  # JSON string with credentials
-    avatar_voice_id: str = "default"
-    presenter_mode_enabled: bool = False
     
-    # --- V16 Integration: Clip-Factory (Future) ---
-    clipfactory_enabled: bool = False
-    clipfactory_default_clip_count: int = 5
-    clipfactory_platforms: str = "tiktok,reels,youtube_shorts"
-    batch_mode_enabled: bool = False
     
-    # --- V16 Integration: Review System (Future) ---
-    reviewer_enabled: bool = True
-    reviewer_skills_dir: str = "skills/review"
-    reviewer_show_advisory: bool = True
-    reviewer_block_on_issues: bool = False  # advisory-only by default
     
-    # --- V16 Integration: Reference Analysis (Future) ---
-    reference_analysis_depth: str = "moderate"  # basic | moderate | deep
-    reference_color_extraction_enabled: bool = True
-    reference_pacing_analysis_enabled: bool = True
 
     # Budget governance (USD)
     daily_budget_usd: float = 0.0
@@ -335,7 +316,26 @@ class Settings(BaseSettings):
     workspace_dir: str = "./workspace"
     output_retention_days: int = 0
     min_disk_space_gb: float = 2.0
-    niches_config_path: str = ""
+    # niches_config_path: str = "" # No longer needed, load from fixed path
+
+    nichos: list[NichoConfig] = []
+
+    @field_validator("nichos", mode="before")
+    @classmethod
+    def _load_nichos_from_yaml(cls, v: list[NichoConfig]) -> list[NichoConfig]:
+        """Load niche configurations from nichos/nichos_data.yaml."""
+        nichos_yaml_path = Path(__file__).resolve().parent / "nichos" / "nichos_data.yaml"
+        if not nichos_yaml_path.exists():
+            logger.warning(f"Niche configuration file not found: {nichos_yaml_path}. Using empty niche list.")
+            return []
+        
+        with open(nichos_yaml_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        
+        if not isinstance(data, list):
+            raise ValueError(f"Niche configuration file {nichos_yaml_path} must contain a list of niches.")
+        
+        return [NichoConfig(**niche_data) for niche_data in data]
     
     # Vertex AI (Enterprise)
     use_vertex_ai: bool = False
@@ -482,11 +482,6 @@ class Settings(BaseSettings):
             "free_mode": self.free_mode,
             "allow_freemium_in_free_mode": self.allow_freemium_in_free_mode,
             "use_remotion": self.use_remotion,
-            "remotion_composition_id": self.remotion_composition_id,
-            "remotion_theme": self.remotion_theme,
-            "remotion_layout_variant": self.remotion_layout_variant,
-            "remotion_kinetic_level": self.remotion_kinetic_level,
-            "remotion_transition_preset": self.remotion_transition_preset,
             "remotion_feature_card_mode": self.remotion_feature_card_mode,
             "force_ffmpeg_renderer": self.force_ffmpeg_renderer,
             "require_remotion": self.require_remotion,
@@ -914,39 +909,9 @@ NICHOS: dict[str, NichoConfig] = {
         pitch_tts="+0Hz",
         horas=[9, 17, 1],
     ),
-    "historias_reddit": NichoConfig(
-        slug="historias_reddit",
-        nombre="historias de reddit impactantes",
-        tono="narrativo intenso y adictivo",
-        plataforma="tiktok_reels",
-        genero_musica="dark",
-        num_clips=10,
-        keywords_count=10,
-        tipo_cortes="ritmo progresivo con picos de tension",
-        estilo_narrativo="narracion inmersiva con hook extremo, escalada emocional, plot twist y cierre abierto para comentarios, priorizando retencion y continuidad.",
-        voz_gemini="Charon",
-        voz_edge="es-ES-AlvaroNeural",
-        rate_tts="+4%",
-        pitch_tts="-8Hz",
-        horas=[12, 18, 22],
-    ),
-    "ia_herramientas": NichoConfig(
-        slug="ia_herramientas",
-        nombre="ia aplicada y herramientas para ganar dinero",
-        tono="directo, estrategico y convincente",
-        plataforma="tiktok_reels",
-        genero_musica="motivational",
-        num_clips=8,
-        keywords_count=8,
-        tipo_cortes="rapidos con demostracion visual",
-        estilo_narrativo="promesa monetizable, metodo en 3 pasos y resultado medible con CTA accionable para emprendedores y creadores.",
-        voz_gemini="Fenrir",
-        voz_edge="es-MX-JorgeNeural",
-        rate_tts="+6%",
-        pitch_tts="-2Hz",
-        horas=[9, 14, 20],
-    ),
 }
+
+
 
 
 def _load_nichos_from_file(

@@ -126,19 +126,7 @@ class NichoConfig(BaseModel):
             )
         return self
 
-    @property
-    def direccion_visual_resolved(self) -> str:
-        """Return explicit direccion_visual if set, else use legacy slug mapping."""
-        if self.direccion_visual:
-            return self.direccion_visual
-        mapping = {
-            "finanzas": "old money editorial, linen texture, classic wristwatch, neoclassical architecture, sepia and emerald green palette, luxury cinematic lighting, premium depth",
-            "historia": "vintage noir documentary, aged paper texture, baroque shadows, desaturated sepia with steel blue accents, dramatic cinematic haze",
-            "curiosidades": "surreal documentary macro, unusual perspective, textured background, teal-amber contrast, high-detail cinematic realism",
-            "historias_reddit": "reddit confessional aesthetic, neon noir atmosphere, smartphone chat overlays, dark cinematic contrast, emotional close-ups, suspense pacing",
-            "ia_herramientas": "futuristic productivity studio, glassmorphism dashboards, AI workflow overlays, high-contrast UI motion, premium tech cinematic look",
-        }
-        return mapping.get(self.slug, "cinematic editorial vertical, premium texture, subtle warm palette, filmic depth")
+
 
 
 class AppConfig(BaseModel):

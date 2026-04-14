@@ -494,6 +494,7 @@ class JobManifest(BaseModel):
     error_code: ErrorCode = ErrorCode.UNKNOWN
     retry_count: int = 0
     healing_attempts: list[HealingRecord] = Field(default_factory=list)
+    raw_content_data: dict = Field(default_factory=dict)
 
     # Post-render QA
     qa_passed: bool = True

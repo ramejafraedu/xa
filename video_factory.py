@@ -287,7 +287,6 @@ def _stage_content_gen(ctx: dict) -> dict:
     nicho = ctx["nicho"]
     manual_idea_lines = ctx["manual_idea_lines"]
 
-    ctx["raw_content"] = {}
     if not state.is_stage_done(manifest, "content_gen"):
         try:
             ctx["raw_content"] = generate_content(
@@ -296,6 +295,7 @@ def _stage_content_gen(ctx: dict) -> dict:
                 ctx["memoria"],
                 manual_ideas=manual_idea_lines,
             )
+            manifest.raw_content_data = ctx["raw_content"]
         except ContentGenerationError as e:
             manifest.status = JobStatus.ERROR.value
             manifest.error_stage = "content_gen"
@@ -305,6 +305,9 @@ def _stage_content_gen(ctx: dict) -> dict:
             notify_error(manifest)
             ctx["abort"] = True
             return ctx
+        state.mark_stage(manifest, "content_gen", _elapsed(timer))
+    else:
+        ctx["raw_content"] = manifest.raw_content_data
 
         state.mark_stage(manifest, "content_gen", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])

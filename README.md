@@ -1,6 +1,13 @@
 # Video Factory V16 PRO
 
+![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![CI/CD](https://img.shields.io/badge/CI/CD-Pending-lightgrey.svg)
+
 Fabrica automatizada de videos verticales (formato short) para "Faceless Channels" / "Cash Cow Channels". Pipeline multi-agente con verificación factual, sincronización audio-subtítulo, input manual de ideas, y gestión de memoria optimizada para servidores.
+
+---
+**Nota sobre el repositorio:** Para mejorar la visibilidad y búsqueda en GitHub, considera añadir los siguientes topics al repositorio: `python`, `automation`, `tiktok`, `faceless-video`, `ai`.
 
 > **V15 → V16**: V16 agrega: (1) **Verification Agent** - verificación automática de datos/fuentes, (2) **Topic Injection** - input manual de ideas, (3) **Audio Sync** - sincronización WhisperX de subtítulos, (4) **Memory Manager** - control de RAM (20% max), (5) **Free APIs** - NumbersAPI, UselessFacts, Wikidata para hooks y verificación.
 
