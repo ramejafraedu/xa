@@ -13,7 +13,9 @@ import hashlib
 import re
 from enum import Enum
 from typing import Optional
+from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator
+
 
 
 _SPANISH_STOPWORDS = {
@@ -238,6 +240,35 @@ class VideoContent(BaseModel):
                 if val == "cinematico": val = "cinematografico"
             normalized[key] = val
 
+        # ── V16.1: Normalizar guion cuando el LLM devuelve un array de escenas ──
+        # El modelo gemini-3.1-pro-preview a veces devuelve:
+        #   "guion": [{"texto": "...", "duracion": 1.8, "visual": "..."}, ...]
+        # en vez de un string plano. Lo convertimos extrayendo sólo el texto narrado.
+        guion_raw = normalized.get("guion")
+        if isinstance(guion_raw, list):
+            parts: list[str] = []
+            for item in guion_raw:
+                if isinstance(item, dict):
+                    # Extraer campo 'texto' (narración) o 'text' si existe
+                    texto = (
+                        item.get("texto")
+                        or item.get("text")
+                        or item.get("narration")
+                        or ""
+                    )
+                    if texto:
+                        parts.append(str(texto).strip())
+                elif isinstance(item, str) and item.strip():
+                    parts.append(item.strip())
+            normalized["guion"] = " ".join(parts) if parts else ""
+            logger.debug(
+                f"normalize_payload: guion array→string "
+                f"({len(guion_raw)} escenas → {len(normalized['guion'].split())} palabras)"
+            )
+        elif guion_raw is not None and not isinstance(guion_raw, str):
+            # Cualquier otro tipo inesperado: convertir a string
+            normalized["guion"] = str(guion_raw)
+
         source_text = " ".join(
             str(normalized.get(k, "") or "")
             for k in ("titulo", "gancho", "guion", "caption")
@@ -248,6 +279,7 @@ class VideoContent(BaseModel):
         )
 
         return normalized
+
 
     @field_validator("guion")
     @classmethod
