@@ -201,6 +201,22 @@ def render_with_remotion(
     remotion_timeout = max(120, int(getattr(settings, "remotion_timeout_seconds", 600) or 600))
 
     try:
+        # Clean workspace temp to avoid stale artifacts from previous runs
+        try:
+            tmp = settings.temp_dir
+            if tmp.exists():
+                for item in tmp.iterdir():
+                    try:
+                        if item.is_file():
+                            item.unlink(missing_ok=True)
+                        elif item.is_dir():
+                            shutil.rmtree(item, ignore_errors=True)
+                    except Exception:
+                        pass
+                logger.info("🧹 Cleared workspace temp before Remotion render")
+        except Exception as exc:
+            logger.debug(f"Could not clear temp before render: {exc}")
+
         _ensure_public_workspace_link()
         props: dict
         composition_id = _resolve_composition_id(metadata, timeline_payload)
@@ -2304,6 +2320,33 @@ def _clear_remotion_cache() -> None:
             logger.debug(f"Could not clear workspace: {exc}")
 
 
+def _force_rebuild_remotion_bundle(timeout: int = 900) -> None:
+    """Attempt to rebuild the remotion-composer bundle (npm run build).
+
+    This is invoked on compositor panic detection to ensure the bundle
+    is not corrupted and native artifacts are up to date.
+    """
+    try:
+        pkg = REMOTION_DIR / "package.json"
+        if not pkg.exists():
+            return
+        logger.info("🔧 Rebuilding remotion-composer bundle (npm run build)...")
+        result = subprocess.run(
+            ["npm", "run", "build"],
+            cwd=str(REMOTION_DIR),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            shell=False,
+        )
+        if result.returncode == 0:
+            logger.info("✅ Remotion bundle rebuilt successfully")
+        else:
+            logger.warning(f"Remotion rebuild failed (rc={result.returncode}): {result.stderr[:1000]}")
+    except Exception as exc:
+        logger.debug(f"Remotion rebuild error: {exc}")
+
+
 def _run_remotion_with_recovery(
     props: dict,
     composition_id: str,
@@ -2337,6 +2380,21 @@ def _run_remotion_with_recovery(
 
     env = os.environ.copy()
     env["RUST_BACKTRACE"] = "1"
+    # Apply configurable compositor / Node memory limits when set in config
+    try:
+        mem_mb = int(getattr(settings, "remotion_compositor_memory_limit", 0) or 0)
+        if mem_mb > 0:
+            # V8 heap limit for Node
+            existing = env.get("NODE_OPTIONS", "")
+            node_opt = f"--max-old-space-size={mem_mb}"
+            if existing:
+                env["NODE_OPTIONS"] = existing + " " + node_opt
+            else:
+                env["NODE_OPTIONS"] = node_opt
+            env["REMOTION_COMPOSITOR_MEMORY_LIMIT"] = str(mem_mb)
+            logger.info(f"Applied Remotion compositor memory limit: {mem_mb}MB")
+    except Exception:
+        pass
 
     last_result = None
 
@@ -2374,6 +2432,12 @@ def _run_remotion_with_recovery(
                 f"Clearing cache and reducing concurrency..."
             )
             _clear_remotion_cache()
+
+            # Try rebuilding the Remotion bundle to avoid corrupted artifacts
+            try:
+                _force_rebuild_remotion_bundle()
+            except Exception:
+                pass
 
             # Force garbage collection of any stale file handles
             try:

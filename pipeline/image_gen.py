@@ -10,6 +10,7 @@ import re
 import shutil
 import time
 import urllib.parse
+import random
 from pathlib import Path
 from typing import Optional
 
@@ -322,7 +323,7 @@ def _download_pexels_image(prompt: str, output: Path) -> bool:
                 continue
 
             photos = response.json().get("photos", [])
-            import random; random.shuffle(photos)
+            random.shuffle(photos)
             for photo in photos:
                 src = photo.get("src", {}) if isinstance(photo, dict) else {}
                 image_url = src.get("large2x") or src.get("large") or src.get("original")
@@ -350,7 +351,7 @@ def _download_pixabay_image(prompt: str, output: Path) -> bool:
             return False
 
         hits = response.json().get("hits", [])
-        import random; random.shuffle(hits)
+        random.shuffle(hits)
         for item in hits:
             image_url = item.get("largeImageURL") or item.get("webformatURL")
             if image_url and download_file(image_url, output, timeout=45):
@@ -363,7 +364,6 @@ def _download_pixabay_image(prompt: str, output: Path) -> bool:
 
 def _download_pollinations(prompt: str, output: Path) -> bool:
     """Download image from Pollinations API."""
-    import random
     try:
         encoded = urllib.parse.quote(prompt)
         url = (

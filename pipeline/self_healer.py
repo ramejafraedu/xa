@@ -283,6 +283,25 @@ def _fix_render(error_message: str, original_params: str, error_code: ErrorCode 
         logger.info(f"Render fix by error_code: {error_code.value}")
         return deterministic[error_code]
 
+    # Special-case: Remotion compositor frame_cache panic -> return recovery plan
+    lowered = (error_message or "").lower()
+    if (
+        "frame_cache.rs" in lowered
+        or "thread '<unnamed>' panicked" in lowered
+        or "called `option::unwrap()` on a `none` value" in lowered
+        or "compositor exited with code 1" in lowered
+    ):
+        logger.info("Render fix: detected Remotion compositor frame_cache panic; returning recovery plan")
+        plan = {
+            "action": "remotion_frame_cache_recovery",
+            "clear_cache": True,
+            "rebuild_bundle": True,
+            "increase_memory_mb": int(getattr(settings, "remotion_compositor_memory_limit", 8192) or 8192),
+            "max_retries": int(getattr(settings, "remotion_frame_cache_max_retries", 2) or 2),
+            "force_fallback_if_persistent": bool(getattr(settings, "remotion_frame_cache_force_fallback", False)),
+        }
+        return json.dumps(plan)
+
     # AI analysis for unknown errors
     system = """Eres un ingeniero experto en FFmpeg y Python.
 El sistema arrojo el siguiente error al intentar renderizar un video.

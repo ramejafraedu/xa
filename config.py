@@ -290,6 +290,8 @@ class Settings(BaseSettings):
     remotion_frame_cache_auto_recovery: bool = True  # Auto-limpiar caché y reintentar
     remotion_frame_cache_max_retries: int = 2  # Reintentos antes de fallback
     remotion_frame_cache_force_fallback: bool = False  # Forzar FFmpeg si recovery falla
+    # Compositor memory limit in MB to pass to Remotion compositor (helps avoid OOMs)
+    remotion_compositor_memory_limit: int = 8192
     
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True
