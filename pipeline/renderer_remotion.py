@@ -218,6 +218,14 @@ def render_with_remotion(
             logger.debug(f"Could not clear temp before render: {exc}")
 
         _ensure_public_workspace_link()
+        # Si está activado, forzar materialización de assets antes de render
+        if getattr(settings, "remotion_force_materialize", False):
+            logger.info("🔄 Forzando materialización de assets en public/workspace antes de render Remotion")
+            try:
+                _materialize_workspace_assets({})  # Llama con dict vacío para forzar escaneo completo
+                os.sync()
+            except Exception as exc:
+                logger.warning(f"Materialización forzada falló: {exc}")
         props: dict
         composition_id = _resolve_composition_id(metadata, timeline_payload)
         if timeline_payload:

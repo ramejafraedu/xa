@@ -333,6 +333,7 @@ def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False
 
 
     # Rotate page number for variety (pages 1-5)
+    # Asegura que random es el módulo, no una variable local
     effective_page = random.randint(1, 5)
 
     q = urllib.parse.quote(keyword.strip())

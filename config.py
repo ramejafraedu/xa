@@ -60,6 +60,9 @@ _gemini_rotation_counter: list[int] = [0]
 class Settings(BaseSettings):
     """All environment variables in one place — validated by Pydantic."""
 
+    # Fuerza la materialización de assets en public/workspace antes de cada render Remotion
+    remotion_force_materialize: bool = True
+
     # AI / Inference
     github_token: str = ""
     inference_api_url: str = "https://models.inference.ai.azure.com/chat/completions"

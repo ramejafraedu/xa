@@ -302,6 +302,18 @@ def _fix_render(error_message: str, original_params: str, error_code: ErrorCode 
         }
         return json.dumps(plan)
 
+    # Nuevo: Si el error es "missing assets after reattempt", forzar materialización y reintentar
+    if "missing assets after reattempt" in lowered:
+        logger.info("Render fix: detected missing assets after reattempt; forcing workspace materialization and retry")
+        plan = {
+            "action": "remotion_force_materialize_and_retry",
+            "force_materialize": True,
+            "clear_cache": False,
+            "rebuild_bundle": False,
+            "max_retries": 1,
+        }
+        return json.dumps(plan)
+
     # AI analysis for unknown errors
     system = """Eres un ingeniero experto en FFmpeg y Python.
 El sistema arrojo el siguiente error al intentar renderizar un video.
