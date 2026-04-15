@@ -287,15 +287,55 @@ def download_file(url: str, dest: Path, *, max_retries: int = 3, timeout: float 
                 logger.warning(f"Download failed ({response.status_code}): {_safe_log_url(url)}")
                 _breaker.record_failure(url)
                 return False
+
+            # Ensure parent exists
             dest.parent.mkdir(parents=True, exist_ok=True)
-            with open(dest, "wb") as f:
-                for chunk in response.iter_bytes(chunk_size=8192):
-                    f.write(chunk)
-        if dest.stat().st_size < 1000:
-            logger.warning(f"Downloaded file too small ({dest.stat().st_size}B): {dest.name}")
-            dest.unlink(missing_ok=True)
+
+            # Write to a temporary file first and then atomically move into place.
+            tmp = dest.with_suffix(dest.suffix + ".download")
+            try:
+                with open(tmp, "wb") as f:
+                    for chunk in response.iter_bytes(chunk_size=8192):
+                        f.write(chunk)
+                    # Flush to disk
+                    f.flush()
+                    import os
+                    try:
+                        os.fsync(f.fileno())
+                    except Exception:
+                        # fsync may not be available on some platforms or filesystems
+                        pass
+                # Atomically replace
+                try:
+                    tmp.replace(dest)
+                except Exception:
+                    # Fallback to os.replace
+                    import os
+                    os.replace(str(tmp), str(dest))
+            finally:
+                # Ensure temp file removed if it still exists
+                try:
+                    if tmp.exists():
+                        tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        # Basic size sanity check
+        try:
+            size = dest.stat().st_size
+        except Exception:
+            size = 0
+
+        if size < 1000:
+            logger.warning(f"Downloaded file too small ({size}B): {dest.name}")
+            try:
+                dest.unlink(missing_ok=True)
+            except Exception:
+                pass
             return False
+
         _breaker.record_success(url)
+        logger.debug(f"Download persisted: {dest.as_posix()} ({size}B)")
         return True
     except Exception as e:
         logger.warning(f"Download error: {_safe_log_url(url)}: {e}")

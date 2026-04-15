@@ -34,6 +34,8 @@ from loguru import logger
 
 from config import settings
 from services.http_client import get_json, request_with_retry, download_file
+from pipeline.om_scene_evaluator import evaluate_composition_plan
+from pipeline.om_scoring import select_best_clip_candidate
 
 
 # ─────────────────────────────────────────────────────────────
@@ -83,21 +85,16 @@ def _save_history(history: dict[str, dict]) -> None:
 
 
 def _mark_clip_used(clip_id: str, url: str, keyword: str, job_id: str = "") -> None:
-    """Registra un clip como usado en el historial global."""
-    history = _load_history()
-    history[clip_id] = {
-        "url": url,
-        "keyword": keyword,
-        "job_id": job_id,
-        "used_at": int(time.time()),
-    }
-    _save_history(history)
-
+    """Registra un clip como usado en el historial global.
+    ACTUALIZADO: Deshabilitado por petición del usuario - no guardar caché.
+    """
+    pass
 
 def _is_clip_used(clip_id: str) -> bool:
-    """Verifica si un clip ya fue usado en algún video anterior."""
-    history = _load_history()
-    return clip_id in history
+    """Verifica si un clip ya fue usado en algún video anterior.
+    ACTUALIZADO: Deshabilitado por petición del usuario - ignorar historial.
+    """
+    return False
 
 
 def get_used_clip_count() -> int:
@@ -233,6 +230,7 @@ def analyze_script_into_scenes(
     nicho: str,
     api_key: str,
     model: str = "gemini-2.5-flash",
+    additional_prompt: str = "",
 ) -> list[SceneClipSpec]:
     """Analiza el guion con LLM y genera una especificación de clip por escena.
 
@@ -242,6 +240,7 @@ def analyze_script_into_scenes(
         nicho: Nicho del canal (curiosidades, misterio, etc.)
         api_key: Clave API de Gemini.
         model: Modelo LLM a usar.
+        additional_prompt: Reglas extra o violaciones para self-healing.
 
     Returns:
         Lista de SceneClipSpec, una por escena del guion.
@@ -254,6 +253,8 @@ def analyze_script_into_scenes(
         nicho=nicho,
         guion=guion[:2000],
     )
+    if additional_prompt:
+        prompt += "\n\nCRÍTICA DE DIRECCIÓN (POR FAVOR CORRIGE):\n" + additional_prompt
 
     try:
         import requests
@@ -411,8 +412,8 @@ _MOTION_QUERY_MODIFIERS: dict[str, list[str]] = {
 }
 
 # Contadores de rotación para paginación con variedad
-_pexels_page_counter: list[int] = [0]
-_pixabay_page_counter: list[int] = [0]
+_pexels_page_counter: list[int] = [random.randint(0, 50)]
+_pixabay_page_counter: list[int] = [random.randint(0, 50)]
 
 
 def _build_enriched_query(spec: SceneClipSpec, variant: str = "A") -> str:
@@ -462,8 +463,8 @@ def _fetch_pexels_fresh(
         return []
 
     # Rotar página para variedad
-    _pexels_page_counter[0] += 1
-    page = (_pexels_page_counter[0] % 5) + 1  # páginas 1-5
+    _pexels_page_counter[0] += random.randint(1, 3)
+    page = (_pexels_page_counter[0] % 10) + 1  # páginas 1-10
 
     orientation = "portrait" if require_portrait else "landscape"
     q = urllib.parse.quote(query.strip())
@@ -532,8 +533,8 @@ def _fetch_pixabay_fresh(
     if not api_key or not query.strip():
         return []
 
-    _pixabay_page_counter[0] += 1
-    page = (_pixabay_page_counter[0] % 4) + 1
+    _pixabay_page_counter[0] += random.randint(1, 3)
+    page = (_pixabay_page_counter[0] % 10) + 1  # páginas 1-10
 
     orientation_param = "vertical" if require_portrait else "horizontal"
     q = urllib.parse.quote(query.strip())
@@ -603,24 +604,26 @@ def select_fresh_clip_for_scene(
     query = _build_enriched_query(spec, variant)
     keyword_used = query
 
-    # Intento 1: Pexels con query enriquecida
-    candidates = _fetch_pexels_fresh(query, pexels_keys, used_ids)
+    # V16.1 OpenMontage: Obtener candidatos de MÚLTIPLES proveedores
+    candidates = []
+    
+    # Intento Pexels
+    pex_candidates = _fetch_pexels_fresh(query, pexels_keys, used_ids)
+    if pex_candidates:
+        candidates.extend(pex_candidates)
 
-    # Intento 2: Pixabay si Pexels falla
-    if not candidates:
-        candidates = _fetch_pixabay_fresh(query, used_ids)
+    # Intento Pixabay
+    pix_candidates = _fetch_pixabay_fresh(query, used_ids)
+    if pix_candidates:
+        candidates.extend(pix_candidates)
 
-    # Intento 3: Pexels con keywords simples (fallback)
+    # Fallback con keywords simples si no hay nada
     if not candidates and spec.keywords_primary:
         simple_query = spec.keywords_primary[0]
-        candidates = _fetch_pexels_fresh(simple_query, pexels_keys, used_ids)
-        if candidates:
-            keyword_used = simple_query
-
-    # Intento 4: Pixabay con keywords simples
-    if not candidates and spec.keywords_primary:
-        simple_query = spec.keywords_primary[0]
-        candidates = _fetch_pixabay_fresh(simple_query, used_ids)
+        pex_c = _fetch_pexels_fresh(simple_query, pexels_keys, used_ids)
+        if pex_c: candidates.extend(pex_c)
+        pix_c = _fetch_pixabay_fresh(simple_query, used_ids)
+        if pix_c: candidates.extend(pix_c)
         if candidates:
             keyword_used = simple_query
 
@@ -631,8 +634,15 @@ def select_fresh_clip_for_scene(
         )
         return None
 
-    # Elegir el primer candidato (ya son todos frescos)
-    chosen = candidates[0]
+    # Shuffle candidates so we don't always pick the top 1 result
+    import random
+    random.shuffle(candidates)
+
+    # V16.1 OpenMontage: Seleccionar dinámicamente usando métrica holística
+    chosen = select_best_clip_candidate(candidates, target_keyword=keyword_used)
+    if not chosen:
+        chosen = candidates[0] # Fallback extremo
+        
     clip_id = chosen["clip_id"]
 
     # Registrar en set local y en historial global
@@ -738,16 +748,42 @@ def compose_video_clips(
         f"🎬 CompositionMaster: iniciando para '{tema[:60]}' | nicho={nicho} | clips={num_clips}"
     )
 
-    # ── 1. Analizar el guion en escenas ──────────────────────
-    scene_specs = analyze_script_into_scenes(
-        guion=guion,
-        tema=tema,
-        nicho=nicho,
-        api_key=api_key,
-    )
+    # ── 1. Analizar el guion en escenas (Con OpenMontage Self-Healing) ──
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        additional_msg = ""
+        scene_specs = analyze_script_into_scenes(
+            guion=guion,
+            tema=tema,
+            nicho=nicho,
+            api_key=api_key,
+            additional_prompt=additional_msg if attempt > 0 else ""
+        )
+        if not scene_specs:
+            break
+            
+        # Evaluar Riesgo (OpenMontage Analysis)
+        scenes_dict = [asdict(s) for s in scene_specs]
+        eval_res = evaluate_composition_plan(scenes_dict)
+        if eval_res["is_slideshow_risk"] and attempt < max_attempts - 1:
+            logger.warning(
+                f"CompositionMaster: OpenMontage SceneEvaluator dectectó riesgo de Slideshow! "
+                f"Puntuación: {eval_res['score']}. Re-intentando LLM."
+            )
+            issues = "\n".join(f"- {v}" for v in eval_res.get("violations", []))
+            suggs = "\n".join(f"- {s}" for s in eval_res.get("suggestions", []))
+            additional_msg = f"Tu plan anterior fue rechazado por ser aburrido:\n{issues}\nSugerencias:\n{suggs}\n¡Varía los planos (shot_type) y el movimiento (motion) estrictamente!"
+            continue
+        
+        # Si aprueba o si es el último intento, continuamos
+        if eval_res["is_slideshow_risk"]:
+            logger.warning(f"CompositionMaster: OpenMontage SceneEvaluator advierte (no bloqueante): {eval_res['violations']}")
+        else:
+            logger.info("CompositionMaster: OpenMontage SceneEvaluator APRUEBA composición (Dinámica y balanceada).")
+        break
 
     if not scene_specs:
-        logger.warning("CompositionMaster: sin escenas del LLM, usando keywords básicas del tema")
+        logger.warning("CompositionMaster: sin escenas del LLM, usando fallback básico")
         scene_specs = _fallback_scene_specs(guion, tema, nicho)
 
     # Limitar al número de clips solicitados

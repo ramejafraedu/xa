@@ -148,20 +148,30 @@ def _ensure_public_workspace_link() -> None:
     target = settings.workspace.resolve()
     try:
         public_dir.mkdir(parents=True, exist_ok=True)
+        # Prefer a real directory inside remotion-composer/public so that
+        # the Remotion bundler reliably includes copied assets into the
+        # temporary webpack bundle. If a symlink exists, replace it with
+        # a real directory so `_materialize_workspace_assets` can write
+        # files that will be packaged.
         if link_path.exists():
-            return
-        if settings.is_windows:
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(link_path), str(target)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                shell=False,
-            )
-        else:
-            link_path.symlink_to(target, target_is_directory=True)
+            try:
+                # If it's a symlink, remove it so we can create a real dir.
+                if link_path.is_symlink():
+                    link_path.unlink()
+            except Exception:
+                # Best-effort; ignore and let mkdir below handle it.
+                pass
+            # If after unlink the path still exists and is a directory, leave it.
+            if link_path.exists() and link_path.is_dir():
+                return
+
+        # Ensure a real directory exists for public/workspace
+        try:
+            link_path.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.debug(f"Public workspace directory creation skipped: {exc}")
     except Exception as exc:
-        logger.debug(f"Public workspace link skipped: {exc}")
+        logger.debug(f"Public workspace link/dir skipped: {exc}")
 
 
 def render_with_remotion(
@@ -246,6 +256,26 @@ def render_with_remotion(
 
         _materialize_workspace_assets(props)
 
+        # Verify that all workspace-referenced assets were materialized
+        missing_assets = _verify_public_assets(props)
+        if missing_assets:
+            logger.warning(
+                "Remotion asset snapshot missing %d files; retrying materialize",
+                len(missing_assets),
+            )
+            _materialize_workspace_assets(props)
+            try:
+                os.sync()
+            except Exception:
+                pass
+            missing_assets = _verify_public_assets(props)
+            if missing_assets:
+                logger.warning(
+                    "Remotion aborted: missing assets after reattempt: %s",
+                    missing_assets,
+                )
+                return False
+
         props_file = output_path.parent / f"remotion_props_{metadata.get('timestamp', 0)}.json"
         props_file.write_text(json.dumps(props, indent=2), encoding="utf-8")
 
@@ -260,24 +290,14 @@ def render_with_remotion(
         output_path_str = str(output_path.resolve().as_posix())
 
         def _run_remotion_once(payload: dict) -> subprocess.CompletedProcess:
-            payload_json = json.dumps(payload, ensure_ascii=False)
-            cmd = [
-                *remotion_runner,
-                "render",
-                "src/index.tsx",
+            """Legacy wrapper - now delegates to recovery-aware runner."""
+            return _run_remotion_with_recovery(
+                payload,
                 composition_id,
                 output_path_str,
-                "--props", payload_json,
-                "--codec", "h264",
-                "--concurrency", str(remotion_concurrency),
-            ]
-            return subprocess.run(
-                cmd,
-                cwd=str(REMOTION_DIR),
-                capture_output=True,
-                text=True,
-                timeout=remotion_timeout,
-                shell=False,
+                remotion_runner,
+                remotion_timeout,
+                max_retries=2,
             )
 
         result = _run_remotion_once(props)
@@ -314,13 +334,28 @@ def render_with_remotion(
 
         if result.returncode != 0:
             stderr_snippet = (result.stderr or "").strip().replace("\n", " ")[:500]
-            if stderr_snippet:
+            is_frame_cache = _is_frame_cache_error(result.stderr or "")
+            
+            if is_frame_cache:
+                logger.error(
+                    f"🚨 Remotion frame_cache crash persistente (exit {result.returncode}). "
+                    f"El caché fue limpiado pero el error persiste. "
+                    f"Sugerencias: (1) Reducir remotion_concurrency a 1, "
+                    f"(2) Reiniciar la VM, (3) Activar ALLOW_FFMPEG_FALLBACK=true"
+                )
+                # Si está configurado forzar fallback ante errores persistentes
+                if getattr(settings, "remotion_frame_cache_force_fallback", False):
+                    logger.warning("🔄 Forzando fallback a FFmpeg por configuración (remotion_frame_cache_force_fallback)")
+                    return False  # Esto activará el fallback en render_video_with_fallback
+            
+            if stderr_snippet and not is_frame_cache:
                 logger.warning(
                     f"Remotion render failed (exit {result.returncode}, runner={runner_kind}): "
                     f"{stderr_snippet}"
                 )
-            else:
+            elif not is_frame_cache:
                 logger.warning(f"Remotion render failed (exit {result.returncode}, runner={runner_kind})")
+            
             return False
 
         if output_path.exists() and output_path.stat().st_size > 1024:
@@ -526,6 +561,63 @@ def _build_image_timeline(
         "meta": {"composition_id": composition_id},
         "scenes": scenes,
     }
+
+
+def _verify_public_assets(props: dict) -> list[str]:
+    """Return a list of missing asset paths under remotion public/workspace."""
+    missing: list[str] = []
+    public_workspace = REMOTION_DIR / "public" / "workspace"
+
+    def _check(src: str) -> None:
+        raw = (src or "").strip()
+        if not raw:
+            return
+        low = raw.lower()
+        if low.startswith("http://") or low.startswith("https://") or low.startswith("data:"):
+            return
+        if raw.startswith("workspace/"):
+            rel = raw.replace("workspace/", "", 1)
+            dest = public_workspace / rel
+            if not dest.exists() or (dest.exists() and dest.stat().st_size < 100):
+                missing.append(str(dest))
+            return
+        if raw.startswith("file://"):
+            decoded = unquote(raw[7:])
+            try:
+                p = Path(decoded).resolve()
+                workspace_dir = settings.workspace.resolve()
+                if p.is_relative_to(workspace_dir):
+                    rel = p.relative_to(workspace_dir)
+                    dest = public_workspace / rel.as_posix()
+                    if not dest.exists() or (dest.exists() and dest.stat().st_size < 100):
+                        missing.append(str(dest))
+            except Exception:
+                missing.append(raw)
+            return
+
+    for scene in props.get("scenes", []) if isinstance(props.get("scenes"), list) else []:
+        if isinstance(scene, dict):
+            _check(str(scene.get("src", "") or ""))
+
+    soundtrack = props.get("soundtrack")
+    if isinstance(soundtrack, dict):
+        _check(str(soundtrack.get("src", "") or ""))
+
+    music = props.get("music")
+    if isinstance(music, dict):
+        _check(str(music.get("src", "") or ""))
+
+    audio = props.get("audio")
+    if isinstance(audio, dict):
+        _check(str(audio.get("bgmPath", "") or ""))
+
+    script = props.get("script")
+    if isinstance(script, dict) and isinstance(script.get("features"), list):
+        for feature in script.get("features", []):
+            if isinstance(feature, dict):
+                _check(str(feature.get("imagePath", "") or ""))
+
+    return missing
 
 
 def render_with_fallback(
@@ -1877,6 +1969,12 @@ def _materialize_workspace_assets(props: dict) -> None:
 
             try:
                 shutil.copy2(local_path, dest)
+                try:
+                    # Ensure data landed on disk to avoid bundler race conditions.
+                    with open(dest, "rb") as _f:
+                        os.fsync(_f.fileno())
+                except Exception:
+                    pass
             except shutil.SameFileError:
                 # Safe no-op: file already available at target path.
                 pass
@@ -1885,6 +1983,13 @@ def _materialize_workspace_assets(props: dict) -> None:
     for scene in props.get("scenes", []):
         if isinstance(scene, dict):
             _materialize(scene, "src")
+
+    # Final sync to reduce chance of missing files when Remotion's bundler
+    # snapshots `public` into a temporary bundle directory.
+    try:
+        os.sync()
+    except Exception:
+        pass
 
     soundtrack = props.get("soundtrack")
     if isinstance(soundtrack, dict):
@@ -2136,3 +2241,150 @@ def setup_remotion_project() -> bool:
     except Exception as exc:
         logger.error(f"Remotion setup error: {exc}")
         return False
+
+
+# =============================================================================
+# Frame Cache Error Recovery (V15 Bug Fix)
+# =============================================================================
+
+
+def _is_frame_cache_error(stderr_text: str) -> bool:
+    """Detect the specific frame_cache.rs crash in Remotion compositor.
+
+    This error indicates a Rust panic in the frame cache system,
+    typically caused by race conditions, corrupted cache, or memory pressure.
+    """
+    if not stderr_text:
+        return False
+    indicators = [
+        "frame_cache.rs",
+        "thread '<unnamed>' panicked",
+        "called `Option::unwrap()` on a `None` value",
+        "Compositor exited with code 1",
+    ]
+    lowered = stderr_text.lower()
+    return any(ind.lower() in lowered for ind in indicators)
+
+
+def _clear_remotion_cache() -> None:
+    """Clear Remotion's frame and asset caches to recover from corruption.
+
+    Removes:
+    - ~/.cache/remotion (global frame cache)
+    - remotion-composer/.cache (local bundler cache)
+    - remotion-composer/node_modules/.cache
+    - Any stale core dumps
+    """
+    cache_paths = [
+        Path.home() / ".cache" / "remotion",
+        REMOTION_DIR / ".cache",
+        REMOTION_DIR / "node_modules" / ".cache",
+    ]
+
+    for cache_path in cache_paths:
+        if cache_path.exists():
+            try:
+                shutil.rmtree(cache_path, ignore_errors=True)
+                logger.info(f"🧹 Cleared Remotion cache: {cache_path}")
+            except Exception as exc:
+                logger.debug(f"Could not clear cache {cache_path}: {exc}")
+
+    # Also clear public/workspace to force asset re-materialization
+    public_workspace = REMOTION_DIR / "public" / "workspace"
+    if public_workspace.exists():
+        try:
+            # Only clear files, preserve directory structure
+            for item in public_workspace.iterdir():
+                if item.is_file():
+                    item.unlink(missing_ok=True)
+                elif item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+            logger.info(f"🧹 Cleared public/workspace cache")
+        except Exception as exc:
+            logger.debug(f"Could not clear workspace: {exc}")
+
+
+def _run_remotion_with_recovery(
+    props: dict,
+    composition_id: str,
+    output_path_str: str,
+    remotion_runner: list[str],
+    remotion_timeout: int,
+    max_retries: int = 2,
+) -> subprocess.CompletedProcess:
+    """Run Remotion with automatic recovery from frame_cache crashes.
+
+    Strategy:
+    1. First attempt with normal settings
+    2. If frame_cache error detected: clear cache, retry with concurrency=1
+    3. If still failing: return last error result
+    """
+    # Build base command
+    def _build_cmd(concurrency: int) -> list[str]:
+        payload_json = json.dumps(props, ensure_ascii=False)
+        return [
+            *remotion_runner,
+            "render",
+            "src/index.tsx",
+            composition_id,
+            output_path_str,
+            "--props", payload_json,
+            "--codec", "h264",
+            "--width", "1080",
+            "--height", "1920",
+            "--concurrency", str(concurrency),
+        ]
+
+    env = os.environ.copy()
+    env["RUST_BACKTRACE"] = "1"
+
+    last_result = None
+
+    for attempt in range(max_retries + 1):
+        # Adjust concurrency: normal on first attempt, reduced on retries
+        concurrency = 1 if attempt > 0 else max(1, int(getattr(settings, "remotion_concurrency", 1) or 1))
+
+        if attempt > 0:
+            logger.info(f"🔄 Remotion retry attempt {attempt}/{max_retries} (concurrency={concurrency})")
+
+        cmd = _build_cmd(concurrency)
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(REMOTION_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=remotion_timeout,
+            shell=False,
+        )
+
+        last_result = result
+
+        # Success
+        if result.returncode == 0:
+            if attempt > 0:
+                logger.info(f"✅ Remotion recovered after {attempt} retry(s)")
+            return result
+
+        # Check for frame_cache error
+        if _is_frame_cache_error(result.stderr or ""):
+            logger.warning(
+                f"🚨 Detected frame_cache crash (attempt {attempt + 1}). "
+                f"Clearing cache and reducing concurrency..."
+            )
+            _clear_remotion_cache()
+
+            # Force garbage collection of any stale file handles
+            try:
+                import gc
+                gc.collect()
+            except Exception:
+                pass
+
+            continue  # Retry with reduced settings
+
+        # Other error - don't retry
+        break
+
+    return last_result

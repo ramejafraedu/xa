@@ -61,12 +61,13 @@ def validate_pre_render(
 
     # 4. Check each clip
     for clip in clips:
-        if not clip.exists():
+        resolved_clip = _resolve_clip_path(clip)
+        if not resolved_clip:
             errors.append((ErrorCode.ASSET_MISSING, f"Clip missing: {clip.name}"))
-        elif clip.stat().st_size < 1000:
-            errors.append((ErrorCode.ASSET_CORRUPT, f"Clip corrupt/too small: {clip.name} ({clip.stat().st_size}B)"))
+        elif resolved_clip.stat().st_size < 1000:
+            errors.append((ErrorCode.ASSET_CORRUPT, f"Clip corrupt/too small: {clip.name} ({resolved_clip.stat().st_size}B)"))
         else:
-            green_ratio = _estimate_green_screen_ratio(clip)
+            green_ratio = _estimate_green_screen_ratio(resolved_clip)
             if green_ratio >= 0.34:
                 errors.append(
                     (
@@ -115,6 +116,29 @@ def validate_pre_render(
         logger.info("✅ Pre-render validation passed (all assets OK)")
 
     return len(errors) == 0, errors
+
+
+def _resolve_clip_path(clip: Path) -> Path | None:
+    """Resolve a clip Path even if it was stored under a different directory.
+
+    Priority:
+    1. Exact path as given.
+    2. video_cache_dir / clip.name
+    3. temp_dir / clip.name
+    Returns the first existing path with size > 1000 bytes, or None.
+    """
+    candidates = [
+        clip,
+        settings.video_cache_dir / clip.name,
+        settings.temp_dir / clip.name,
+    ]
+    for candidate in candidates:
+        try:
+            if candidate.exists() and candidate.stat().st_size > 1000:
+                return candidate
+        except Exception:
+            continue
+    return None
 
 
 def extract_flagged_greenscreen_clips(

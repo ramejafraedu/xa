@@ -213,14 +213,45 @@ def generate_images_with_stats(
             failed_indices.append(idx)
 
     # Keep scene/image coverage stable even when some providers fail.
+    # Avoid filling all failed slots with the exact same image (causes repeated visuals).
     if failed_indices and results:
         seed_pool = list(results)
+        # Limit number of direct duplicates per source to avoid slideshow of the same image.
+        max_dup_per_source = 2
+        dup_counts: dict[str, int] = {}
+
         for offset, failed_idx in enumerate(failed_indices):
             source = seed_pool[offset % len(seed_pool)]
+            source_key = str(source)
+            dup_counts.setdefault(source_key, 0)
+
             target = temp_dir / f"imagen_{failed_idx}_{timestamp}.jpg"
+
+            # If we've already duplicated this source enough times, try to produce
+            # a light variation (if Pillow is available). If that fails, skip adding
+            # further duplicates to avoid repeating the exact same frame many times.
+            if dup_counts[source_key] >= max_dup_per_source:
+                try:
+                    from PIL import Image, ImageFilter
+
+                    img = Image.open(source)
+                    # Apply a tiny blur to create a perceptible variation without changing
+                    # semantic content (keeps continuity but avoids exact duplicates).
+                    img = img.filter(ImageFilter.GaussianBlur(radius=0.5))
+                    img.save(target, quality=85)
+                    results.append(target)
+                    dup_counts[source_key] += 1
+                    logger.info(f"Image {failed_idx}/{count} FILLED with lightweight variation")
+                    continue
+                except Exception:
+                    logger.debug("Pillow not available or variation failed; skipping extra duplicate")
+                    # Do not create more duplicates if variation isn't possible
+                    break
+
             try:
                 shutil.copy2(source, target)
                 results.append(target)
+                dup_counts[source_key] += 1
                 logger.info(f"Image {failed_idx}/{count} FILLED from successful fallback")
             except Exception as e:
                 logger.debug(f"Image fallback fill skipped ({failed_idx}): {e}")
@@ -291,6 +322,7 @@ def _download_pexels_image(prompt: str, output: Path) -> bool:
                 continue
 
             photos = response.json().get("photos", [])
+            import random; random.shuffle(photos)
             for photo in photos:
                 src = photo.get("src", {}) if isinstance(photo, dict) else {}
                 image_url = src.get("large2x") or src.get("large") or src.get("original")
@@ -318,6 +350,7 @@ def _download_pixabay_image(prompt: str, output: Path) -> bool:
             return False
 
         hits = response.json().get("hits", [])
+        import random; random.shuffle(hits)
         for item in hits:
             image_url = item.get("largeImageURL") or item.get("webformatURL")
             if image_url and download_file(image_url, output, timeout=45):
@@ -330,11 +363,12 @@ def _download_pixabay_image(prompt: str, output: Path) -> bool:
 
 def _download_pollinations(prompt: str, output: Path) -> bool:
     """Download image from Pollinations API."""
+    import random
     try:
         encoded = urllib.parse.quote(prompt)
         url = (
             f"{settings.pollinations_base}/prompt/{encoded}"
-            f"?width=1080&height=1920&model=flux&nologo=true"
+            f"?width=1080&height=1920&model=flux&nologo=true&seed={random.randint(1, 999999)}"
         )
         return download_file(url, output, timeout=45)
     except Exception as e:

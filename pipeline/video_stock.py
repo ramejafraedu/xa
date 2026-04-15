@@ -9,6 +9,7 @@ import urllib.parse
 import json
 import hashlib
 import time
+import random
 from typing import Optional, Union
 from pathlib import Path
 
@@ -80,6 +81,7 @@ def fetch_stock_videos(
     num_needed: int = 8,
     provider_order: Optional[list[str]] = None,
     require_realistic: bool = False,
+    temp_dir: Optional[Path] = None,
 ) -> list[dict]:
     """Fetch stock video URLs and manage local cache via index.json.
 
@@ -94,9 +96,14 @@ def fetch_stock_videos(
     """
     settings.ensure_dirs()
     index_file = settings.video_cache_dir / "index.json"
-    
+
     # V16.1: Skip cache if disabled for fresh content
-    if settings.disable_stock_cache or settings.force_fresh_assets:
+    cache_disabled = settings.disable_stock_cache or settings.force_fresh_assets
+    # When cache disabled, put clips in temp_dir (per-job) instead of shared video_cache
+    clip_dest_dir = (temp_dir or settings.temp_dir) if cache_disabled else settings.video_cache_dir
+    clip_dest_dir.mkdir(parents=True, exist_ok=True)
+
+    if cache_disabled:
         logger.info("🔄 Stock cache disabled - fetching fresh videos from APIs")
         index_data = {}
         all_items = []
@@ -207,7 +214,7 @@ def fetch_stock_videos(
                 urls = []
 
             for u in urls:
-                dest = (settings.video_cache_dir / u["filename"]).as_posix()
+                dest = (clip_dest_dir / u["filename"]).as_posix()
                 if dest in seen_paths:
                     continue
 
@@ -221,11 +228,12 @@ def fetch_stock_videos(
                 )
                 provider_counts[provider] = provider_counts.get(provider, 0) + 1
 
-                # Update index optimistically (renderer will download it there)
-                kw_clean = kw.strip().lower()
-                if kw_clean not in index_data:
-                    index_data[kw_clean] = []
-                _upsert_cache_entry(index_data[kw_clean], u["filename"], now_ts, provider)
+                # Update index only when caching
+                if not cache_disabled:
+                    kw_clean = kw.strip().lower()
+                    if kw_clean not in index_data:
+                        index_data[kw_clean] = []
+                    _upsert_cache_entry(index_data[kw_clean], u["filename"], now_ts, provider)
 
     # Save index
     if not (settings.disable_stock_cache or settings.force_fresh_assets):
@@ -323,8 +331,9 @@ def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False
     if not keyword or not keyword.strip():
         return []
 
-    # Rotate page number for variety (pages 1-3)
-    effective_page = ((page - 1 + _cache_rotation_counter[0]) % 3) + 1
+
+    # Rotate page number for variety (pages 1-5)
+    effective_page = random.randint(1, 5)
 
     q = urllib.parse.quote(keyword.strip())
     url = f"https://api.pexels.com/videos/search?query={q}&orientation=portrait&size=large&per_page=12&page={effective_page}"
@@ -347,6 +356,7 @@ def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False
 
             data = response.json()
             videos = data.get("videos", [])
+            random.shuffle(videos)
             urls = []
 
             for v in videos:
@@ -406,6 +416,7 @@ def _fetch_pixabay_video(keyword: str, require_realistic: bool = False, page: in
         )
         data = get_json(url, max_retries=2)
         hits = data.get("hits", [])
+        random.shuffle(hits)
         urls = []
         for h in hits:
             tags = str(h.get("tags", "") or "")
@@ -470,6 +481,7 @@ def _fetch_coverr(keyword: str, require_realistic: bool = False) -> list[str]:
 
         data = response.json()
         items = data.get("hits", data.get("videos", []))
+        random.shuffle(items)
         urls = []
         for item in items[:3]:
             meta_blob = " ".join(

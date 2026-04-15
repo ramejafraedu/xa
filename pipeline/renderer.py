@@ -68,17 +68,43 @@ def download_clips(
                 
             # Needs download
             if url and download_file(url, dest, timeout=90):
-                results.append(dest)
-                logger.debug(f"Clip {i} DOWNLOADED: {dest.name}")
+                # Post-download verification: ensure file persisted and is reasonable
+                try:
+                    if not dest.exists():
+                        logger.error(f"Clip {i} reported downloaded but missing on FS: {dest.as_posix()}")
+                    else:
+                        size = dest.stat().st_size
+                        if size < 1000:
+                            logger.warning(f"Clip {i} downloaded but too small ({size}B): {dest.as_posix()}")
+                            try:
+                                dest.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                        else:
+                            results.append(dest)
+                            logger.debug(f"Clip {i} DOWNLOADED: {dest.name} ({size//1024} KB) -> {dest.as_posix()}")
+                except Exception as e:
+                    logger.warning(f"Clip {i} post-download check failed: {e}")
             else:
-                logger.warning(f"Clip {i} failed to download: {url[:60]}")
+                logger.warning(f"Clip {i} failed to download: {str(url)[:120]}")
                 
         elif isinstance(item, str):
             # Legacy string URL
             dest = temp_dir / f"clip{i}_{timestamp}.mp4"
             if download_file(item, dest, timeout=90):
-                results.append(dest)
-                logger.debug(f"Clip {i} OK ({dest.stat().st_size // 1024} KB)")
+                try:
+                    size = dest.stat().st_size if dest.exists() else 0
+                except Exception:
+                    size = 0
+                if size >= 1000:
+                    results.append(dest)
+                    logger.debug(f"Clip {i} OK ({size // 1024} KB) -> {dest.as_posix()}")
+                else:
+                    logger.warning(f"Clip {i} downloaded but too small ({size}B): {dest.as_posix()}")
+                    try:
+                        dest.unlink(missing_ok=True)
+                    except Exception:
+                        pass
             else:
                 logger.warning(f"Clip {i} fallback failed")
 

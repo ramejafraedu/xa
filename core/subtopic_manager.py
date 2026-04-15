@@ -115,6 +115,7 @@ class SubtopicManager:
         history = history[:self.history_limit]
         
         # Guardar
+        history_file.parent.mkdir(parents=True, exist_ok=True)
         with open(history_file, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
         

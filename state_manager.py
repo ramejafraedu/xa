@@ -54,6 +54,19 @@ class StateManager:
         self.temp_dir = temp_dir
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         
+        # --- Solución Permanente: Exterminar el Caché de Videos ---
+        import os
+        import shutil
+        
+        # Ruta dinámica al caché para que funcione en dev y en producción (xavito)
+        cache_dir = Path("workspace/video_cache").resolve()
+        cache_dir_str = str(cache_dir)
+        
+        if os.path.exists(cache_dir_str):
+            shutil.rmtree(cache_dir_str, ignore_errors=True)
+        os.makedirs(cache_dir_str, exist_ok=True)
+        # ----------------------------------------------------------
+        
         self.checkpoints_root = self.temp_dir / "checkpoints"
         self.checkpoints_root.mkdir(parents=True, exist_ok=True)
         self.cost_tracker = None
