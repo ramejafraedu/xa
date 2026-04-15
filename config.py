@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     gemini_key_cooldown_seconds: int = 25
     gemini_model_cooldown_seconds: int = 600
     gemini_enable_usage_stats: bool = True
+    # Optional explicit Gemma model integration (e.g. gemma-4-31b-dense)
+    gemma_model_name: str = ""
+    # Thought-mode setting for Gemma/Gemini. Examples: "", "standard", "ultra"
+    gemma_thought_mode: str = ""
 
     # ElevenLabs TTS
     elevenlabs_api_key: str = ""
@@ -115,11 +119,19 @@ class Settings(BaseSettings):
     # Pixabay
     pixabay_api_key: str = ""
 
+    # Workspace directory used for caches and outputs (can be overridden via env WORKSPACE_DIR)
+    workspace_dir: str = "workspace"
+
     # Music
     jamendo_client_id: str = "61b41aa8"
     suno_api_key: str = ""
     suno_api_url: str = "https://api.sunoapi.org/api/v1/generate"
     suno_status_api_url: str = ""
+    # Background music control: allow disabling background music generation
+    enable_background_music: bool = True
+    # Optional override (comma-separated) to restrict available music providers
+    # Example: MUSIC_PROVIDERS=suno,lyria
+    music_providers_raw: str = ""
 
     # AssemblyAI
     assemblyai_api_key: str = ""
@@ -130,7 +142,9 @@ class Settings(BaseSettings):
     # Image Gen
     pollinations_base: str = "https://image.pollinations.ai"
     leonardo_api_key: str = ""
-    prefer_stock_images: bool = True
+    prefer_stock_images: bool = False
+    # Cuántas imágenes generar por etapa/escena por defecto (puede sobreescribirse por env GENERATED_IMAGES_COUNT)
+    generated_images_count: int = 8
 
     # Telegram
     telegram_bot_token: str = ""
@@ -156,7 +170,7 @@ class Settings(BaseSettings):
     use_lyria_music: bool = True
     use_suno_music: bool = True
     use_veo_clips: bool = False
-    gemini_everywhere_mode: bool = False
+    gemini_everywhere_mode: bool = True
     gemini_visual_boost_prompt: str = (
         "dynamic composition, expressive emotion, vibrant cinematic color grading, "
         "playful storytelling energy, premium polished detail"
@@ -201,6 +215,37 @@ class Settings(BaseSettings):
     enable_web_research_plus: bool = False
     enable_reference_driven: bool = False
     enable_cost_governance: bool = False
+    daily_budget_usd: float = 5.0  # Presupuesto diario máximo en USD
+    # Presupuesto mensual máximo en USD (usa 0 para desactivar límite mensual)
+    monthly_budget_usd: float = 150.0
+    
+    # Costos estimados por etapa (USD)
+    est_cost_research_usd: float = 0.01
+    est_cost_script_usd: float = 0.03
+    est_cost_scene_usd: float = 0.02
+    est_cost_assets_usd: float = 0.10
+    est_cost_tts_usd: float = 0.05
+    est_cost_render_usd: float = 0.02
+    
+    # Configuración adicional
+    output_retention_days: int = 0  # 0 = guardar para siempre
+    workspace_dir: str = "workspace"
+    min_disk_space_gb: float = 2.0
+    media_cache_ttl_days: int = 7
+    enable_image_cache: bool = False
+    enable_video_cache: bool = False
+    
+    # Vertex AI
+    use_vertex_ai: bool = False
+    vertex_project_id: str = ""
+    vertex_location: str = "us-central1"
+    gemini_api_key_backup: str = ""
+    
+    # Gemini Control Plane
+    gemini_control_plane_enabled: bool = False
+    gemini_control_plane_enforce_orders: bool = False
+    gemini_control_plane_quality_default: str = "standard"
+    
     
     # --- V16.1: Variedad de Subtemas Anti-Repeticion ---
     force_subtopic_variety: bool = True
@@ -241,6 +286,11 @@ class Settings(BaseSettings):
     remotion_transition_preset: str = ""
     remotion_feature_card_mode: str = ""
     
+    # Remotion Frame Cache Crash Recovery (V15 Bug Fix)
+    remotion_frame_cache_auto_recovery: bool = True  # Auto-limpiar caché y reintentar
+    remotion_frame_cache_max_retries: int = 2  # Reintentos antes de fallback
+    remotion_frame_cache_force_fallback: bool = False  # Forzar FFmpeg si recovery falla
+    
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True
     fact_verification_mode: str = "blocking"  # "blocking" | "warning" | "info"
@@ -273,7 +323,7 @@ class Settings(BaseSettings):
 
     # Integrations
     avatar_pipeline_enabled: bool = False
-    provider_selector_enabled: bool = True
+    provider_selector_enabled: bool = False
     clipfactory_enabled: bool = False
     
     # Scheduler rollout
@@ -685,6 +735,20 @@ class Settings(BaseSettings):
             self.pexels_api_key3v,
             self.pexels_api_key4v,
         ] if k]
+
+    @property
+    def music_providers(self) -> list[str]:
+        """Return normalized list of music providers.
+
+        Priority: `MUSIC_PROVIDERS` env var -> `music_providers_raw` -> default list.
+        """
+        raw = os.getenv("MUSIC_PROVIDERS") or (self.music_providers_raw or "")
+        if isinstance(raw, str) and raw.strip():
+            parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+            if parts:
+                return parts
+        # Default provider order used historically
+        return ["suno", "lyria", "pixabay", "jamendo"]
 
     @property
     def is_windows(self) -> bool:

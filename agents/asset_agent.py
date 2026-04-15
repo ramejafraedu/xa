@@ -151,6 +151,7 @@ class AssetAgent:
                     nicho,
                     clips_needed,
                     provider_order=stock_order,
+                    temp_dir=temp_dir,
                 ),
                 is_success=lambda value: len(value) > 0,
                 max_attempts=2,
@@ -211,36 +212,43 @@ class AssetAgent:
                 selector.mark_result("image_generation", provider, False, "image generation failed")
 
         # --- 3. Music (mood from script) ---
-        music_candidates = strict_free_candidates(["suno", "lyria", "pixabay", "jamendo"], usage="media")
-        if settings.suno_api_key and settings.use_suno_music and "suno" not in music_candidates:
-            music_candidates.insert(0, "suno")
-        music_order = selector.get_provider_order("music_generation", music_candidates)
-        music_order = self._merge_order_override(
-            music_order,
-            music_candidates,
-            overrides.get("provider_order_music_generation"),
-        )
-        results["provider_orders"]["music_generation"] = music_order
+        if not settings.enable_background_music:
+            logger.info("Background music disabled via settings; skipping music generation.")
+            results["provider_orders"]["music_generation"] = []
+            results["provider_sources"]["music"] = "none"
+            results["music_path"] = None
+        else:
+            music_providers = settings.music_providers
+            music_candidates = strict_free_candidates(music_providers, usage="media")
+            if settings.suno_api_key and settings.use_suno_music and "suno" not in music_candidates:
+                music_candidates.insert(0, "suno")
+            music_order = selector.get_provider_order("music_generation", music_candidates)
+            music_order = self._merge_order_override(
+                music_order,
+                music_candidates,
+                overrides.get("provider_order_music_generation"),
+            )
+            results["provider_orders"]["music_generation"] = music_order
 
-        music_payload = self._with_backoff(
-            "music generation",
-            lambda: self._fetch_music(
-                state,
-                nicho,
-                timestamp,
-                temp_dir,
-                provider_order=music_order,
-            ),
-            is_success=lambda value: value[0] is not None,
-            max_attempts=2,
-        )
-        results["music_path"], music_source = music_payload
-        results["provider_sources"]["music"] = music_source
+            music_payload = self._with_backoff(
+                "music generation",
+                lambda: self._fetch_music(
+                    state,
+                    nicho,
+                    timestamp,
+                    temp_dir,
+                    provider_order=music_order,
+                ),
+                is_success=lambda value: value[0] is not None,
+                max_attempts=2,
+            )
+            results["music_path"], music_source = music_payload
+            results["provider_sources"]["music"] = music_source
 
-        if music_source and music_source != "none":
-            selector.mark_result("music_generation", music_source, True)
-        elif music_order:
-            selector.mark_result("music_generation", music_order[0], False, "no music source succeeded")
+            if music_source and music_source != "none":
+                selector.mark_result("music_generation", music_source, True)
+            elif music_order:
+                selector.mark_result("music_generation", music_order[0], False, "no music source succeeded")
 
         # --- 4. SFX ---
         try:
@@ -265,6 +273,7 @@ class AssetAgent:
         nicho: NichoConfig,
         count: int,
         provider_order: Optional[list[str]] = None,
+        temp_dir: Optional[Path] = None,
     ) -> list[dict]:
         """Fetch stock clips using scene-aware keywords."""
         try:
@@ -281,6 +290,7 @@ class AssetAgent:
                 count,
                 provider_order=provider_order,
                 require_realistic=bool(query_plan.get("require_realistic")),
+                temp_dir=temp_dir,
             )
             logger.info(
                 f"📦 Stock: fetching {count} clips "

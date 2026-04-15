@@ -1,0 +1,24 @@
+===========================================
+COMANDOS RÁPIDOS PARA APLICAR EN LA VM
+Copiar y pegar directamente en la terminal SSH
+===========================================
+
+# PASO 1: Limpiar caché de Remotion (ejecutar en VM)
+cd ~/video_factory
+rm -rf ~/.cache/remotion
+rm -rf remotion-composer/.cache
+rm -rf remotion-composer/public/workspace/*
+rm -rf /tmp/remotion-*
+echo "✅ Caché limpiado"
+
+# PASO 2: Verificar que los archivos nuevos estén (si se subieron)
+ls -la pipeline/renderer_remotion.py
+
+# PASO 3: Forzar render con FFmpeg (solución inmediata)
+export ALLOW_FFMPEG_FALLBACK=true
+python main.py --job-id historia_1776216130309
+
+# ALTERNATIVA: Si quieres intentar con Remotion arreglado
+# python main.py --job-id historia_1776216130309
+
+===========================================

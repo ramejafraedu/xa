@@ -35,8 +35,11 @@ Fabrica automatizada de videos verticales (formato short) para "Faceless Channel
 
 - **ThumbnailGeneratorTool**: genera thumbnails 9:16 con hook emocional vía LLM + Imagen 3. Auto-detecta nicho, construye prompt visual optimizado y guarda en `workspace/output/thumbnails/`.
 - **FullEditingEngine**: reemplaza los hooks opcionales de ShortGPT con un motor completo. Genera `schema.json` con `visual_assets`, `audio_assets`, timing por capa, efecto por preset (cinematic/energetic/mystery) y transiciones inteligentes.
-- **SaarComposerPRO**: 2 variantes por video (visual_1/visual_2), silence trim -50dB, volume boost configurable, xfade dinámico (fade/dissolve/wiperight), avatar overlay con chroma key opcional.
+- **SaarComposerPRO**: 2 variantes por video (visual_1/visual_2), silence trim -50dB, volume volume boost configurable, xfade dinámico (fade/dissolve/wiperight), avatar overlay con chroma key opcional.
 - **TitleGeneratorAgent**: Gemini Flash 2.5 con prompts especializados por nicho. 3 variantes por metadato. Pool curado de hashtags virales + generación LLM complementaria.
+- **OpenMontage Native Integration**: Se extrajeron los componentes más rigurosos y valiosos para el motor core (`om_scene_evaluator.py` y `om_scoring.py`).
+  - *Criterios de Selección*: Se escogieron las heurísticas de `slideshow_risk.py` y `variation_checker.py` por su tremendo impacto en la retención de audiencia ("Audience Retention Heuristics"), previniendo que los LLMs generen "presentaciones perezosas" (slideshows). De igual forma, se extrajo la arquitectura de `scoring.py` porque rankea activamente múltiples candidatos de video stock para seleccionar siempre el que provea la mejor correlación (Resolución + Frescura + Relevancia + Fiabilidad).
+  - *Pruebas Unitarias*: Cubierto al 100% de la lógica esencial matemática y verbal en `tests/test_om_scene_evaluator.py` y `tests/test_om_scoring.py`.
 
 ---
 
