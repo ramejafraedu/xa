@@ -424,8 +424,11 @@ def run_pipeline_v15(
         "provider_order_image_generation",
         "provider_order_music_generation",
         "provider_order_tts",
+        "target_duration_mins",
+        "video_format",
     }
     runtime_overrides = {k: v for k, v in runtime_overrides.items() if k in allowed_override_keys}
+
 
     allowed_remotion_compositions = {"CinematicRenderer", "UniversalCommercial"}
     raw_requested_composition = str(
@@ -507,6 +510,7 @@ def run_pipeline_v15(
         style_profile=get_style_for_platform(nicho.plataforma),
         reference_url=manifest.reference_url,
         precedence_rule=precedence_rule,
+        target_duration_seconds=float(runtime_overrides.get("target_duration_mins", 0.0)) * 60.0,
     )
 
     settings.ensure_dirs()
@@ -1707,6 +1711,7 @@ def run_pipeline_v15(
             audio_duration, was_trimmed = validate_duration(
                 audio_duration, nicho.plataforma, audio_path,
                 niche_slug=nicho.slug,
+                max_duration_override=story.target_duration_seconds,
             )
             if was_trimmed:
                 manifest.duration_seconds = audio_duration
@@ -2151,6 +2156,7 @@ def run_pipeline_v15(
                 timeline_payload=timeline_payload,
                 director_path=Path(manifest.director_json_path) if manifest.director_json_path else None,
                 style_playbook=manifest.style_playbook or "",
+                video_format=runtime_overrides.get("video_format") or getattr(settings, "default_video_format", getattr(settings, "defaultvideoformat", "vertical")),
             )
             # Optional: post-process rendered video with local EditingEngine (EML)
             try:
@@ -2217,6 +2223,7 @@ def run_pipeline_v15(
                             render_fixes=render_fixes,
                             director_path=Path(manifest.director_json_path) if manifest.director_json_path else None,
                             style_playbook=manifest.style_playbook or "",
+                            video_format=runtime_overrides.get("video_format") or getattr(settings, "default_video_format", getattr(settings, "defaultvideoformat", "vertical")),
                         )
                         render_backend = render_backend2
                         if render_error2:

@@ -784,6 +784,7 @@ def _stage_render(ctx: dict) -> dict:
         num_clips=content.num_clips,
         duraciones_clips=[float(d) for d in content.duraciones_clips] if content.duraciones_clips else None,
         manim_path=ctx.get("manim_overlay", getattr(manifest, "manim_overlay_path", None)),
+        video_format=getattr(settings, "default_video_format", getattr(settings, "defaultvideoformat", "vertical")),
     )
 
     if render_error:
@@ -818,6 +819,7 @@ def _stage_render(ctx: dict) -> dict:
                     num_clips=content.num_clips,
                     render_fixes=render_fixes,
                     manim_path=ctx.get("manim_overlay", getattr(manifest, "manim_overlay_path", None)),
+                    video_format=getattr(settings, "default_video_format", getattr(settings, "defaultvideoformat", "vertical")),
                 )
                 if render_error2:
                     render_error = render_error2
@@ -1268,6 +1270,7 @@ def run(
     publish_only: str = typer.Option("", "--publish-only", help="Re-publish already-rendered video by JOB_ID"),
     reference_url: str = typer.Option("", "--reference-url", help="Reference URL to guide script/scene generation (V15)"),
     manual_ideas: str = typer.Option("", "--manual-ideas", help="Ideas manuales prioritarias (usa | o saltos de linea)"),
+    duration_mins: float = typer.Option(0.0, "--duration-mins", help="Duración objetivo en minutos (0=auto). Hasta 3 min en vertical."),
     # ── V15 PRO flags ──
     director: bool = typer.Option(False, "--director", help="🎬 V15 Interactive mode (approve each stage)"),
     v15: bool = typer.Option(False, "--v15", help="🚀 V15 Autonomous mode (multi-agent + coherence)"),
@@ -1348,6 +1351,7 @@ def run(
                 mode=mode,
                 reference_url=reference_url,
                 manual_ideas=manual_ideas,
+                runtime_overrides={"target_duration_mins": duration_mins} if duration_mins > 0 else None,
             )
         else:
             console.print(f"\n[yellow]🧪 TEST MODE — V14 Classic ({test_niche})[/yellow]\n")
@@ -1365,6 +1369,7 @@ def run(
                 dry_run=True,
                 reference_url=reference_url,
                 manual_ideas=manual_ideas,
+                runtime_overrides={"target_duration_mins": duration_mins} if duration_mins > 0 else None,
             )
         else:
             console.print(f"\n[yellow]🏜️ DRY RUN V14 — {niche}[/yellow]\n")
@@ -1384,6 +1389,7 @@ def run(
                     mode=DirectorMode.AUTO,
                     reference_url=reference_url,
                     manual_ideas=manual_ideas,
+                    runtime_overrides={"target_duration_mins": duration_mins} if duration_mins > 0 else None,
                 )
             else:
                 run_pipeline(slug, manual_ideas=manual_ideas)
@@ -1407,6 +1413,7 @@ def run(
             mode=DirectorMode.INTERACTIVE,
             reference_url=reference_url,
             manual_ideas=manual_ideas,
+            runtime_overrides={"target_duration_mins": duration_mins} if duration_mins > 0 else None,
         )
 
     elif v15 and niche:
@@ -1423,6 +1430,7 @@ def run(
             mode=DirectorMode.AUTO,
             reference_url=reference_url,
             manual_ideas=manual_ideas,
+            runtime_overrides={"target_duration_mins": duration_mins} if duration_mins > 0 else None,
         )
 
     elif niche:
@@ -1439,6 +1447,7 @@ def run(
                 mode=DirectorMode.AUTO,
                 reference_url=reference_url,
                 manual_ideas=manual_ideas,
+                runtime_overrides={"target_duration_mins": duration_mins} if duration_mins > 0 else None,
             )
         else:
             run_pipeline(niche, manual_ideas=manual_ideas)

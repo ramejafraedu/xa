@@ -282,6 +282,13 @@ class ScriptAgent:
         ab_variant = _choose_ab_variant(nicho.nombre, platform)
         hook_rule = _hook_rules(platform, ab_variant)
         word_min, word_max, target_duration = _script_profile(platform)
+        
+        # User requested manual duration (up to 3 mins vertical, more for horizontal)
+        if getattr(state, "target_duration_seconds", 0) > 0:
+            target_words = int((state.target_duration_seconds / 60.0) * 145)
+            word_min = int(target_words * 0.9)
+            word_max = int(target_words * 1.1)
+
         precedence_block = self._build_precedence_block(state, nicho)
         niche_template = _nicho_story_template_block(getattr(nicho, "slug", ""))
 

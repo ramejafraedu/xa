@@ -439,12 +439,13 @@ def render_video_with_fallback(
     render_fixes: Optional[dict] = None,
     director_path: Optional[Path] = None,
     style_playbook: str = "",
+    video_format: str = "vertical",
 ) -> tuple[Optional[Path], Optional[Path], str, str]:
     """Try Remotion first (when enabled), then fallback to FFmpeg renderer."""
     from pipeline.renderer import render_video
 
-    require_remotion = bool(settings.require_remotion)
-    allow_ffmpeg_fallback = bool(settings.allow_ffmpeg_fallback)
+    require_remotion = bool(getattr(settings, "require_remotion", getattr(settings, "REQUIRE_REMOTION", False)))
+    allow_ffmpeg_fallback = bool(getattr(settings, "allow_ffmpeg_fallback", getattr(settings, "ALLOWFFMPEGFALLBACK", getattr(settings, "ALLOW_FFMPEG_FALLBACK", True))))
     remotion_attempted = False
 
     # Guard invalid policy combinations early.
@@ -545,6 +546,7 @@ def render_video_with_fallback(
         num_clips=num_clips,
         duraciones_clips=duraciones_clips,
         render_fixes=render_fixes,
+        video_format=video_format,
     )
     return ff_video, ff_thumb, ff_error, "ffmpeg"
 

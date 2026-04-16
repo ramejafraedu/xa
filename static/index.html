@@ -1780,6 +1780,21 @@
                         <label class="control-label" for="run-manual-ideas">Ideas manuales prioritarias</label>
                         <textarea id="run-manual-ideas" class="control-textarea" placeholder="Ejemplo: gancho polémico sobre deuda invisible&#10;Ejemplo: clímax con giro en el segundo 35"></textarea>
                     </div>
+                    <div style="display:flex; gap:12px; margin-top:8px;">
+                        <div class="control-field" style="flex:1;">
+                            <label class="control-label" for="run-video-format">Formato de Video</label>
+                            <select id="run-video-format" class="control-input">
+                                <option value="">Auto (predeterminado de plataforma)</option>
+                                <option value="vertical">Vertical (9:16)</option>
+                                <option value="horizontal">Horizontal (16:9)</option>
+                                <option value="square">Cuadrado (1:1)</option>
+                            </select>
+                        </div>
+                        <div class="control-field" style="flex:1;">
+                            <label class="control-label" for="run-duration-mins">Duración Target (Minutos)</label>
+                            <input id="run-duration-mins" class="control-input" type="number" step="0.5" min="0" max="60" placeholder="0 = Automático" value="0" />
+                        </div>
+                    </div>
                     <div class="control-actions">
                         <label class="control-check">
                             <input id="run-checkpoints" type="checkbox" />
@@ -2128,11 +2143,15 @@
             const ideasNode = document.getElementById("run-manual-ideas");
             const checkpointsNode = document.getElementById("run-checkpoints");
             const disableImageCacheNode = document.getElementById("run-disable-image-cache");
+            const formatNode = document.getElementById("run-video-format");
+            const durationNode = document.getElementById("run-duration-mins");
             return {
                 referenceUrl: referenceNode ? String(referenceNode.value || "").trim() : "",
                 manualIdeas: ideasNode ? String(ideasNode.value || "").trim() : "",
                 checkpoints: checkpointsNode ? Boolean(checkpointsNode.checked) : false,
                 disableImageCache: disableImageCacheNode ? Boolean(disableImageCacheNode.checked) : false,
+                videoFormat: formatNode ? String(formatNode.value || "").trim() : "",
+                durationMins: durationNode ? parseFloat(durationNode.value || 0) : 0.0,
             };
         }
 
@@ -2171,6 +2190,20 @@
                 : context.disableImageCache;
             if (disableImageCache) {
                 params.set("disable_image_cache", "true");
+            }
+
+            const videoFormat = Object.prototype.hasOwnProperty.call(options, "videoFormat")
+                ? String(options.videoFormat || "").trim()
+                : context.videoFormat;
+            if (videoFormat) {
+                params.set("video_format", videoFormat);
+            }
+
+            const durationMins = Object.prototype.hasOwnProperty.call(options, "durationMins")
+                ? parseFloat(options.durationMins || 0)
+                : context.durationMins;
+            if (durationMins > 0) {
+                params.set("target_duration_mins", durationMins.toString());
             }
 
             const query = params.toString();
@@ -3234,11 +3267,29 @@
                         '<div class="video-meta">' + escapeHtml(video.size_mb || 0) + " MB • " + escapeHtml(video.created || "-") + " • " + escapeHtml(video.dir || "-") + "</div>" +
                         '<div style="display:flex;gap:8px;margin-top:8px;">' +
                             '<a class="btn btn-secondary" href="' + download + '">⬇ Download</a>' +
+                            '<button class="btn btn-danger" style="background-color: var(--danger); color: white; margin-left: auto;" onclick="deleteVideo(\'' + video.name + '\', \'' + video.dir + '\')">🗑 Borrar</button>' +
                         "</div>";
                     grid.appendChild(card);
                 });
             } catch (error) {
                 toast("No se pudo leer videos: " + error.message, "error");
+            }
+        }
+
+        async function deleteVideo(filename, directory) {
+            if (!confirm("¿Borrar definitivamente el video " + filename + "?")) return;
+            try {
+                const url = "/api/videos/" + encodeURIComponent(filename) + "?dir=" + encodeURIComponent(directory);
+                const res = await fetch(url, { method: "DELETE" });
+                const data = await res.json();
+                if (res.ok && !data.error) {
+                    toast("Video eliminado exitosamente", "success");
+                    fetchVideos();
+                } else {
+                    toast("Error: " + (data.error || "No se pudo borrar"), "error");
+                }
+            } catch (error) {
+                toast("Error de conexión: " + error.message, "error");
             }
         }
 

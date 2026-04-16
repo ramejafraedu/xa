@@ -198,6 +198,7 @@ class StoryState(BaseModel):
     overall_score: float = 0
 
     # --- Metadata ---
+    target_duration_seconds: float = 0.0
     feedback_iterations: int = 0
     revision_notes: list[str] = Field(default_factory=list)
 

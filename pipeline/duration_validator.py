@@ -47,6 +47,7 @@ def validate_duration(
     platform: str,
     audio_path: Path,
     niche_slug: str = "",
+    max_duration_override: float = 0.0,
 ) -> tuple[float, bool]:
     """Validate and potentially trim audio to platform max.
 
@@ -58,6 +59,8 @@ def validate_duration(
         return audio_duration, False
 
     max_dur = get_max_duration(platform)
+    if max_duration_override > 0:
+        max_dur = max_duration_override
 
     if audio_duration <= max_dur:
         logger.debug(f"Duration OK: {audio_duration:.1f}s <= {max_dur:.1f}s ({platform})")

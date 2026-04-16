@@ -1378,6 +1378,8 @@ async def run_niche(
     reference_url: str = "",
     manual_ideas: str = "",
     disable_image_cache: bool = False,
+    target_duration_mins: float = 0.0,
+    video_format: str = "",
 ):
     """Trigger a pipeline run for a niche."""
     if nicho_slug not in NICHOS:
@@ -1402,6 +1404,8 @@ async def run_niche(
         manual_ideas,
         checkpoints,
         disable_image_cache,
+        target_duration_mins,
+        video_format,
     )
     return {
         "status": "started",
@@ -1421,9 +1425,11 @@ async def run_all(
     reference_url: str = "",
     manual_ideas: str = "",
     disable_image_cache: bool = False,
+    target_duration_mins: float = 0.0,
+    video_format: str = "",
 ):
     """Trigger all 5 nichos sequentially."""
-    background_tasks.add_task(_run_all_bg, checkpoints, reference_url, manual_ideas, disable_image_cache)
+    background_tasks.add_task(_run_all_bg, checkpoints, reference_url, manual_ideas, disable_image_cache, target_duration_mins, video_format)
     return {
         "status": "started",
         "nichos": list(NICHOS.keys()),
@@ -1441,6 +1447,8 @@ async def resume_job(
     checkpoints: bool = False,
     manual_ideas: str = "",
     disable_image_cache: bool = False,
+    target_duration_mins: float = 0.0,
+    video_format: str = "",
 ):
     """Resume a crashed job."""
     state = StateManager(settings.temp_dir)
@@ -1460,6 +1468,7 @@ async def resume_job(
         "checkpoint_mode": "web" if checkpoints else "auto",
         "disable_image_cache": bool(disable_image_cache),
     }
+
     background_tasks.add_task(
         _run_pipeline_bg,
         manifest.nicho_slug,
@@ -1469,6 +1478,8 @@ async def resume_job(
         resume_manual_ideas,
         checkpoints,
         disable_image_cache,
+        target_duration_mins,
+        video_format,
     )
     return {
         "status": "resuming",
@@ -2468,6 +2479,22 @@ async def download_video(video_name: str, dir: str = ""):
     )
 
 
+@app.delete("/api/videos/{video_name}")
+async def delete_video(video_name: str, dir: str = ""):
+    """Delete a generated MP4 file."""
+    video_path = _resolve_downloadable_video(video_name, dir)
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    try:
+        video_path.unlink()
+        logger.info(f"🗑 Deleted video: {video_path}")
+        return {"status": "deleted", "name": video_name}
+    except Exception as e:
+        logger.error(f"Error deleting video {video_name}: {e}")
+        return {"error": str(e)}
+
+
 @app.get("/api/checkpoints")
 async def get_checkpoints():
     """Return all pending checkpoints awaiting human approval."""
@@ -2499,6 +2526,8 @@ def _run_pipeline_bg(
     manual_ideas: str = "",
     checkpoints: bool = False,
     disable_image_cache: bool = False,
+    target_duration_mins: float = 0.0,
+    video_format: str = "",
 ):
     """Run pipeline in background thread (AUTO by default; WEB only when requested)."""
     try:
@@ -2507,6 +2536,10 @@ def _run_pipeline_bg(
         runtime_overrides: dict[str, object] = {}
         if disable_image_cache:
             runtime_overrides["disable_image_cache"] = True
+        if target_duration_mins > 0:
+            runtime_overrides["target_duration_mins"] = target_duration_mins
+        if video_format:
+            runtime_overrides["video_format"] = video_format
         logger.info(f"🚀 Starting V15 {mode.value.upper()} Pipeline for {nicho_slug}")
         result = run_pipeline_v15(
             nicho_slug,
@@ -2537,6 +2570,8 @@ def _run_all_bg(
     reference_url: str = "",
     manual_ideas: str = "",
     disable_image_cache: bool = False,
+    target_duration_mins: float = 0.0,
+    video_format: str = "",
 ):
     """Run all nichos sequentially."""
     for slug in NICHOS:
@@ -2546,6 +2581,8 @@ def _run_all_bg(
             reference_url=reference_url,
             manual_ideas=manual_ideas,
             disable_image_cache=disable_image_cache,
+            target_duration_mins=target_duration_mins,
+            video_format=video_format,
         )
 
 

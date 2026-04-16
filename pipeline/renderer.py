@@ -14,7 +14,17 @@ from typing import Any, Optional
 from loguru import logger
 
 from config import settings
+from models.scene_plan_model import FORMAT_SPECS, get_format_spec
 from services.http_client import download_file
+
+
+def _format_dims(fmt: str = "vertical") -> tuple[int, int, str, str]:
+    """Return (width, height, crop_expr_w, crop_expr_h) for a format string.
+
+    Centralizes all format-dependent resolution logic.
+    """
+    spec = get_format_spec(fmt)
+    return spec["w"], spec["h"], spec["crop_expr"], spec["crop_expr_h"]
 
 
 def _init_memory_manager(job_id: str = "") -> Optional["MemoryBudgetManager"]:
@@ -201,10 +211,13 @@ def render_video(
     duraciones_clips: Optional[list[float]] = None,
     render_fixes: Optional[dict] = None,
     manim_path: Optional[Path | str] = None,
+    video_format: str = "vertical",
 ) -> tuple[Optional[Path], Optional[Path], str]:
     """Render the final video. Returns (video_path, thumb_path, error_or_empty).
 
     If render_fixes is provided, applies corrected parameters from the self-healer.
+    Supports multi-format rendering: vertical (1080x1920), horizontal (1920x1080),
+    square (1080x1080) via the video_format parameter.
     """
     clip_paths = _resolve_clip_paths(clips, timestamp, temp_dir)
     if not clip_paths and not images:
@@ -234,7 +247,7 @@ def render_video(
     # --- Step 1: Create intro from image ---
     intro_path = None
     if images:
-        intro_path = _create_intro(images[0], timestamp, temp_dir)
+        intro_path = _create_intro(images[0], timestamp, temp_dir, video_format=video_format)
 
     # --- Step 2: Process clips (crop, scale, effects) ---
     processed, lista_lines = _process_clips(
@@ -250,6 +263,7 @@ def render_video(
         preset=preset,
         crf=crf,
         remove_filters=remove_filters,
+        video_format=video_format,
     )
 
     using_image_fallback = False
@@ -259,6 +273,7 @@ def render_video(
             timestamp=timestamp,
             temp_dir=temp_dir,
             target_duration=duracion_audio,
+            video_format=video_format,
         )
         if fallback_lines:
             logger.warning(
@@ -281,7 +296,8 @@ def render_video(
     # --- Step 3: Insert mid-video images ---
     if not using_image_fallback:
         lista_lines = _insert_mid_images(
-            lista_lines, images[1:], timestamp, temp_dir, num_clips
+            lista_lines, images[1:], timestamp, temp_dir, num_clips,
+            video_format=video_format,
         )
 
     if not lista_lines:
@@ -335,6 +351,7 @@ def render_video(
     # --- Step 7: Generate thumbnail ---
     thumb_path = _generate_thumbnail(
         video_final, images, gancho, titulo, timestamp, temp_dir,
+        video_format=video_format,
     )
 
     # --- Step 8: Move to output ---
@@ -363,12 +380,13 @@ def render_video(
     return final_path, thumb_path, ""
 
 
-def _create_intro(image: Path, timestamp: int, temp_dir: Path) -> Optional[Path]:
+def _create_intro(image: Path, timestamp: int, temp_dir: Path, video_format: str = "vertical") -> Optional[Path]:
     """Create a 2s intro video from an image."""
+    w, h, _, _ = _format_dims(video_format)
     intro = temp_dir / f"intro_{timestamp}.mp4"
     vf = (
-        "scale=1080:1920:force_original_aspect_ratio=decrease,"
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
         "fade=t=out:st=1.5:d=0.5"
     )
     cmd = [
@@ -399,8 +417,12 @@ def _process_clips(
     preset: str,
     crf: str,
     remove_filters: list[str],
+    video_format: str = "vertical",
 ) -> tuple[int, list[str]]:
     """Process raw clips: crop, scale, effects. Returns (ok_count, lista_lines)."""
+    w, h, crop_w, crop_h = _format_dims(video_format)
+    aspect_expr = f"{get_format_spec(video_format)['aspect_num']}/{get_format_spec(video_format)['aspect_den']}"
+
     # Calculate durations
     mid_reserve = sum(
         [1.4, 1.5, 1.3][:len(images) - 1]
@@ -430,8 +452,8 @@ def _process_clips(
         fade_out_st = max(0, dur - fade_dur)
 
         vf = (
-            f"crop='if(gt(a,9/16),ih*9/16,iw)':'if(gt(a,9/16),ih,iw*16/9)':'(iw-ow)/2':'(ih-oh)/2',"
-            f"scale=1080x1920:flags=lanczos,fps=30,"
+            f"crop='{crop_w}':'{crop_h}':'(iw-ow)/2':'(ih-oh)/2',"
+            f"scale={w}x{h}:flags=lanczos,fps=30,"
             f"eq=contrast=1.12:brightness=0.03:saturation=1.15:gamma=1.05,"
             f"unsharp=lx=5:ly=5:la=1.2,"
             f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st}:d={fade_dur}"
@@ -440,9 +462,9 @@ def _process_clips(
         # Add zoompan based on speed (unless healer removed it)
         if "zoompan" not in remove_filters:
             if velocidad == "ultra_rapido":
-                vf += ",zoompan=z='if(lte(on,4),1.08,zoom-0.0015)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=2:s=1080x1920:fps=30"
+                vf += f",zoompan=z='if(lte(on,4),1.08,zoom-0.0015)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=2:s={w}x{h}:fps=30"
             elif velocidad == "rapido":
-                vf += ",zoompan=z='if(lte(on,6),1.05,zoom-0.001)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=3:s=1080x1920:fps=30"
+                vf += f",zoompan=z='if(lte(on,6),1.05,zoom-0.001)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=3:s={w}x{h}:fps=30"
 
         cmd = [
             "ffmpeg", "-y", "-threads", "2",
@@ -474,10 +496,13 @@ def _insert_mid_images(
     timestamp: int,
     temp_dir: Path,
     num_clips: int,
+    video_format: str = "vertical",
 ) -> list[str]:
     """Insert image segments at strategic positions across the timeline."""
     if not images:
         return lista_lines
+
+    w, h, _, _ = _format_dims(video_format)
 
     position_fractions = [0.18, 0.32, 0.46, 0.60, 0.74, 0.86, 0.94]
     durations = [1.2, 1.3, 1.4, 1.4, 1.3, 1.2, 1.1]
@@ -496,9 +521,9 @@ def _insert_mid_images(
 
         seg = temp_dir / f"imgseg_{idx+2}_{timestamp}.mp4"
         vf = (
-            "scale=1080:1920:force_original_aspect_ratio=decrease,"
-            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
-            "zoompan=z='if(lte(on,45),1.06,zoom-0.0008)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30"
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
+            f"zoompan=z='if(lte(on,45),1.06,zoom-0.0008)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps=30"
         )
         cmd = [
             "ffmpeg", "-y", "-loop", "1",
@@ -541,8 +566,10 @@ def _build_image_fallback_timeline(
     timestamp: int,
     temp_dir: Path,
     target_duration: float,
+    video_format: str = "vertical",
 ) -> list[str]:
     """Build full-duration visual timeline from images when video clips fail."""
+    w, h, _, _ = _format_dims(video_format)
     valid_images = [img for img in images if img.exists() and img.stat().st_size > 1000]
     if not valid_images:
         return []
@@ -561,20 +588,20 @@ def _build_image_fallback_timeline(
 
         if idx % 2 == 0:
             zoompan = (
-                "zoompan=z='if(lte(on,36),1.07,zoom-0.0008)':"
-                "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30"
+                f"zoompan=z='if(lte(on,36),1.07,zoom-0.0008)':"
+                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps=30"
             )
         else:
             zoompan = (
-                "zoompan=z='if(lte(on,36),1.04,zoom+0.0006)':"
-                "x='(iw-iw/zoom)/3':y='(ih-ih/zoom)/3':d=1:s=1080x1920:fps=30"
+                f"zoompan=z='if(lte(on,36),1.04,zoom+0.0006)':"
+                f"x='(iw-iw/zoom)/3':y='(ih-ih/zoom)/3':d=1:s={w}x{h}:fps=30"
             )
 
         fade_dur = 0.18 if dur > 0.6 else 0.10
         fade_out_st = max(0.0, dur - fade_dur)
         vf = (
-            "scale=1080:1920:force_original_aspect_ratio=decrease,"
-            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
             "setsar=1,"
             f"{zoompan},"
             f"fade=t=in:st=0:d={fade_dur},fade=t=out:st={fade_out_st}:d={fade_dur}"
@@ -785,8 +812,10 @@ def _generate_thumbnail(
     titulo: str,
     timestamp: int,
     temp_dir: Path,
+    video_format: str = "vertical",
 ) -> Optional[Path]:
     """Generate video thumbnail."""
+    w, h, _, _ = _format_dims(video_format)
     thumb = temp_dir / f"thumb_{timestamp}.jpg"
 
     # Use image 4 or image 1 as base
@@ -803,8 +832,8 @@ def _generate_thumbnail(
         # Escape colon in Windows path for the textfile parameter
         escaped_txt_path = text_file.as_posix().replace(":", r"\:")
         vf = (
-            "scale=1080:1920:force_original_aspect_ratio=decrease,"
-            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
             f"drawtext=textfile='{escaped_txt_path}':"
             "fontcolor=white:fontsize=68:line_spacing=14:"
             "x=(w-text_w)/2:y=h*0.70:"

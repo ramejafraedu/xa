@@ -296,7 +296,7 @@ class Settings(BaseSettings):
     remotion_frame_cache_max_retries: int = 2  # Reintentos antes de fallback
     remotion_frame_cache_force_fallback: bool = False  # Forzar FFmpeg si recovery falla
     # Compositor memory limit in MB to pass to Remotion compositor (helps avoid OOMs)
-    remotion_compositor_memory_limit: int = 8192
+    remotion_compositor_memory_limit: int = 49152
     
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True
@@ -320,6 +320,9 @@ class Settings(BaseSettings):
     openmontage_enable_enhancement: bool = False
     openmontage_enable_video_utilities: bool = False
     v15_strict_free_media_tools: bool = True
+
+    # Video format: vertical (1080x1920), horizontal (1920x1080), square (1080x1080)
+    default_video_format: str = "vertical"
 
     # --- V16 Integration: Playbook System ---
     playbook_validation_enabled: bool = True
