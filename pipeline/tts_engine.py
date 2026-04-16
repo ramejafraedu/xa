@@ -802,7 +802,19 @@ def clean_tts_text(text: str) -> str:
 
 
 def get_audio_duration(audio_path: Path) -> float:
-    """Get audio duration in seconds using ffprobe."""
+    """Get audio duration in seconds using mutagen for exact precision."""
+    try:
+        from mutagen import File
+        audio = File(audio_path)
+        if audio and hasattr(audio.info, "length"):
+            return float(audio.info.length)
+        else:
+            logger.warning(f"Mutagen could not read length of {audio_path}, falling back to ffprobe")
+    except ImportError:
+        logger.warning("mutagen not installed, falling back to ffprobe")
+    except Exception as e:
+        logger.warning(f"mutagen failed for {audio_path}: {e}")
+        
     try:
         cmd = [
             "ffprobe", "-v", "error",

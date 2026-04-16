@@ -202,20 +202,23 @@ def render_with_remotion(
 
     try:
         # Clean workspace temp to avoid stale artifacts from previous runs
-        try:
-            tmp = settings.temp_dir
-            if tmp.exists():
-                for item in tmp.iterdir():
-                    try:
-                        if item.is_file():
-                            item.unlink(missing_ok=True)
-                        elif item.is_dir():
-                            shutil.rmtree(item, ignore_errors=True)
-                    except Exception:
-                        pass
-                logger.info("🧹 Cleared workspace temp before Remotion render")
-        except Exception as exc:
-            logger.debug(f"Could not clear temp before render: {exc}")
+        if not getattr(settings, "remotion_keep_temp", False):
+            try:
+                tmp = settings.temp_dir
+                if tmp.exists():
+                    for item in tmp.iterdir():
+                        try:
+                            if item.is_file():
+                                item.unlink(missing_ok=True)
+                            elif item.is_dir():
+                                shutil.rmtree(item, ignore_errors=True)
+                        except Exception:
+                            pass
+                    logger.info("🧹 Cleared workspace temp before Remotion render")
+            except Exception as exc:
+                logger.debug(f"Could not clear temp before render: {exc}")
+        else:
+            logger.info("⏭️ Skipped clearing workspace temp (REMOTION_KEEP_TEMP=True)")
 
         _ensure_public_workspace_link()
         # Si está activado, forzar materialización de assets antes de render
@@ -809,6 +812,8 @@ def _build_legacy_props(
             "backgroundColor": "rgba(0, 0, 0, 0.60)",
         }
 
+    payload["audioDurationInSeconds"] = round(float(duration), 3)
+
     return payload
 
 
@@ -964,6 +969,8 @@ def _normalize_timeline_props(
         }
     else:
         props.pop("captions", None)
+
+    props["audioDurationInSeconds"] = round(float(metadata.get("duration", 0.0) or 0.0), 3)
 
     return props
 
@@ -2313,20 +2320,8 @@ def _clear_remotion_cache() -> None:
             except Exception as exc:
                 logger.debug(f"Could not clear cache {cache_path}: {exc}")
 
-    # Also clear public/workspace to force asset re-materialization
-    public_workspace = REMOTION_DIR / "public" / "workspace"
-    if public_workspace.exists():
-        try:
-            # Only clear files, preserve directory structure
-            for item in public_workspace.iterdir():
-                if item.is_file():
-                    item.unlink(missing_ok=True)
-                elif item.is_dir():
-                    shutil.rmtree(item, ignore_errors=True)
-            logger.info(f"🧹 Cleared public/workspace cache")
-        except Exception as exc:
-            logger.debug(f"Could not clear workspace: {exc}")
-
+    # Nota: Ya NO borramos public/workspace aquí para no causar "missing assets after reattempt".
+    # La materialización forzada se encarga de sobreescribir lo necesario.
 
 def _force_rebuild_remotion_bundle(timeout: int = 900) -> None:
     """Attempt to rebuild the remotion-composer bundle (npm run build).

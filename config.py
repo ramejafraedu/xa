@@ -62,6 +62,8 @@ class Settings(BaseSettings):
 
     # Fuerza la materialización de assets en public/workspace antes de cada render Remotion
     remotion_force_materialize: bool = True
+    remotion_keep_temp: bool = True
+    remotion_materialize_stock: bool = True
 
     # AI / Inference
     github_token: str = ""

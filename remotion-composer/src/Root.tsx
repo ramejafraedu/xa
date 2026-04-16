@@ -160,6 +160,9 @@ export function resolveTheme(props: Record<string, unknown>): ThemeConfig {
 const calculateMetadata: CalculateMetadataFunction<ExplainerProps> = async ({
   props,
 }) => {
+  if (props.audioDurationInSeconds) {
+    return { durationInFrames: Math.ceil(props.audioDurationInSeconds * 30) };
+  }
   const cuts = props.cuts || [];
   if (cuts.length === 0) {
     return { durationInFrames: 30 * 60 };
@@ -172,6 +175,9 @@ const calculateMetadata: CalculateMetadataFunction<ExplainerProps> = async ({
 const calculateUniversalCommercialMetadata: CalculateMetadataFunction<DirectorConfig> = async ({
   props,
 }) => {
+  if ((props as any).audioDurationInSeconds) {
+    return { durationInFrames: Math.ceil((props as any).audioDurationInSeconds * 30) };
+  }
   const hookDuration = 150;
   const solutionDuration = 150;
   const featureDuration = 180;

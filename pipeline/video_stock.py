@@ -333,7 +333,9 @@ def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False
 
 
     # Rotate page number for variety (pages 1-5)
-    # Asegura que random es el módulo, no una variable local
+    import time
+    import random
+    random.seed(time.time())
     effective_page = random.randint(1, 5)
 
     q = urllib.parse.quote(keyword.strip())
@@ -357,6 +359,9 @@ def _fetch_pexels(keyword: str, keys: list[str], require_realistic: bool = False
 
             data = response.json()
             videos = data.get("videos", [])
+            import time
+            import random
+            random.seed(time.time())
             random.shuffle(videos)
             urls = []
 
@@ -417,6 +422,9 @@ def _fetch_pixabay_video(keyword: str, require_realistic: bool = False, page: in
         )
         data = get_json(url, max_retries=2)
         hits = data.get("hits", [])
+        import time
+        import random
+        random.seed(time.time())
         random.shuffle(hits)
         urls = []
         for h in hits:
@@ -482,6 +490,9 @@ def _fetch_coverr(keyword: str, require_realistic: bool = False) -> list[str]:
 
         data = response.json()
         items = data.get("hits", data.get("videos", []))
+        import time
+        import random
+        random.seed(time.time())
         random.shuffle(items)
         urls = []
         for item in items[:3]:

@@ -325,12 +325,14 @@ const Soundtrack: React.FC<{
 
 export const calculateCinematicMetadata: CalculateMetadataFunction<CinematicRendererProps> =
   async ({ props }) => {
-    const totalSeconds =
-      props.scenes.length === 0
-        ? 30
-        : Math.max(
-            ...props.scenes.map((scene) => scene.startSeconds + scene.durationSeconds),
-          );
+    let totalSeconds = 30;
+    if (props.audioDurationInSeconds && typeof props.audioDurationInSeconds === "number") {
+      totalSeconds = props.audioDurationInSeconds;
+    } else if (props.scenes && props.scenes.length > 0) {
+      totalSeconds = Math.max(
+        ...props.scenes.map((scene) => scene.startSeconds + scene.durationSeconds),
+      );
+    }
 
     return {
       durationInFrames: Math.max(1, Math.ceil(totalSeconds * FPS)),
@@ -381,12 +383,12 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
           durationInFrames={Math.round(scene.durationSeconds * FPS)}
         >
           {scene.kind === "video" ? (
-            <SceneVideo scene={scene} />
+            <SceneVideo scene={scene as any} />
           ) : (
             <TitleCard
-              text={scene.text}
-              accent={scene.accent ?? "#86d8ff"}
-              intensity={scene.intensity ?? 1}
+              text={(scene as any).text}
+              accent={(scene as any).accent ?? "#86d8ff"}
+              intensity={(scene as any).intensity ?? 1}
               titleFontSize={titleFontSize}
               titleWidth={titleWidth}
               signalLineCount={signalLineCount}

@@ -2359,6 +2359,14 @@ def run_pipeline_v15(
                 except Exception as exc:
                     logger.warning(f"Avatar injection failed: {exc}")
 
+            # Optional: Post-process for Vintage / Old Money aesthetic
+            if video_path and Path(video_path).exists():
+                from pipeline.post_processing import apply_post_processing
+                processed_path = apply_post_processing(Path(video_path), settings.temp_dir)
+                if processed_path and processed_path.exists():
+                    video_path = str(processed_path)
+                    _add_decision("render", "Applied Vintage/Old Money post-processing", video_path)
+
             # Optional OpenMontage enhancement chain (free/local).
             if settings.enable_openmontage_free_tools and settings.openmontage_enable_enhancement:
                 graded_tmp = settings.temp_dir / f"graded_{timestamp}.mp4"

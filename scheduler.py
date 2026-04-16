@@ -112,3 +112,6 @@ def start_scheduler():
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         console.print("[yellow]Scheduler stopped.[/yellow]")
+
+if __name__ == "__main__":
+    start_scheduler()

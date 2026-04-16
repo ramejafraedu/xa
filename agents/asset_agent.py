@@ -354,15 +354,22 @@ class AssetAgent:
 
             translated = self._translate_stock_phrase(normalized)
             if translated and self._is_allowed_stock_candidate(translated, profile, nicho.slug):
-                if is_historical and decade_suffix and not any(x in translated for x in ["vintage", "historical", "19"]):
-                    translated = f"{decade_suffix} {translated}"
+                if is_historical and decade_suffix and not any(x in translated for x in ["vintage", "historical", "19", "archive"]):
+                    translated = f"vintage historical aesthetic {decade_suffix} {translated}"
+                
+                # Fuerza las queries negativas y de estética
+                if "-modern" not in translated:
+                    translated = f"{translated} -modern -3d -vector -cartoon -futuristic"
+                
                 candidates.append(translated)
 
             if " " in normalized and len(normalized.split()) <= 4 and len(normalized) <= 40:
                 phrase_candidate = self._translate_stock_phrase(normalized)
                 if self._is_allowed_stock_candidate(phrase_candidate, profile, nicho.slug):
-                    if is_historical and decade_suffix and not any(x in phrase_candidate for x in ["vintage", "historical", "19"]):
-                        phrase_candidate = f"{decade_suffix} {phrase_candidate}"
+                    if is_historical and decade_suffix and not any(x in phrase_candidate for x in ["vintage", "historical", "19", "archive"]):
+                        phrase_candidate = f"vintage historical aesthetic {decade_suffix} {phrase_candidate}"
+                    if "-modern" not in phrase_candidate:
+                        phrase_candidate = f"{phrase_candidate} -modern -3d -vector -cartoon -futuristic"
                     candidates.append(phrase_candidate)
             for token in normalized.split():
                 if len(token) >= 4:
@@ -370,8 +377,10 @@ class AssetAgent:
                         continue
                     token_candidate = self._translate_stock_phrase(token)
                     if self._is_allowed_stock_candidate(token_candidate, profile, nicho.slug):
-                        if is_historical and decade_suffix and not any(x in token_candidate for x in ["vintage", "historical", "19"]):
-                            token_candidate = f"{decade_suffix} {token_candidate}"
+                        if is_historical and decade_suffix and not any(x in token_candidate for x in ["vintage", "historical", "19", "archive"]):
+                            token_candidate = f"vintage historical aesthetic {decade_suffix} {token_candidate}"
+                        if "-modern" not in token_candidate:
+                            token_candidate = f"{token_candidate} -modern -3d -vector -cartoon -futuristic"
                         candidates.append(token_candidate)
 
         seen: set[str] = set()

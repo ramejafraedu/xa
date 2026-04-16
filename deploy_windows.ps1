@@ -67,7 +67,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Extraer y configurar en servidor
 Write-Host "📂 Configurando en servidor..." -ForegroundColor Yellow
-$remoteCommands = @"
+$remoteCommands = "
 set -e
 mkdir -p $REMOTE_DIR
 cd $REMOTE_DIR
@@ -89,14 +89,10 @@ fi
 # Permisos
 chmod +x setup_ubuntu.sh 2>/dev/null || true
 
-echo "✅ Codigo desplegado en $REMOTE_DIR"
-echo "🎬 Version: V16.1 - Anti-Repeticion + Remotion"
-echo ""
-echo "🔧 Proximos pasos en el servidor:"
-echo "   1. cd $REMOTE_DIR"
-echo "   2. ./setup_ubuntu.sh  (solo primera vez)"
-echo "   3. python video_factory.py --test curiosidades"
-"@
+echo '✅ Codigo desplegado en $REMOTE_DIR'
+echo '🎬 Version: V16.1 - Anti-Repeticion + Remotion'
+"
+
 
 ssh -i $SSH_KEY -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" $remoteCommands
 

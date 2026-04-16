@@ -24,10 +24,13 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+import os
 
+import httpx
 from loguru import logger
 
 from models.content import JobManifest, JobStatus
@@ -106,6 +109,28 @@ class StateManager:
         data = manifest.model_dump(mode="json")
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         logger.debug(f"Manifest saved: {manifest.job_id} status={manifest.status}")
+        self._sync_firebase(manifest.job_id, data)
+
+    def _sync_firebase(self, job_id: str, data: dict) -> None:
+        """Sincroniza el JSON completo con Firebase RTDB de forma serverless."""
+        db_url = os.environ.get("FIREBASE_DB_URL")
+        if not db_url:
+            return
+            
+        def _push():
+            try:
+                # Usa httpx asíncrono o sincrónico para la actualización (patch)
+                with httpx.Client() as client:
+                    # RTDB usa .json al final
+                    url = f"{db_url.rstrip('/')}/jobs/{job_id}.json"
+                    res = client.patch(url, json=data, timeout=5.0)
+                    if res.status_code >= 400:
+                        logger.warning(f"Firebase sync for {job_id} returned {res.status_code}")
+            except Exception as e:
+                logger.debug(f"Firebase sync failed (non-blocking): {e}")
+
+        # Fire and forget
+        threading.Thread(target=_push, daemon=True).start()
 
     def load(self, job_id: str) -> Optional[JobManifest]:
         """Load saved manifest if it exists."""

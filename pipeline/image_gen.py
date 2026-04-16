@@ -323,6 +323,9 @@ def _download_pexels_image(prompt: str, output: Path) -> bool:
                 continue
 
             photos = response.json().get("photos", [])
+            import time
+            import random
+            random.seed(time.time())
             random.shuffle(photos)
             for photo in photos:
                 src = photo.get("src", {}) if isinstance(photo, dict) else {}
@@ -351,6 +354,9 @@ def _download_pixabay_image(prompt: str, output: Path) -> bool:
             return False
 
         hits = response.json().get("hits", [])
+        import time
+        import random
+        random.seed(time.time())
         random.shuffle(hits)
         for item in hits:
             image_url = item.get("largeImageURL") or item.get("webformatURL")
@@ -366,6 +372,9 @@ def _download_pollinations(prompt: str, output: Path) -> bool:
     """Download image from Pollinations API."""
     try:
         encoded = urllib.parse.quote(prompt)
+        import time
+        import random
+        random.seed(time.time())
         url = (
             f"{settings.pollinations_base}/prompt/{encoded}"
             f"?width=1080&height=1920&model=flux&nologo=true&seed={random.randint(1, 999999)}"

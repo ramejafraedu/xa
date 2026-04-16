@@ -834,6 +834,30 @@ def _stage_render(ctx: dict) -> dict:
         ctx["abort"] = True
         return ctx
 
+    # QA Post-Render FX Stage: Vintage cinematic look
+    try:
+        import subprocess
+        import shutil
+        ctx["progress"].update(ctx["task_id"], description="[cyan]🎞️ Applying Vintage FX...")
+        fx_video_path = Path(video_path).with_name(f"fx_{Path(video_path).name}")
+        vf_filter = "noise=alls=15:allf=t+u,vignette=PI/4,eq=contrast=1.1:saturation=0.85:gamma=0.9"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(video_path),
+                "-vf", vf_filter,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                "-c:a", "copy",
+                str(fx_video_path)
+            ],
+            capture_output=True,
+            check=True
+        )
+        if fx_video_path.exists():
+            shutil.move(str(fx_video_path), str(video_path))
+            logger.info("Vintage FX applied successfully.")
+    except Exception as e:
+        logger.warning(f"Failed to apply vintage FX: {e}")
+
     manifest.video_path = str(video_path)
     manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
     if manifest.thumbnail_path:

@@ -66,6 +66,7 @@ export interface CinematicCaptionConfig {
 export interface CinematicRendererProps {
   [key: string]: unknown;
   scenes: CinematicScene[];
+  audioDurationInSeconds?: number;
   titleFontSize?: number;
   titleWidth?: number;
   signalLineCount?: number;
