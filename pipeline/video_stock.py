@@ -30,6 +30,11 @@ except Exception:  # pragma: no cover
     get_asset_history = None
     AssetHistory = None
 
+try:
+    from services.gemini_visual_enhancer import enhanced_keywords as _gemini_keywords
+except Exception:  # pragma: no cover
+    _gemini_keywords = None
+
 
 _GREENSCREEN_HINTS = {
     "green screen",
@@ -196,6 +201,34 @@ def fetch_stock_videos(
     If 'url' is empty, it means the file is already fully cached.
     """
     settings.ensure_dirs()
+
+    # V16.1 "Gemini en todo": augment keywords with Gemini-distilled terms
+    # derived from the actual script scenes when available.
+    if scene_texts and _gemini_keywords is not None and getattr(settings, "gemini_everywhere_mode", False):
+        try:
+            extra_kw = _gemini_keywords(
+                scenes=list(scene_texts),
+                niche_visual="",
+                style_playbook=None,
+                max_keywords=max(4, min(8, num_needed)),
+            )
+            if extra_kw:
+                merged: list[str] = []
+                seen = set()
+                for k in (list(keywords or []) + list(extra_kw)):
+                    key = (k or "").strip().lower()
+                    if not key or key in seen:
+                        continue
+                    seen.add(key)
+                    merged.append(k)
+                logger.info(
+                    f"[video_stock] gemini keywords added "
+                    f"{len(extra_kw)}, total keywords={len(merged)}"
+                )
+                keywords = merged
+        except Exception as exc:
+            logger.debug(f"[video_stock] gemini keyword enhance failed: {exc}")
+
     index_file = settings.video_cache_dir / "index.json"
 
     # V16.1: Skip cache if disabled for fresh content

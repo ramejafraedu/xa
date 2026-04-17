@@ -30,6 +30,11 @@ try:
 except Exception:  # pragma: no cover
     _load_style_playbook = None
 
+try:
+    from services.gemini_visual_enhancer import enhance_scene_prompts as _gemini_enhance
+except Exception:  # pragma: no cover
+    _gemini_enhance = None
+
 
 # Position-specific prompts (identical to MASTER V13 ✅ Sinc Imagen)
 POSITION_EXTRAS = {
@@ -175,6 +180,20 @@ def generate_images_with_stats(
     # V16.1: style playbook modifiers (palette, mood, motion) for niche consistency.
     style_extra = _style_modifiers(style_playbook) if style_playbook else ""
 
+    # V16.1 "Gemini en todo": batch-enhance scene prompts via Gemini when
+    # gemini_everywhere_mode is on. Single LLM round per generation run.
+    enhanced_scenes: list[dict] = []
+    if scene_texts and _gemini_enhance is not None and getattr(settings, "gemini_everywhere_mode", False):
+        try:
+            enhanced_scenes = _gemini_enhance(
+                scenes=list(scene_texts)[:count],
+                niche_visual=visual_nicho or "",
+                style_playbook=style_playbook,
+            ) or []
+        except Exception as exc:
+            logger.debug(f"[image_gen] gemini enhancer failed: {exc}")
+            enhanced_scenes = []
+
     stock_first = settings.prefer_stock_images if prefer_stock_images is None else bool(prefer_stock_images)
     cache_enabled = settings.enable_image_cache if enable_cache is None else bool(enable_cache)
     try:
@@ -206,8 +225,12 @@ def generate_images_with_stats(
                 scene_phrase = (scene_texts[idx - 1] or "").strip()[:220]
             except IndexError:
                 scene_phrase = ""
+        # Prefer Gemini-enhanced English visual prompt when available.
+        gemini_prompt = ""
+        if enhanced_scenes and idx - 1 < len(enhanced_scenes):
+            gemini_prompt = (enhanced_scenes[idx - 1].get("visual_prompt") or "").strip()
         full_prompt = ", ".join(filter(None, [
-            prompt_base, visual_nicho, scene_phrase, style_extra,
+            prompt_base, visual_nicho, gemini_prompt or scene_phrase, style_extra,
             base_style, style_ab, extra,
         ]))
 
