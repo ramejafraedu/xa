@@ -56,6 +56,9 @@ class NichoConfig(BaseModel):
     pitch_tts: str = "+0Hz"
     horas: list[int] = Field(default_factory=lambda: [7, 15, 23])
     direccion_visual: str = ""
+    # Optional style playbook name (styles/<name>.yaml) used for visual
+    # consistency (color palette, typography, motion, transitions).
+    style_playbook: str | None = None
 
     # --- Validators ---
 

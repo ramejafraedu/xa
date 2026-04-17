@@ -19,6 +19,18 @@ from models.content import ABVariant
 from services.llm_router import call_llm_primary_gemini
 from services.niche_memory import normalize_manual_ideas
 
+try:
+    from pipeline.om_scene_evaluator import evaluate_composition_plan
+except Exception:  # pragma: no cover
+    evaluate_composition_plan = None
+
+
+# V16.1 PRO coherence thresholds — on a 0..10 scale where 10 is best.
+# We accept scripts with score >= 8.5 on first pass; between 6 and 8.5 we retry
+# once; below 6 we retry once. After retry, we accept whatever we get and log.
+_COHERENCE_MIN_SCORE = 8.5
+_COHERENCE_HARD_FLOOR = 6.0
+
 
 def _hash_string(s: str) -> int:
     h = 2166136261
@@ -227,27 +239,33 @@ Devuelve solo JSON valido, sin texto extra."""
 USER_PROMPT = """Genera un SHORT viral de 30-45 segundos para {nicho}, tono {tono}, plataforma {plataforma}. Usa variante {ab_variant}.
 IDEAS MANUALES PRIORITARIAS: {manual_ideas_block}
 
-Tu apertura debe desafiar una creencia popular o exponer una manipulacion habitual EN LOS PRIMEROS 2 SEGUNDOS.
+HOOK BRUTAL (0-2s) — ESCOGE UNA tactica concreta:
+  1) SHOCK: dato/estadistica imposible ("El 97% de X...").
+  2) QUESTION: pregunta prohibida o imposible ("Por que nadie te cuenta que...?").
+  3) STATEMENT: afirmacion polemica/contra-intuitiva que rompe el sentido comun.
+PROHIBIDO empezar con "hola", "hoy", "sabes que", "te voy a contar".
 Duracion objetivo del contenido: {target_duration}.
-ESTRUCTURA del guion:
-- Hook (0-2s)
-- Desarrollo: 8-10 frases cortas, cada una = un cambio visual (3-5s cada uno)
-- Cierre con MICRO-LOOP de curiosidad (ejemplo: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...")
 
-Devuelve EXACTAMENTE este JSON:
+ESTRUCTURA del guion (OBLIGATORIA):
+- Hook (0-2s) — frase de <=12 palabras que cumple una tactica de arriba.
+- Desarrollo (2-35s): 10-12 micro-escenas, cada frase = un cambio visual (3-5s).
+- Cierre con MICRO-LOOP de curiosidad (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...", "y el final te va a romper la cabeza...").
+
+Devuelve EXACTAMENTE este JSON (num_clips DEBE estar entre 10 y 12):
 {{
-  "num_clips": 10,
+  "num_clips": 11,
   "titulo": "titulo corto potente max 9 palabras",
-  "gancho": "hook max 10 palabras, impactante y curioso (leible en <=2s)",
-  "gancho_variants": ["gancho shock","gancho pregunta","gancho promesa"],
+  "gancho": "hook max 12 palabras, impactante y curioso (leible en <=2s)",
+  "gancho_variants": ["gancho shock","gancho pregunta","gancho statement"],
   "hooks_alternos": ["hook alterno A","hook alterno B","hook alterno C"],
   "hook_score": 9,
+  "hook_tactic": "shock|question|statement",
   "block_scores": {{
     "hook": 9,
     "desarrollo": 8,
     "micro_loop": 9
   }},
-    "guion": "guion de STRICTAMENTE {word_min}-{word_max} palabras, frases cortas de 5-10 palabras, ritmo rapido con cambio de idea cada 3-5s, terminando con un micro-loop de curiosidad (ej: 'pero lo peor todavia esta por venir...')",
+  "guion": "guion de STRICTAMENTE {word_min}-{word_max} palabras, frases cortas de 5-10 palabras, ritmo rapido con cambio de idea cada 3-5s, terminando con un micro-loop de curiosidad",
   "micro_loop": "frase final corta que genera curiosidad para re-ver o continuar (NO es un CTA tradicional)",
   "cta": "frase corta suave de una sola oracion, opcional; puede repetir el micro_loop",
   "caption": "caption max 160 caracteres con 3 hashtags",
@@ -255,7 +273,8 @@ Devuelve EXACTAMENTE este JSON:
   "mood_musica": "cinematic|motivational|dark|ambient|epic|sad|corporate",
   "velocidad_cortes": "ultra_rapido",
   "prompt_imagen": "thumbnail prompt in English, ultra specific, must include: {direccion_visual}, dramatic premium composition, no text overlays",
-  "duraciones_clips": [2.0,3.0,3.0,4.0,4.0,4.0,4.0,4.0,4.0,3.5],
+  "duraciones_clips": [2.0,3.0,3.5,3.5,4.0,4.0,4.0,4.0,4.0,3.5,3.0],
+  "transition_suggestions": ["cut","punch-in","whip","dissolve","wipe","cut","cut","dissolve","wipe","cut","zoom-out"],
   "viral_score": 9
 }}"""
 
@@ -359,12 +378,205 @@ def generate_content(
         )
         parsed = _trim_long_script(parsed, word_max)
 
+    # --- V16.1 PRO: enforce 10-12 scenes for short-form pacing ---
+    parsed = _enforce_scene_count(parsed)
+
+    # --- V16.1 PRO: OpenMontage coherence scoring + 1-retry ---
+    specs = _derive_pseudo_scene_specs(parsed)
+    score_10, payload = _coherence_score_10(specs)
+    parsed["_coherence"] = {
+        "score_10": score_10,
+        "verdict": payload.get("verdict"),
+        "violations": payload.get("violations", []),
+    }
+    if score_10 < _COHERENCE_MIN_SCORE and specs:
+        logger.warning(
+            f"[content_gen] coherence={score_10}/10 "
+            f"(min {_COHERENCE_MIN_SCORE}); requesting 1 retry "
+            f"[verdict={payload.get('verdict')}]"
+        )
+        try:
+            retry_prompt = _coherence_retry_prompt(parsed, payload)
+            retry_text, retry_model = call_llm_primary_gemini(
+                system_prompt=system,
+                user_prompt=retry_prompt,
+                temperature=0.85,
+                timeout=60,
+                max_retries=1,
+                purpose="content_gen_coherence_retry",
+            )
+            if retry_text:
+                retry_parsed = _parse_json_response(retry_text)
+                retry_specs = _derive_pseudo_scene_specs(retry_parsed)
+                retry_score, retry_payload = _coherence_score_10(retry_specs)
+                if retry_score > score_10 and retry_score >= _COHERENCE_HARD_FLOOR:
+                    parsed = retry_parsed
+                    model_used = retry_model or model_used
+                    parsed["_coherence"] = {
+                        "score_10": retry_score,
+                        "verdict": retry_payload.get("verdict"),
+                        "violations": retry_payload.get("violations", []),
+                        "retried": True,
+                    }
+                    logger.info(
+                        f"[content_gen] coherence retry improved to {retry_score}/10"
+                    )
+                else:
+                    logger.info(
+                        f"[content_gen] coherence retry did not improve "
+                        f"({retry_score}/10), keeping original"
+                    )
+        except Exception as exc:
+            logger.debug(f"[content_gen] coherence retry failed: {exc}")
+
     parsed["_ab_variant"] = ab_variant
     parsed["_platform"] = platform
     parsed["_model_used"] = model_used or settings.inference_model
 
-    logger.info(f"Content generated with {parsed['_model_used']}: {parsed.get('titulo', '?')[:50]}")
+    logger.info(
+        f"Content generated with {parsed['_model_used']} "
+        f"[coherence={parsed.get('_coherence', {}).get('score_10', 'n/a')}]: "
+        f"{parsed.get('titulo', '?')[:50]}"
+    )
     return parsed
+
+
+def _enforce_scene_count(parsed: dict) -> dict:
+    """Clamp ``num_clips`` and ``duraciones_clips`` to the short-form rhythm.
+
+    Uses ``settings.short_min_scenes`` and ``settings.short_max_scenes`` (defaults
+    to 10..12). Re-balances ``duraciones_clips`` so their sum stays close to
+    ``settings.target_duration_seconds``.
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+    min_scenes = int(getattr(settings, "short_min_scenes", 10) or 10)
+    max_scenes = int(getattr(settings, "short_max_scenes", 12) or 12)
+    target_s = float(getattr(settings, "target_duration_seconds", 40) or 40)
+    hook_max = float(getattr(settings, "short_hook_max_seconds", 2.0) or 2.0)
+    scene_min = float(getattr(settings, "short_scene_min_seconds", 2.5) or 2.5)
+    scene_max = float(getattr(settings, "short_scene_max_seconds", 5.0) or 5.0)
+
+    try:
+        num = int(parsed.get("num_clips") or 0)
+    except Exception:
+        num = 0
+    if num <= 0:
+        num = 11  # safe default inside 10..12
+
+    # Clamp count to range.
+    clamped = max(min_scenes, min(max_scenes, num))
+    if clamped != num:
+        logger.info(
+            f"[content_gen] clamping num_clips {num} -> {clamped} "
+            f"(range {min_scenes}..{max_scenes})"
+        )
+    parsed["num_clips"] = clamped
+
+    # Rebuild durations so hook is <= hook_max and body is within [scene_min, scene_max].
+    current = parsed.get("duraciones_clips")
+    if not isinstance(current, list):
+        current = []
+    durations: list[float] = []
+    for v in current[:clamped]:
+        try:
+            durations.append(float(v))
+        except Exception:
+            pass
+    if len(durations) < clamped:
+        # Distribute remaining budget evenly.
+        remaining = clamped - len(durations)
+        body_budget = max(0.0, target_s - hook_max - sum(durations[1:] if durations else []))
+        filler = max(scene_min, min(scene_max, body_budget / max(remaining, 1)))
+        durations.extend([filler] * remaining)
+
+    # Enforce hook cap on index 0.
+    if durations:
+        durations[0] = min(hook_max, max(1.2, durations[0]))
+    # Clamp rest.
+    for i in range(1, len(durations)):
+        durations[i] = max(scene_min, min(scene_max, durations[i]))
+    # Trim to clamped length.
+    durations = durations[:clamped]
+
+    # Rescale to hit target if too far off.
+    total = sum(durations)
+    if total > 0 and abs(total - target_s) / target_s > 0.25 and len(durations) > 1:
+        scale = target_s / total
+        head = durations[0]
+        body = [d * scale for d in durations[1:]]
+        body = [max(scene_min, min(scene_max, d)) for d in body]
+        durations = [head] + body
+
+    parsed["duraciones_clips"] = [round(d, 2) for d in durations]
+
+    return parsed
+
+
+def _derive_pseudo_scene_specs(parsed: dict) -> list[dict]:
+    """Build scene_specs compatible with ``evaluate_composition_plan``.
+
+    The short-form pipeline does not emit full shot/motion/emotion metadata
+    at this stage, so we synthesise specs by splitting the script into
+    sentences and rotating a diverse shot/motion/emotion cycle. This keeps
+    the OpenMontage heuristics useful (generic-phrase detection, slideshow
+    risk) while avoiding false positives on shot/motion variety.
+    """
+    guion = str(parsed.get("guion", "") or "").strip()
+    if not guion:
+        return []
+    # Sentence split (keep it dependency-free).
+    sentences = [s.strip() for s in re.split(r"(?<=[\.\!\?])\s+", guion) if s.strip()]
+    if not sentences:
+        return []
+    shot_cycle = ["wide", "medium", "close-up", "over-shoulder"]
+    motion_cycle = ["dynamic", "pan", "push-in", "static", "handheld"]
+    emotion_cycle = ["intrigue", "tension", "revelation", "curiosity", "surprise"]
+    specs: list[dict] = []
+    for i, sentence in enumerate(sentences[:12]):
+        specs.append({
+            "shot_type": shot_cycle[i % len(shot_cycle)],
+            "motion": motion_cycle[i % len(motion_cycle)],
+            "emotion": emotion_cycle[i % len(emotion_cycle)],
+            "clip_description": sentence[:200],
+        })
+    return specs
+
+
+def _coherence_score_10(scene_specs: list[dict]) -> tuple[float, dict]:
+    """Return a 0..10 coherence score + raw evaluator payload."""
+    if evaluate_composition_plan is None or not scene_specs:
+        return 10.0, {"verdict": "unknown", "violations": [], "suggestions": []}
+    try:
+        payload = evaluate_composition_plan(scene_specs)
+    except Exception as exc:
+        logger.debug(f"[content_gen] OM evaluator error: {exc}")
+        return 10.0, {"verdict": "error", "violations": [str(exc)], "suggestions": []}
+    risk = float(payload.get("score", 0.0))
+    # Evaluator returns risk 0..5 (lower is better). Map to 0..10 where 10 is best.
+    score_10 = round(max(0.0, (5.0 - risk) * 2.0), 2)
+    payload["score_10"] = score_10
+    return score_10, payload
+
+
+def _coherence_retry_prompt(prev_parsed: dict, payload: dict) -> str:
+    """Build a correction prompt for a coherence retry."""
+    violations = payload.get("violations", []) or []
+    suggestions = payload.get("suggestions", []) or []
+    reasons = "; ".join(str(x) for x in violations[:4]) or "coherencia visual debil"
+    hints = "; ".join(str(x) for x in suggestions[:3]) or (
+        "usa frases mas concretas con sujeto claro y accion visible; "
+        "evita 'a person', 'modern', 'stunning', 'incredible', 'amazing'"
+    )
+    return (
+        "El guion anterior fue RECHAZADO por coherencia visual debil. "
+        f"Problemas detectados: {reasons}. "
+        f"Aplicar estas correcciones: {hints}. "
+        "Regenera el mismo JSON con frases mas especificas, sujetos concretos, "
+        "mezcla de planos (wide/close-up/over-shoulder) implicita en el lenguaje, "
+        "y micro-loop final conservado.\n\n"
+        f"JSON ANTERIOR A CORREGIR:\n{json.dumps(prev_parsed, ensure_ascii=False)}"
+    )
 
 
 def _parse_json_response(raw: str) -> dict:

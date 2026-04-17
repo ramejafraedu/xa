@@ -194,6 +194,21 @@ video:
   target_duration: 40
 
 # ============================================
+# Short-form rhythm (V16.1 PRO)
+# ============================================
+short_form:
+  enforce_hard_limit: true
+  enforce_micro_loop_ending: true
+  max_scenes: 12
+  min_scenes: 10
+  scene_min_seconds: 2.8
+  scene_max_seconds: 4.8
+  hook_max_seconds: 2.0
+  transition_seconds: 0.12
+  script_word_min: 110
+  script_word_max: 130
+
+# ============================================
 # Subtitle Configuration (ShortGPT EML)
 # ============================================
 subtitles:

@@ -19,6 +19,17 @@ from loguru import logger
 from config import settings
 from services.http_client import download_file, request_with_retry
 
+try:
+    from state_manager import get_asset_history, AssetHistory
+except Exception:  # pragma: no cover
+    get_asset_history = None
+    AssetHistory = None
+
+try:
+    from styles.playbook_loader import load_playbook as _load_style_playbook
+except Exception:  # pragma: no cover
+    _load_style_playbook = None
+
 
 # Position-specific prompts (identical to MASTER V13 ✅ Sinc Imagen)
 POSITION_EXTRAS = {
@@ -28,6 +39,59 @@ POSITION_EXTRAS = {
     4: "final payoff frame, aspirational finish, call to action visual",
 }
 _pexels_image_rotation_counter: list[int] = [0]
+
+# Accepted image URLs per generation run — used to register anti-repeat hashes.
+_accepted_image_urls: list[tuple[str, str, str]] = []  # (provider, url, prompt)
+
+
+def _hash_url(url: str, output: Optional[Path] = None) -> str:
+    """SHA-256 short hash for an image URL (+ optional local bytes)."""
+    if AssetHistory is not None:
+        try:
+            return AssetHistory.compute_hash(url=url or "", file_path=output)
+        except Exception:
+            pass
+    return hashlib.sha256((url or "").strip().lower().split("?")[0].encode()).hexdigest()[:32]
+
+
+def _recent_image_hashes() -> set[str]:
+    if get_asset_history is None:
+        return set()
+    try:
+        return get_asset_history().get_recent_hashes(kind="image", n_jobs=50)
+    except Exception:
+        return set()
+
+
+def _style_modifiers(style_playbook: Optional[str]) -> str:
+    """Return visual-style modifiers (palette, motion, typography tone) from a style playbook."""
+    if not style_playbook or _load_style_playbook is None:
+        return ""
+    try:
+        data = _load_style_playbook(str(style_playbook))
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    parts: list[str] = []
+    visual = data.get("visual_language") or {}
+    palette = (visual.get("color_palette") if isinstance(visual, dict) else None) or []
+    if isinstance(palette, list) and palette:
+        colors = [str(c.get("hex") or c.get("name") or c) for c in palette[:3] if c]
+        colors = [c for c in colors if c]
+        if colors:
+            parts.append("palette: " + ", ".join(colors))
+    mood = (visual.get("mood") if isinstance(visual, dict) else None)
+    if mood:
+        parts.append(f"mood: {mood}")
+    motion = data.get("motion") or {}
+    style_note = (motion.get("style") if isinstance(motion, dict) else None)
+    if style_note:
+        parts.append(f"motion: {style_note}")
+    identity = data.get("identity") or {}
+    style_name = (identity.get("name") if isinstance(identity, dict) else None) or style_playbook
+    parts.append(f"style: {style_name}")
+    return ", ".join(parts)
 
 
 def generate_images(
@@ -41,6 +105,9 @@ def generate_images(
     prefer_stock_images: Optional[bool] = None,
     cache_ttl_days: Optional[int] = None,
     enable_cache: Optional[bool] = None,
+    job_id: Optional[str] = None,
+    style_playbook: Optional[str] = None,
+    scene_texts: Optional[list[str]] = None,
 ) -> list[Path]:
     """Generate images for the video (stock-first when enabled).
 
@@ -57,6 +124,9 @@ def generate_images(
         prefer_stock_images=prefer_stock_images,
         cache_ttl_days=cache_ttl_days,
         enable_cache=enable_cache,
+        job_id=job_id,
+        style_playbook=style_playbook,
+        scene_texts=scene_texts,
     )
     return results
 
@@ -72,11 +142,19 @@ def generate_images_with_stats(
     prefer_stock_images: Optional[bool] = None,
     cache_ttl_days: Optional[int] = None,
     enable_cache: Optional[bool] = None,
+    job_id: Optional[str] = None,
+    style_playbook: Optional[str] = None,
+    scene_texts: Optional[list[str]] = None,
 ) -> tuple[list[Path], dict[str, dict[str, int]]]:
     """Generate images and return per-provider stats.
 
     Stats shape: {provider: {"ok": int, "fail": int}}
     """
+    # Reset accepted-URL buffer for this run (used for anti-repeat registration).
+    _accepted_image_urls.clear()
+    # Pre-load recent hashes once per run.
+    recent_hashes = _recent_image_hashes()
+
     base_style = (
         "cinematic vertical key art 9:16, high contrast lighting, "
         "clean focal subject, dramatic depth, subtle film grain, "
@@ -93,6 +171,9 @@ def generate_images_with_stats(
         if ab_variant == "B"
         else "centered composition, bold foreground separation"
     )
+
+    # V16.1: style playbook modifiers (palette, mood, motion) for niche consistency.
+    style_extra = _style_modifiers(style_playbook) if style_playbook else ""
 
     stock_first = settings.prefer_stock_images if prefer_stock_images is None else bool(prefer_stock_images)
     cache_enabled = settings.enable_image_cache if enable_cache is None else bool(enable_cache)
@@ -118,8 +199,16 @@ def generate_images_with_stats(
 
     for idx in range(1, count + 1):
         extra = POSITION_EXTRAS.get(idx, "")
+        # Per-scene phrase from the real script (if available).
+        scene_phrase = ""
+        if scene_texts:
+            try:
+                scene_phrase = (scene_texts[idx - 1] or "").strip()[:220]
+            except IndexError:
+                scene_phrase = ""
         full_prompt = ", ".join(filter(None, [
-            prompt_base, visual_nicho, base_style, style_ab, extra
+            prompt_base, visual_nicho, scene_phrase, style_extra,
+            base_style, style_ab, extra,
         ]))
 
         output = temp_dir / f"imagen_{idx}_{timestamp}.jpg"
@@ -147,7 +236,7 @@ def generate_images_with_stats(
                     logger.debug("Pexels image skipped by provider policy")
                     continue
 
-                if _download_pexels_image(full_prompt, output):
+                if _download_pexels_image(full_prompt, output, recent_hashes):
                     results.append(output)
                     if cache_enabled:
                         _save_image_cache(output, cache_file)
@@ -166,7 +255,7 @@ def generate_images_with_stats(
                     logger.debug("Pixabay image skipped by provider policy")
                     continue
 
-                if _download_pixabay_image(full_prompt, output):
+                if _download_pixabay_image(full_prompt, output, recent_hashes):
                     results.append(output)
                     if cache_enabled:
                         _save_image_cache(output, cache_file)
@@ -266,7 +355,21 @@ def generate_images_with_stats(
             except (FileNotFoundError, OSError) as e:
                 logger.debug(f"Legacy image copy skipped: {e}")
 
-    logger.info(f"Images generated: {len(results)}/{count}")
+    # V16.1: register accepted images in global asset_history for anti-repeat.
+    if job_id and _accepted_image_urls and get_asset_history is not None:
+        try:
+            history = get_asset_history()
+            for provider, url, prm in _accepted_image_urls:
+                h = _hash_url(url)
+                history.add_asset(kind="image", asset_hash=h, job_id=job_id,
+                                  url=url, prompt=(prm or "")[:200])
+        except Exception as exc:
+            logger.debug(f"[image_gen] asset_history registration failed: {exc}")
+
+    logger.info(
+        f"Images generated: {len(results)}/{count} "
+        f"(anti-repeat + niche-style applied)"
+    )
     return results, stats
 
 
@@ -303,9 +406,14 @@ def _rotated_pexels_image_keys(keys: list[str]) -> list[str]:
     return keys[start:] + keys[:start]
 
 
-def _download_pexels_image(prompt: str, output: Path) -> bool:
+def _download_pexels_image(
+    prompt: str,
+    output: Path,
+    recent_hashes: Optional[set[str]] = None,
+) -> bool:
     query = urllib.parse.quote(_stock_query(prompt))
     url = f"https://api.pexels.com/v1/search?query={query}&orientation=portrait&per_page=10"
+    blocklist = recent_hashes or set()
 
     for key in _rotated_pexels_image_keys(settings.pexels_keys):
         try:
@@ -330,7 +438,13 @@ def _download_pexels_image(prompt: str, output: Path) -> bool:
             for photo in photos:
                 src = photo.get("src", {}) if isinstance(photo, dict) else {}
                 image_url = src.get("large2x") or src.get("large") or src.get("original")
-                if image_url and download_file(image_url, output, timeout=45):
+                if not image_url:
+                    continue
+                # Anti-repeat: skip if already used in last 50 jobs.
+                if _hash_url(image_url) in blocklist:
+                    continue
+                if download_file(image_url, output, timeout=45):
+                    _accepted_image_urls.append(("pexels", image_url, prompt))
                     return True
         except Exception:
             continue
@@ -338,7 +452,11 @@ def _download_pexels_image(prompt: str, output: Path) -> bool:
     return False
 
 
-def _download_pixabay_image(prompt: str, output: Path) -> bool:
+def _download_pixabay_image(
+    prompt: str,
+    output: Path,
+    recent_hashes: Optional[set[str]] = None,
+) -> bool:
     if not settings.pixabay_api_key:
         return False
 
@@ -347,6 +465,7 @@ def _download_pixabay_image(prompt: str, output: Path) -> bool:
         f"https://pixabay.com/api/?key={settings.pixabay_api_key}"
         f"&q={query}&orientation=vertical&image_type=photo&per_page=10&safesearch=true"
     )
+    blocklist = recent_hashes or set()
 
     try:
         response = request_with_retry("GET", url, max_retries=1, timeout=20)
@@ -360,7 +479,12 @@ def _download_pixabay_image(prompt: str, output: Path) -> bool:
         random.shuffle(hits)
         for item in hits:
             image_url = item.get("largeImageURL") or item.get("webformatURL")
-            if image_url and download_file(image_url, output, timeout=45):
+            if not image_url:
+                continue
+            if _hash_url(image_url) in blocklist:
+                continue
+            if download_file(image_url, output, timeout=45):
+                _accepted_image_urls.append(("pixabay", image_url, prompt))
                 return True
     except Exception:
         return False
@@ -379,7 +503,10 @@ def _download_pollinations(prompt: str, output: Path) -> bool:
             f"{settings.pollinations_base}/prompt/{encoded}"
             f"?width=1080&height=1920&model=flux&nologo=true&seed={random.randint(1, 999999)}"
         )
-        return download_file(url, output, timeout=45)
+        ok = download_file(url, output, timeout=45)
+        if ok:
+            _accepted_image_urls.append(("pollinations", url, prompt))
+        return ok
     except Exception as e:
         logger.debug(f"Pollinations error: {e}")
         return False

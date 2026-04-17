@@ -18,6 +18,18 @@ from loguru import logger
 from config import settings
 from services.http_client import get_json, request_with_retry
 
+try:
+    from pipeline.om_scoring import select_best_clip_candidate, score_clip_candidate
+except Exception:  # pragma: no cover - defensive
+    select_best_clip_candidate = None
+    score_clip_candidate = None
+
+try:
+    from state_manager import get_asset_history, AssetHistory
+except Exception:  # pragma: no cover
+    get_asset_history = None
+    AssetHistory = None
+
 
 _GREENSCREEN_HINTS = {
     "green screen",
@@ -76,12 +88,97 @@ def _rotated_cache_items(items: list[dict], num_needed: int) -> list[dict]:
     return items
 
 
+def _url_hash(url: str, local_path: str = "") -> str:
+    """Stable short hash for a stock asset (URL or local path)."""
+    if AssetHistory is not None:
+        try:
+            fp = Path(local_path) if local_path else None
+            return AssetHistory.compute_hash(url=url or "", file_path=fp)
+        except Exception:
+            pass
+    raw = (url or local_path or "").strip().lower().split("?")[0]
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _filter_recent_duplicates(items: list[dict], kind: str = "video_stock") -> list[dict]:
+    """Drop items whose URL/path was already seen in the last 50 jobs."""
+    if get_asset_history is None:
+        return items
+    try:
+        history = get_asset_history()
+        recent = history.get_recent_hashes(kind=kind, n_jobs=50)
+    except Exception as exc:
+        logger.debug(f"[video_stock] asset_history unavailable: {exc}")
+        return items
+    if not recent:
+        return items
+    kept: list[dict] = []
+    dropped = 0
+    for it in items:
+        h = _url_hash(it.get("url", ""), it.get("local_path", ""))
+        if h in recent:
+            dropped += 1
+            continue
+        kept.append(it)
+    if dropped:
+        logger.info(f"[anti-repeat] Dropped {dropped} stock clips seen in last 50 jobs")
+    return kept
+
+
+def _score_item(item: dict, keyword: str = "") -> float:
+    """Best-effort weighted score for a stock clip item using OpenMontage scoring."""
+    if score_clip_candidate is None:
+        return 0.0
+    try:
+        provider = str(item.get("provider") or "").lower() or "unknown"
+        clip_id = (
+            item.get("clip_id")
+            or Path(item.get("local_path") or "").stem
+            or hashlib.md5(str(item.get("url") or "").encode()).hexdigest()[:10]
+        )
+        candidate = {
+            "clip_id": str(clip_id),
+            "provider": provider,
+            "url": item.get("url", ""),
+            "filename": Path(item.get("local_path") or "").name,
+        }
+        return float(score_clip_candidate(candidate, keyword or "").weighted_score)
+    except Exception:
+        return 0.0
+
+
+def register_accepted_assets(
+    job_id: str,
+    items: list[dict],
+    kind: str = "video_stock",
+    prompt: str = "",
+) -> None:
+    """Register accepted stock items in the global asset history."""
+    if not job_id or not items or get_asset_history is None:
+        return
+    try:
+        history = get_asset_history()
+        for it in items:
+            h = _url_hash(it.get("url", ""), it.get("local_path", ""))
+            history.add_asset(
+                kind=kind,
+                asset_hash=h,
+                job_id=job_id,
+                url=it.get("url") or it.get("local_path", ""),
+                prompt=prompt,
+            )
+    except Exception as exc:
+        logger.debug(f"[video_stock] register_accepted_assets failed: {exc}")
+
+
 def fetch_stock_videos(
     keywords: list[str],
     num_needed: int = 8,
     provider_order: Optional[list[str]] = None,
     require_realistic: bool = False,
     temp_dir: Optional[Path] = None,
+    job_id: Optional[str] = None,
+    scene_texts: Optional[list[str]] = None,
 ) -> list[dict]:
     """Fetch stock video URLs and manage local cache via index.json.
 
@@ -90,6 +187,10 @@ def fetch_stock_videos(
         num_needed: Target number of videos to fetch
         provider_order: Priority order for stock providers
         require_realistic: If True, filter out cartoon/animated clips
+        job_id: When provided, accepted assets are registered in the global
+            asset history to enable anti-repetition across the last 50 jobs.
+        scene_texts: Optional per-scene phrases (from the real script) used
+            to seed richer keyword-like searches when available.
 
     Returns list of dicts: {"url": "http...", "cache_path": "C:/..."}
     If 'url' is empty, it means the file is already fully cached.
@@ -243,9 +344,24 @@ def fetch_stock_videos(
         composition = ", ".join(f"{k}:{v}" for k, v in sorted(provider_counts.items()))
         logger.info(f"Stock provider mix -> {composition}")
 
-    logger.info(f"Stock videos found: {len(all_items)} (needed: {num_needed})")
-    # Return at most requested pool size
-    return all_items[:target_pool]
+    # --- OpenMontage scoring + anti-repetition (V16.1) ---
+    before = len(all_items)
+    all_items = _filter_recent_duplicates(all_items, kind="video_stock")
+    if all_items and score_clip_candidate is not None:
+        primary_kw = (keywords[0] if keywords else "") or ""
+        all_items.sort(key=lambda it: _score_item(it, primary_kw), reverse=True)
+
+    final = all_items[:target_pool]
+    logger.info(
+        f"Stock videos found: {before} collected, {len(final)} selected "
+        f"(needed: {num_needed}, anti-repeat + OM scoring applied)"
+    )
+
+    if job_id:
+        register_accepted_assets(job_id, final, kind="video_stock",
+                                 prompt=";".join((scene_texts or [])[:3]))
+
+    return final
 
 
 def _rotated_pexels_keys(keys: list[str]) -> list[str]:

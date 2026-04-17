@@ -1189,6 +1189,7 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
         features = script.get("features") if isinstance(script.get("features"), list) else []
         cuts: list[dict] = []
         feature_iter = features[:max_scenes] if hard_limit else features
+        total_features = len(feature_iter)
         for idx, feature in enumerate(feature_iter):
             if not isinstance(feature, dict):
                 continue
@@ -1203,6 +1204,15 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
                 duration = 6.0
                 td = 0.15
             title = str(feature.get("title") or f"Feature {idx + 1}")
+            # Pick animation: hook = punch-in, last = zoom-out (micro-loop), rest = slow-zoom.
+            if idx == 0 and hard_limit:
+                anim = "punch-in-fast"
+            elif idx >= total_features - 1 and total_features > 1:
+                anim = "ken-burns-zoom-out"
+            else:
+                anim = "ken-burns-slow-zoom"
+            # Rotate transition only in hard-limit short-form mode; keep legacy "cut" otherwise.
+            transition_out = _dynamic_transition_for_index(idx, total_features) if hard_limit else "cut"
             cuts.append(
                 {
                     "id": f"feature_{idx + 1}",
@@ -1213,10 +1223,10 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
                     "transform": {
                         "scale": 1.0,
                         "position": "center",
-                        "animation": "ken-burns-slow-zoom" if not hard_limit or idx > 0 else "punch-in-fast",
+                        "animation": anim,
                     },
                     "transition_in": "cut",
-                    "transition_out": "cut",
+                    "transition_out": transition_out,
                     "transition_duration": td,
                     "reason": f"Feature visual: {title[:120]}",
                 }
@@ -1226,6 +1236,7 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
     scenes = normalized_props.get("scenes") if isinstance(normalized_props.get("scenes"), list) else []
     if hard_limit and len(scenes) > max_scenes:
         scenes = scenes[:max_scenes]
+    total_scenes = len(scenes)
     cuts = []
     for idx, scene in enumerate(scenes):
         if not isinstance(scene, dict):
@@ -1258,6 +1269,14 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
         }
         if zoom_animation:
             transform["animation"] = zoom_animation
+        elif hard_limit:
+            # V16.1: hook = punch-in, last = zoom-out (micro-loop), rest = slow-zoom.
+            if idx == 0:
+                transform["animation"] = "punch-in-fast"
+            elif idx >= total_scenes - 1 and total_scenes > 1:
+                transform["animation"] = "ken-burns-zoom-out"
+            else:
+                transform["animation"] = "ken-burns-slow-zoom"
 
         try:
             fade_out_frames = int(scene.get("fadeOutFrames", 0) or 0)
@@ -1269,6 +1288,14 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
             # Cap transition duration so cuts stay snappy for shorts.
             computed_transition = min(computed_transition, transition_dur)
 
+        # V16.1: dynamic transition rotation when the scene doesn't specify one.
+        scene_transition = str(scene.get("transitionOut") or "").strip()
+        if not scene_transition:
+            if hard_limit:
+                scene_transition = _dynamic_transition_for_index(idx, total_scenes)
+            else:
+                scene_transition = "cut"
+
         cut = {
             "id": str(scene.get("id") or f"cut_{idx + 1}"),
             "source": _to_file_uri(src),
@@ -1278,7 +1305,7 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
             "layer": "primary",
             "transform": transform,
             "transition_in": "cut",
-            "transition_out": _normalize_cut_transition(str(scene.get("transitionOut") or "cut")),
+            "transition_out": _normalize_cut_transition(scene_transition),
             "transition_duration": computed_transition,
         }
 
@@ -1376,6 +1403,30 @@ def _extract_incremental_seed_cuts(incremental_eml_seed: Optional[dict]) -> list
     return cuts
 
 
+# V16.1 PRO: dynamic transition rotation for short-form pacing.
+# We spread varied transitions across scenes so Remotion output feels alive
+# instead of a monotonous hard-cut slideshow.
+_SHORT_TRANSITION_CYCLE = ("cut", "cut", "dissolve", "cut", "wipe", "cut", "fade", "cut", "dissolve", "wipe", "cut", "fade")
+
+
+def _dynamic_transition_for_index(idx: int, total: int) -> str:
+    """Rotate transitions across scenes; last scene stays on ``cut`` for clean loop."""
+    if total <= 0:
+        return "cut"
+    if idx >= total - 1:
+        return "cut"  # clean cut before micro-loop for replayability
+    return _SHORT_TRANSITION_CYCLE[idx % len(_SHORT_TRANSITION_CYCLE)]
+
+
+def _micro_loop_animation(idx: int, total: int) -> Optional[str]:
+    """Return a transform animation that emphasises the micro-loop on the last scene."""
+    if total <= 1:
+        return None
+    if idx >= total - 1:
+        return "ken-burns-zoom-out"
+    return None
+
+
 def _normalize_cut_transition(value: str) -> str:
     clean = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
     mapping = {
@@ -1388,6 +1439,8 @@ def _normalize_cut_transition(value: str) -> str:
         "wipe": "wipe",
         "whip": "wipe",
         "slide": "wipe",
+        "punch_in": "cut",
+        "zoom_out": "fade",
     }
     return mapping.get(clean, "cut")
 

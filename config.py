@@ -1025,6 +1025,13 @@ try:
 except Exception as _e:
     logger.debug(f"YAML niche loader not available ({_e}), trying JSON config path...")
 
+# Apply config_v16_pro.yaml overrides (source of truth for V16 PRO)
+try:
+    from lib.yaml_config_bridge import apply_yaml_overrides as _apply_yaml_overrides
+    _apply_yaml_overrides(settings, NICHOS)
+except Exception as _e:
+    logger.debug(f"YAML config bridge not applied: {_e}")
+
 # JSON override on top (if NICHES_CONFIG_PATH is set)
 if getattr(settings, "niches_config_path", None):
     NICHOS = _load_nichos_from_file(NICHOS, getattr(settings, "niches_config_path", ""), settings.base_dir)

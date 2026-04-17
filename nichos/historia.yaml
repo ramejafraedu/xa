@@ -1,27 +1,41 @@
 # Nicho: Historia Oscura, Crímenes Reales y Conspiraciones
+# V16.1 PRO — Shorts 30-45s de alta retencion.
 
 slug: historia
 nombre: "historia oscura y crimenes reales y conspiraciones"
 tono: "misterioso y narrativo"
 plataforma: "tiktok_reels"
 genero_musica: "dark"
-num_clips: 8
-keywords_count: 8
-tipo_cortes: "rapidos en tension lentos en revelacion"
+num_clips: 11
+keywords_count: 12
+tipo_cortes: "ultra rapidos con 1-2 planos lentos en revelacion"
 estilo_narrativo: >
-  Estructura obligatoria: introduccion (8-12s) + cronologia explicada (45-55s) + cierre con giro y aprendizaje (8-12s).
-  Objetivo de script: 180-220 palabras para pieza de alrededor de 65 segundos con historia completa.
-  Introduccion: plantear el misterio en 1 frase fuerte sin clickbait vacio.
-  Desarrollo: contar hechos en orden temporal con al menos 3 anclas concretas (fecha, lugar, actor o documento).
-  Incluir 2 interpretaciones del caso y explicar por que una tiene mas sustento que la otra.
-  Cierre: giro final + pregunta abierta inteligente + accion (guardar/comentar).
-  Temas preferentes: crimenes reales, conspiraciones historicas, vigilancia, eventos no resueltos con fuentes reconocibles.
-  VARIEDAD OBLIGATORIA: Elige UN caso historico completamente diferente cada vez. NUNCA repitas el mismo crimen o conspiracion recientemente. Rotacion: casos sin resolver de la CIA/FBI, experimentos secretos, desapariciones masivas, fraudes historicos, espionaje, guerra fria, mafia, cartels, dictadores, revoluciones, guerras poco conocidas, inventos robados, plagios historicos, tesoros perdidos, piratas, caza de brujas, procesos injustos, exoneraciones, escandalos politicos, asesinatos de figuras publicas, fugas de la carcel, huidas exoticas, dobles vidas, impostores, falsificaciones artisticas, robos de museos, hacktivism, vigilancia masiva.
-  Prohibido: frases impactantes sin explicar contexto, teorias inventadas sin base o relleno dramatizado.
-  Ritmo: tension constante, revelaciones por bloques y cliffhangers cada 8-10 segundos.
+  MODO V16.1 PRO: short viral 30-45s (max 55s) con retencion brutal.
+  Objetivo de script: 110-130 palabras totales, ritmo de TikTok/Reels.
+  ESTRUCTURA OBLIGATORIA:
+  1) HOOK (0-2s): una frase brutal, dato imposible o pregunta prohibida que obliga a quedarse.
+     Prohibido empezar con "hola", "hoy", "sabes que...", "te voy a contar".
+  2) DESARROLLO (2-35s): 10-12 micro-escenas, cada frase = un cambio visual (3-5s).
+     - Hechos concretos: fecha, lugar, actor, documento, evidencia.
+     - Cero relleno. Cero contexto innecesario. Cada frase avanza la tension.
+     - Revelaciones por bloques cortos; cliffhanger implicito cada 2 frases.
+  3) MICRO-LOOP FINAL (ultimos 3-5s): frase corta que genera curiosidad para re-ver o continuar
+     (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...",
+     "y el final te va a romper la cabeza...").
+     NO es un CTA tradicional; el cierre es narrativo.
+  VARIEDAD OBLIGATORIA: Elige UN caso historico completamente diferente cada vez. NUNCA repitas
+  el mismo crimen o conspiracion recientemente. Rotacion: casos sin resolver de la CIA/FBI,
+  experimentos secretos, desapariciones masivas, fraudes historicos, espionaje, guerra fria,
+  mafia, carteles, dictadores, revoluciones, guerras poco conocidas, inventos robados, plagios,
+  tesoros perdidos, piratas, caza de brujas, procesos injustos, escandalos politicos, asesinatos
+  de figuras publicas, fugas imposibles, impostores, falsificaciones artisticas, robos de museos,
+  hacktivism, vigilancia masiva.
+  PROHIBIDO: frases impactantes sin sustento, teorias inventadas, relleno dramatizado,
+  afirmaciones difamatorias, cliches ("increible", "impactante", "te va a sorprender").
+  RITMO: tension constante, sin pausas, frases de 5-10 palabras.
 voz_gemini: "Charon"
 voz_edge: "es-ES-AlvaroNeural"
 rate_tts: "+0%"
 pitch_tts: "-15Hz"
 horas: [8, 16, 0]
-direccion_visual: "dark documentary, archival footage, low light, desaturated"
+direccion_visual: "dark documentary, archival footage, low-key lighting, desaturated palette, cinematic noir framing, no text overlays"

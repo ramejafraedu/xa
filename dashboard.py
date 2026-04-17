@@ -31,15 +31,21 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks, Request, Body, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, BackgroundTasks, Request, Body, HTTPException, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from config import settings, NICHOS
 from core.director import WEB_CHECKPOINTS, WEB_RESOLUTIONS, DirectorMode
 from models.content import JobManifest, JobStatus
+
+class CoverRequest(BaseModel):
+    dir: str = ""
+    timestamp: float = 0.0
+
 from services.niche_memory import (
     add_niche_memory_entry,
     delete_niche_memory_entry,
@@ -79,6 +85,11 @@ def _log_sink(message):
 # FastAPI app
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Video Factory V16", docs_url="/api/docs")
+
+# --- V16.1 PRO dashboard metadata ---
+APP_VERSION = "16.1.0"
+APP_CODENAME = "PRO Premium"
+_APP_STARTED_AT = time.time()
 
 # Static files
 _static_dir = Path(__file__).resolve().parent / "static"
@@ -2477,6 +2488,218 @@ async def download_video(video_name: str, dir: str = ""):
         filename=video_path.name,
         media_type="video/mp4",
     )
+
+
+# In-memory cache for video thumbnails keyed by (name, mtime).
+_THUMB_CACHE: dict[str, dict] = {}
+
+
+@app.get("/api/videos/{video_name}/thumbnail")
+async def video_thumbnail(video_name: str, dir: str = ""):
+    """Return a base64 data-URI thumbnail of a rendered video (cached)."""
+    video_path = _resolve_downloadable_video(video_name, dir)
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Video not found")
+    try:
+        mtime = video_path.stat().st_mtime
+    except Exception:
+        mtime = 0.0
+    cache_key = f"{video_path.name}:{int(mtime)}"
+    cached = _THUMB_CACHE.get(cache_key)
+    if cached:
+        return cached
+    thumbnail = _generate_thumbnail(str(video_path))
+    payload = {
+        "name": video_path.name,
+        "dir": video_path.parent.name,
+        "thumbnail": thumbnail,
+        "mtime": mtime,
+    }
+    _THUMB_CACHE[cache_key] = payload
+    # Keep the cache from growing unbounded.
+    if len(_THUMB_CACHE) > 256:
+        for k in list(_THUMB_CACHE.keys())[:64]:
+            _THUMB_CACHE.pop(k, None)
+    return payload
+
+
+@app.get("/api/dashboard/overview")
+async def dashboard_overview():
+    """Aggregated KPIs for the home page (jobs today, videos today, cost today, uptime)."""
+    import platform as _platform
+
+    now = time.time()
+    today_start = datetime.combine(date.today(), datetime.min.time()).timestamp()
+
+    # Videos today across output + review.
+    videos_total = 0
+    videos_today = 0
+    latest_videos: list[dict] = []
+    for d in [settings.output_dir, settings.review_dir]:
+        if not d.exists():
+            continue
+        for f in sorted(d.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True):
+            videos_total += 1
+            mtime = f.stat().st_mtime
+            if mtime >= today_start:
+                videos_today += 1
+            if len(latest_videos) < 6:
+                latest_videos.append({
+                    "name": f.name,
+                    "dir": d.name,
+                    "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
+                    "created": datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M"),
+                    "mtime": mtime,
+                    "download_url": f"/api/videos/download/{quote(f.name)}?dir={d.name}",
+                    "thumbnail_url": f"/api/videos/{quote(f.name)}/thumbnail?dir={d.name}",
+                })
+
+    # Jobs today = manifests in output written today + resumable jobs count.
+    jobs_today = 0
+    if settings.output_dir.exists():
+        for f in settings.output_dir.glob("job_manifest_*.json"):
+            try:
+                if f.stat().st_mtime >= today_start:
+                    jobs_today += 1
+            except Exception:
+                pass
+
+    active_running = len(_active_runs)
+
+    # Cost today (best-effort: reads cost log if present).
+    cost_today_usd = 0.0
+    cost_path = settings.temp_dir / "cost_log.json"
+    if cost_path.exists():
+        try:
+            cost_data = json.loads(cost_path.read_text(encoding="utf-8"))
+            entries = cost_data.get("entries") if isinstance(cost_data, dict) else None
+            if isinstance(entries, list):
+                for item in entries:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        ts = float(item.get("timestamp", item.get("ts", 0)) or 0)
+                        if ts >= today_start:
+                            cost_today_usd += float(item.get("cost_usd", item.get("amount", 0)) or 0)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+    uptime_seconds = max(0, int(now - _APP_STARTED_AT))
+
+    return {
+        "version": APP_VERSION,
+        "codename": APP_CODENAME,
+        "hostname": _platform.node(),
+        "platform": _platform.system(),
+        "python": _platform.python_version(),
+        "uptime_seconds": uptime_seconds,
+        "kpis": {
+            "jobs_today": jobs_today,
+            "videos_today": videos_today,
+            "videos_total": videos_total,
+            "active_running": active_running,
+            "cost_today_usd": round(cost_today_usd, 4),
+        },
+        "latest_videos": latest_videos,
+        "execution_mode": settings.execution_mode_label(),
+        "short_form": {
+            "target_duration_seconds": getattr(settings, "target_duration_seconds", 40),
+            "max_video_duration": getattr(settings, "max_video_duration", 60),
+            "min_video_duration": getattr(settings, "min_video_duration", 28),
+            "max_scenes": getattr(settings, "short_max_scenes", 12),
+            "enforce_hard_limit": bool(getattr(settings, "enforce_duration_hard_limit", True)),
+        },
+        "timestamp": int(now),
+    }
+
+
+@app.post("/api/videos/{video_name}/upload-cover")
+async def upload_video_cover_route(video_name: str, dir: str = Form(""), file: UploadFile = File(...)):
+    """Upload an image and prepend it as the first frame (cover) of the video."""
+    video_path = _resolve_downloadable_video(video_name, dir)
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    try:
+        import subprocess, uuid as _uuid, shutil as _shutil
+        uid = _uuid.uuid4().hex[:8]
+        tmp = settings.temp_dir
+        tmp.mkdir(parents=True, exist_ok=True)
+        cover_img = tmp / f"cover_{uid}.jpg"
+        cover_clip = tmp / f"cover_{uid}.ts"
+        main_clip = tmp / f"main_{uid}.ts"
+        concat_list = tmp / f"concat_{uid}.txt"
+        out_path = video_path.with_name(f"tmp_{video_path.name}")
+
+        # 1. Guardar la imagen subida
+        with open(cover_img, "wb") as buffer:
+            _shutil.copyfileobj(file.file, buffer)
+
+        if not cover_img.exists():
+            return JSONResponse({"error": "No se guardó la imagen"}, status_code=500)
+
+        # 2. Obtener resolución y FPS del video original
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height,r_frame_rate",
+             "-of", "csv=s=x:p=0", str(video_path)],
+            capture_output=True, text=True
+        )
+        parts = probe.stdout.strip().split("x")
+        if len(parts) >= 3:
+            w, h = parts[0], parts[1]
+            fps_frac = parts[2]
+        else:
+            w, h, fps_frac = "1080", "1920", "30/1"
+
+        # Convertir FPS fracción a decimal
+        try:
+            if "/" in fps_frac:
+                num, den = fps_frac.split("/")
+                fps = str(round(int(num) / int(den), 2))
+            else:
+                fps = fps_frac
+        except Exception:
+            fps = "30"
+
+        # 3. Crear clip de 0.04s (1 frame) a partir de la imagen de portada
+        subprocess.run([
+            "ffmpeg", "-y", "-loop", "1", "-i", str(cover_img),
+            "-t", "0.04", "-r", fps,
+            "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-bsf:v", "h264_mp4toannexb", "-f", "mpegts", str(cover_clip)
+        ], capture_output=True, check=True)
+
+        # 4. Convertir video original a mpegts para concatenación
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-c", "copy", "-bsf:v", "h264_mp4toannexb", "-f", "mpegts", str(main_clip)
+        ], capture_output=True, check=True)
+
+        # 5. Concatenar: cover_clip + main_clip
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", f"concat:{cover_clip}|{main_clip}",
+            "-c", "copy", "-movflags", "+faststart", str(out_path)
+        ], capture_output=True, check=True)
+
+        # 6. Reemplazar original y limpiar
+        if out_path.exists() and out_path.stat().st_size > 1000:
+            _shutil.move(str(out_path), str(video_path))
+            for f in [cover_img, cover_clip, main_clip, concat_list]:
+                f.unlink(missing_ok=True)
+            return {"status": "success", "message": "Portada aplicada como primer frame"}
+
+        return JSONResponse({"error": "El archivo de salida no se generó correctamente"}, status_code=500)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error setting cover for {video_name}: {e.stderr}")
+        return JSONResponse({"error": f"FFmpeg falló: {e.stderr[:200] if e.stderr else str(e)}"}, status_code=500)
+    except Exception as e:
+        logger.error(f"Error uploading cover for {video_name}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.delete("/api/videos/{video_name}")

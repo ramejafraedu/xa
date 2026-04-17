@@ -214,6 +214,22 @@ class StateManager:
             "elapsed_seconds": round(float(elapsed or 0.0), 2),
         }
 
+        # V16.1: additive canonical checkpoint via lib/checkpoint.py.
+        try:
+            from lib.checkpoint_integration import record_stage as _record
+            _record(
+                pipeline_dir=self.checkpoints_root,
+                job_id=manifest.job_id,
+                stage=stage,
+                artifacts=artifacts,
+                status=status,
+                pipeline_type=manifest.pipeline_type or "v15",
+                style_playbook=manifest.style_playbook or None,
+                metadata={**metadata, "elapsed_seconds": round(float(elapsed or 0.0), 2)},
+            )
+        except Exception as _exc:
+            logger.debug(f"[checkpoint_integration] skipped: {_exc}")
+
     # ----- Quality Gates & QA -----
 
     def evaluate_quality_gate(self, stage: str, artifacts: dict) -> dict:
@@ -412,3 +428,182 @@ class StateManager:
         """Generate a unique job ID."""
         ts = int(time.time() * 1000)
         return f"{nicho_slug}_{ts}"
+
+
+# ---------------------------------------------------------------------------
+# AssetHistory — global anti-repetition store (last N jobs)
+# ---------------------------------------------------------------------------
+class AssetHistory:
+    """Tracks asset hashes across jobs to prevent visual repetition.
+
+    File layout (JSON): ``workspace/state/asset_history.json``:
+
+        {
+          "version": 1,
+          "entries": [
+            {"kind": "image|video_stock|video_gen", "hash": "...",
+             "job_id": "...", "url": "...", "prompt": "...", "ts": 0}
+          ],
+          "job_ids": ["job_a", "job_b", ...]  # insertion-ordered, unique
+        }
+
+    ``is_recent_duplicate`` compares against entries whose ``job_id`` appears
+    within the last ``n`` recorded job ids.
+    """
+
+    _lock = threading.Lock()
+    _default_max_jobs = 50
+
+    def __init__(self, storage_path: Optional[Path] = None) -> None:
+        if storage_path is None:
+            storage_path = Path("workspace/state/asset_history.json").resolve()
+        self.path = Path(storage_path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ----- I/O -----
+
+    def _load(self) -> dict:
+        if not self.path.exists():
+            return {"version": 1, "entries": [], "job_ids": []}
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return {"version": 1, "entries": [], "job_ids": []}
+            data.setdefault("version", 1)
+            data.setdefault("entries", [])
+            data.setdefault("job_ids", [])
+            return data
+        except Exception as exc:
+            logger.warning(f"[asset_history] load failed: {exc}; resetting")
+            return {"version": 1, "entries": [], "job_ids": []}
+
+    def _save(self, data: dict) -> None:
+        try:
+            self.path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning(f"[asset_history] save failed: {exc}")
+
+    # ----- Hashing -----
+
+    @staticmethod
+    def compute_hash(url: str = "", file_path: Optional[Path] = None) -> str:
+        """Compute a stable SHA-256 for an asset from its URL and/or file bytes.
+
+        Uses the first 32KB of the file when available (fast and robust to
+        minor transcoding differences between jobs).
+        """
+        h = hashlib.sha256()
+        url_norm = (url or "").strip().lower().split("?")[0]
+        if url_norm:
+            h.update(url_norm.encode("utf-8"))
+        if file_path is not None:
+            p = Path(file_path)
+            try:
+                if p.exists() and p.is_file():
+                    with p.open("rb") as f:
+                        chunk = f.read(32 * 1024)
+                        h.update(chunk)
+            except Exception:
+                pass
+        return h.hexdigest()[:32]
+
+    # ----- API -----
+
+    def add_asset(
+        self,
+        kind: str,
+        asset_hash: str,
+        job_id: str,
+        url: str = "",
+        prompt: str = "",
+        max_entries: int = 5000,
+        max_jobs: int = _default_max_jobs,
+    ) -> None:
+        """Register an accepted asset. Silent no-op if hash/job_id empty."""
+        if not asset_hash or not job_id:
+            return
+        with AssetHistory._lock:
+            data = self._load()
+            data["entries"].append({
+                "kind": (kind or "unknown").strip().lower(),
+                "hash": asset_hash,
+                "job_id": job_id,
+                "url": url or "",
+                "prompt": (prompt or "")[:240],
+                "ts": int(time.time()),
+            })
+            if job_id not in data["job_ids"]:
+                data["job_ids"].append(job_id)
+            # Cap size
+            if len(data["job_ids"]) > max_jobs * 4:
+                data["job_ids"] = data["job_ids"][-max_jobs * 4:]
+            if len(data["entries"]) > max_entries:
+                data["entries"] = data["entries"][-max_entries:]
+            self._save(data)
+
+    def get_recent_hashes(
+        self,
+        kind: str = "",
+        n_jobs: int = _default_max_jobs,
+    ) -> set[str]:
+        """Return the set of asset hashes produced within the last ``n_jobs`` jobs."""
+        with AssetHistory._lock:
+            data = self._load()
+            recent_job_ids = set(data.get("job_ids", [])[-n_jobs:])
+            kind_key = (kind or "").strip().lower()
+            out: set[str] = set()
+            for entry in data.get("entries", []):
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("job_id") not in recent_job_ids:
+                    continue
+                if kind_key and (entry.get("kind") or "").strip().lower() != kind_key:
+                    continue
+                h = entry.get("hash")
+                if h:
+                    out.add(h)
+            return out
+
+    def is_recent_duplicate(
+        self,
+        kind: str,
+        asset_hash: str,
+        n_jobs: int = _default_max_jobs,
+    ) -> bool:
+        """Cheap duplicate check against recent jobs."""
+        if not asset_hash:
+            return False
+        return asset_hash in self.get_recent_hashes(kind=kind, n_jobs=n_jobs)
+
+    def prune(self, max_jobs: int = _default_max_jobs) -> None:
+        """Compact storage to keep only entries of the last ``max_jobs`` jobs."""
+        with AssetHistory._lock:
+            data = self._load()
+            job_ids = data.get("job_ids", [])[-max_jobs:]
+            keep = set(job_ids)
+            data["job_ids"] = job_ids
+            data["entries"] = [
+                e for e in data.get("entries", [])
+                if isinstance(e, dict) and e.get("job_id") in keep
+            ]
+            self._save(data)
+
+
+# Lazy module-level singleton
+_asset_history_singleton: Optional[AssetHistory] = None
+
+
+def get_asset_history() -> AssetHistory:
+    """Return a process-wide AssetHistory singleton."""
+    global _asset_history_singleton
+    if _asset_history_singleton is None:
+        try:
+            from config import settings as _settings
+            path = _settings.workspace / "state" / "asset_history.json"
+        except Exception:
+            path = Path("workspace/state/asset_history.json").resolve()
+        _asset_history_singleton = AssetHistory(path)
+    return _asset_history_singleton
