@@ -723,7 +723,10 @@ def _stage_download(ctx: dict) -> dict:
         music_path=music_path if music_path.exists() else None,
         platform=nicho.plataforma,
         audio_duration=audio_duration,
+        auto_filter_greenscreen=True,
     )
+    if clips != [Path(p) for p in manifest.clip_paths]:
+        manifest.clip_paths = [str(p) for p in clips]
 
     if not pre_ok:
         first_code = pre_errors[0][0] if pre_errors else ErrorCode.ASSET_MISSING

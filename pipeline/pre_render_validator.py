@@ -37,8 +37,15 @@ def validate_pre_render(
     music_path: Path | None,
     platform: str,
     audio_duration: float,
+    auto_filter_greenscreen: bool = False,
 ) -> tuple[bool, list[tuple[ErrorCode, str]]]:
-    """Run all pre-render checks. Returns (all_ok, errors)."""
+    """Run all pre-render checks. Returns (all_ok, errors).
+
+    When ``auto_filter_greenscreen`` is True, unkeyed greenscreen clips are
+    **removed in-place** from ``clips`` instead of failing the whole render.
+    A WARNING is still logged for each dropped clip, but they do not appear
+    in the returned ``errors`` list unless no clip/image remains.
+    """
     errors: list[tuple[ErrorCode, str]] = []
 
     # 1. Audio exists and non-empty
@@ -53,13 +60,8 @@ def validate_pre_render(
             f"Duration {audio_duration:.1f}s exceeds {platform} limit of {max_dur:.1f}s"
         ))
 
-    # 3. At least 1 visual source
-    valid_clips = [c for c in clips if c.exists() and c.stat().st_size > 1000]
-    valid_images = [i for i in images if i.exists() and i.stat().st_size > 1000]
-    if not valid_clips and not valid_images:
-        errors.append((ErrorCode.ASSET_MISSING, "No valid clips or images available for render"))
-
-    # 4. Check each clip
+    # 4. Check each clip (collect greenscreen drops separately for optional auto-filter)
+    green_to_drop: list[Path] = []
     for clip in clips:
         resolved_clip = _resolve_clip_path(clip)
         if not resolved_clip:
@@ -69,12 +71,31 @@ def validate_pre_render(
         else:
             green_ratio = _estimate_green_screen_ratio(resolved_clip)
             if green_ratio >= 0.34:
-                errors.append(
-                    (
-                        ErrorCode.GREENSCREEN_DETECTED,
-                        f"Clip looks like unkeyed greenscreen: {clip.name} ({green_ratio * 100:.1f}% green)",
-                    )
+                message = (
+                    f"Clip looks like unkeyed greenscreen: {clip.name} "
+                    f"({green_ratio * 100:.1f}% green)"
                 )
+                if auto_filter_greenscreen:
+                    green_to_drop.append(clip)
+                    logger.warning(
+                        f"Pre-render auto-drop [GREENSCREEN_DETECTED]: {message}"
+                    )
+                else:
+                    errors.append((ErrorCode.GREENSCREEN_DETECTED, message))
+
+    if auto_filter_greenscreen and green_to_drop:
+        for drop in green_to_drop:
+            try:
+                clips.remove(drop)
+            except ValueError:
+                continue
+
+    # 3. At least 1 visual source (run AFTER greenscreen filter so we don't
+    #    declare "no clips" just because every clip happened to be chroma).
+    valid_clips = [c for c in clips if c.exists() and c.stat().st_size > 1000]
+    valid_images = [i for i in images if i.exists() and i.stat().st_size > 1000]
+    if not valid_clips and not valid_images:
+        errors.append((ErrorCode.ASSET_MISSING, "No valid clips or images available for render"))
 
     # 5. Subtitle file parseable
     if subs_path and subs_path.exists():
