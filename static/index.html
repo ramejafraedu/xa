@@ -431,6 +431,7 @@
           <div class="text-lg font-bold truncate" id="modal-job-title">—</div>
         </div>
         <div class="flex items-center gap-2">
+          <button id="modal-job-cover" type="button" class="btn-ghost px-3 py-2 rounded-lg text-sm flex items-center gap-2 hidden" title="Subir imagen como primer frame antes de descargar"><i data-lucide="image-plus" class="w-4 h-4"></i>Portada</button>
           <button id="modal-job-download" class="btn-ghost px-3 py-2 rounded-lg text-sm flex items-center gap-2 hidden"><i data-lucide="download" class="w-4 h-4"></i>MP4</button>
           <button onclick="closeModal('modal-job')" class="btn-ghost rounded-lg p-2"><i data-lucide="x" class="w-4 h-4"></i></button>
         </div>
@@ -452,6 +453,8 @@
       <div class="p-4 sm:p-6 space-y-4" id="copilot-body"></div>
     </div>
   </div>
+
+  <input type="file" id="global-cover-file" class="hidden" accept="image/jpeg,image/png,image/webp" />
 
   <script>
   (() => {
@@ -512,6 +515,57 @@
       }
       const ct = resp.headers.get('content-type') || '';
       return ct.includes('application/json') ? resp.json() : resp.text();
+    };
+
+    const uploadVideoCoverMultipart = async (videoName, dir, file) => {
+      const fd = new FormData();
+      fd.append('dir', dir || '');
+      fd.append('file', file);
+      const resp = await fetch(API + `/api/videos/${encodeURIComponent(videoName)}/upload-cover`, { method: 'POST', body: fd });
+      if (!resp.ok) {
+        let msg = resp.statusText;
+        try {
+          const j = await resp.json();
+          if (j.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+          else if (j.error) msg = j.error;
+        } catch (_) {
+          try { msg = await resp.text(); } catch (__) {}
+        }
+        throw new Error(msg);
+      }
+      return resp.json().catch(() => ({}));
+    };
+
+    const bindGlobalCoverFileInput = () => {
+      const inp = $('#global-cover-file');
+      if (!inp || inp.dataset.boundCover) return;
+      inp.dataset.boundCover = '1';
+      inp.addEventListener('change', async () => {
+        const f = inp.files && inp.files[0];
+        const name = inp.dataset.pendingVideoName || '';
+        const dir = inp.dataset.pendingVideoDir || '';
+        const onOk = inp._vfCoverOnOk;
+        inp.value = '';
+        delete inp.dataset.pendingVideoName;
+        delete inp.dataset.pendingVideoDir;
+        inp._vfCoverOnOk = null;
+        if (!f || !name) return;
+        try {
+          await uploadVideoCoverMultipart(name, dir, f);
+          toast('Portada aplicada. Ya puedes descargar el MP4.', 'success');
+          if (typeof onOk === 'function') onOk();
+        } catch (e) { toast('Error: ' + (e.message || e), 'error'); }
+      });
+    };
+    bindGlobalCoverFileInput();
+
+    const openCoverPicker = (videoName, videoDir, onSuccess) => {
+      const inp = $('#global-cover-file');
+      if (!inp || !videoName) return;
+      inp.dataset.pendingVideoName = videoName;
+      inp.dataset.pendingVideoDir = videoDir || '';
+      inp._vfCoverOnOk = onSuccess || null;
+      inp.click();
     };
 
     // --- Formatting
@@ -611,6 +665,12 @@
     };
 
     const pushResourceSample = (snap) => {
+      if (snap && snap.error) {
+        const msg = String(snap.error).slice(0, 120);
+        $('#resources-meta').textContent = msg;
+        $('#res-cpu-meta').textContent = msg;
+        return;
+      }
       const ts = new Date();
       const label = ts.toLocaleTimeString([], { hour12: false });
       const h = state.resourceHistory;
@@ -808,19 +868,31 @@
         return;
       }
       for (const v of state.videos) {
+        const metaChildren = [
+          el('div', { cls: 'font-semibold text-white line-clamp-2', text: v.titulo || v.name }),
+        ];
+        if (v.descripcion) metaChildren.push(el('div', { cls: 'text-[11px] text-ink-200 line-clamp-3 leading-snug', text: v.descripcion }));
+        if (v.hashtags) metaChildren.push(el('div', { cls: 'text-[10px] text-violet-300/90 font-mono line-clamp-2 break-words', text: v.hashtags }));
+        metaChildren.push(el('div', { cls: 'text-[10px] text-ink-400 font-mono truncate', text: v.name }));
+        metaChildren.push(el('div', { cls: 'flex items-center justify-between text-[11px] text-ink-300 font-mono' }, [
+          el('span', { text: v.size_mb + ' MB' }),
+          el('span', { text: v.created })
+        ]));
         const card = el('div', { cls: 'glass rounded-2xl overflow-hidden card-hover flex flex-col' }, [
           el('div', { cls: 'aspect-video bg-ink-800/60 relative' }, [
             el('video', { cls: 'w-full h-full object-cover', attrs: { controls: '', preload: 'metadata', src: v.download_url } })
           ]),
           el('div', { cls: 'p-4 space-y-2 text-sm' }, [
-            el('div', { cls: 'font-semibold truncate', text: v.name }),
-            el('div', { cls: 'flex items-center justify-between text-[11px] text-ink-300 font-mono' }, [
-              el('span', { text: v.size_mb + ' MB' }),
-              el('span', { text: v.created })
-            ]),
-            el('div', { cls: 'flex items-center gap-2 pt-1' }, [
-              el('a', { cls: 'btn-primary flex-1 px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5',
-                        attrs: { href: v.download_url, download: v.name } }, [ el('i', { attrs: { 'data-lucide': 'download' }, cls: 'w-3.5 h-3.5' }), document.createTextNode('Download') ]),
+            ...metaChildren,
+            el('div', { cls: 'flex items-center gap-2 pt-1 flex-wrap' }, [
+              el('button', { cls: 'btn-ghost flex-1 min-w-[92px] px-3 py-2 rounded-lg text-xs flex items-center justify-center gap-1.5',
+                            attrs: { type: 'button', title: 'Subir portada (primer frame) antes de descargar' },
+                            events: { click: () => openCoverPicker(v.name, v.dir, loadVideos) } }, [
+                el('i', { attrs: { 'data-lucide': 'image-plus' }, cls: 'w-3.5 h-3.5' }),
+                document.createTextNode('Portada')
+              ]),
+              el('a', { cls: 'btn-primary flex-1 min-w-[92px] px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5',
+                        attrs: { href: v.download_url, download: v.name } }, [ el('i', { attrs: { 'data-lucide': 'download' }, cls: 'w-3.5 h-3.5' }), document.createTextNode('Descargar') ]),
               el('button', { cls: 'btn-ghost px-3 py-2 rounded-lg text-xs',
                              attrs: { title: 'Delete' },
                              events: { click: async () => {
@@ -843,21 +915,33 @@
         return;
       }
       for (const v of items) {
-        const card = el('a', { cls: 'glass rounded-xl overflow-hidden card-hover block',
-                               attrs: { href: v.download_url } }, [
+        const dashMeta = [
+          el('div', { cls: 'text-sm font-semibold text-white line-clamp-2 leading-tight', text: v.titulo || v.name }),
+        ];
+        if (v.descripcion) dashMeta.push(el('div', { cls: 'text-[11px] text-ink-200 line-clamp-2 leading-snug', text: v.descripcion }));
+        if (v.hashtags) dashMeta.push(el('div', { cls: 'text-[10px] text-violet-300/90 font-mono line-clamp-2 break-words', text: v.hashtags }));
+        dashMeta.push(el('div', { cls: 'text-[10px] text-ink-400 font-mono truncate', text: v.name }));
+        dashMeta.push(el('div', { cls: 'text-[11px] text-ink-300 font-mono flex items-center justify-between' }, [
+          el('span', { text: v.size_mb + ' MB' }),
+          el('span', { text: v.created })
+        ]));
+        const card = el('div', { cls: 'glass rounded-xl overflow-hidden card-hover flex flex-col' }, [
           el('div', { cls: 'aspect-video bg-ink-800/60 relative flex items-center justify-center', attrs: { 'data-thumb': v.name } }, [
             el('i', { attrs: { 'data-lucide': 'film' }, cls: 'w-8 h-8 text-ink-300' }),
             el('div', { cls: 'absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition bg-ink-900/50' }, [
-              el('div', { cls: 'w-12 h-12 rounded-full bg-white/90 flex items-center justify-center' }, [
-                el('i', { attrs: { 'data-lucide': 'play' }, cls: 'w-5 h-5 text-ink-900' })
+              el('a', { cls: 'w-12 h-12 rounded-full bg-white/90 flex items-center justify-center', attrs: { href: v.download_url, title: 'Descargar' } }, [
+                el('i', { attrs: { 'data-lucide': 'download' }, cls: 'w-5 h-5 text-ink-900' })
               ])
             ])
           ]),
-          el('div', { cls: 'p-3 space-y-0.5' }, [
-            el('div', { cls: 'text-sm truncate font-medium', text: v.name }),
-            el('div', { cls: 'text-[11px] text-ink-300 font-mono flex items-center justify-between' }, [
-              el('span', { text: v.size_mb + ' MB' }),
-              el('span', { text: v.created })
+          el('div', { cls: 'p-3 space-y-1 flex-1 flex flex-col' }, [
+            ...dashMeta,
+            el('div', { cls: 'flex gap-2 mt-2' }, [
+              el('button', { cls: 'btn-ghost flex-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold',
+                            attrs: { type: 'button', title: 'Portada antes de descargar' },
+                            events: { click: () => openCoverPicker(v.name, v.dir, loadOverview) } }, [ document.createTextNode('Portada') ]),
+              el('a', { cls: 'btn-primary flex-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold text-center',
+                      attrs: { href: v.download_url, download: v.name } }, [ document.createTextNode('Descargar') ])
             ])
           ])
         ]);
@@ -1017,18 +1101,22 @@
       } catch (e) { console.warn('themes', e); }
     };
 
-    // --- Logs
+    // --- Logs SSE (server sends event: "log")
     const initLogStream = () => {
       if (state.logStream) { try { state.logStream.close(); } catch(e){} }
       const stream = new EventSource('/api/logs');
       state.logStream = stream;
-      stream.onmessage = (ev) => {
+      const onLog = (ev) => {
         try {
           const entry = JSON.parse(ev.data);
           appendLog(entry);
         } catch (e) {}
       };
-      stream.onerror = () => { setTimeout(initLogStream, 3000); };
+      stream.addEventListener('log', onLog);
+      stream.onerror = () => {
+        try { stream.removeEventListener('log', onLog); } catch (e) {}
+        setTimeout(initLogStream, 3000);
+      };
     };
     const appendLog = (entry) => {
       if (state.logsLevel && entry.level !== state.logsLevel) return;
@@ -1044,15 +1132,26 @@
       if ($('#logs-autoscroll').checked) console.scrollTop = console.scrollHeight;
     };
 
-    // --- Resources SSE
+    // --- Resources SSE (server sends event: "resources", not default "message")
     const initResourceStream = () => {
       if (state.resourceStream) { try { state.resourceStream.close(); } catch(e){} }
       const stream = new EventSource('/api/resources/stream');
       state.resourceStream = stream;
-      stream.onmessage = (ev) => {
+      const onResources = (ev) => {
         try { pushResourceSample(JSON.parse(ev.data)); } catch (e) {}
       };
-      stream.onerror = () => { setTimeout(initResourceStream, 4000); };
+      stream.addEventListener('resources', onResources);
+      stream.onerror = () => {
+        try { stream.removeEventListener('resources', onResources); } catch (e) {}
+        setTimeout(initResourceStream, 4000);
+      };
+    };
+
+    const fetchResourcesOnce = async () => {
+      try {
+        const snap = await api('/api/resources');
+        pushResourceSample(snap);
+      } catch (e) { console.warn('resources poll', e); }
     };
 
     // --- Checkpoints
@@ -1107,6 +1206,15 @@
         const downloadBtn = $('#modal-job-download');
         if (download) { downloadBtn.classList.remove('hidden'); downloadBtn.onclick = () => window.open(download, '_blank'); }
         else { downloadBtn.classList.add('hidden'); }
+        const coverBtn = $('#modal-job-cover');
+        const cup = analysis.cover_upload || {};
+        if (analysis.video_exists && cup.video_name) {
+          coverBtn.classList.remove('hidden');
+          coverBtn.onclick = () => openCoverPicker(cup.video_name, cup.dir || '', () => openJobModal(jobId));
+        } else {
+          coverBtn.classList.add('hidden');
+          coverBtn.onclick = null;
+        }
         const body = $('#modal-job-body');
         body.innerHTML = '';
         const pill = statusPill(d.status);
@@ -1200,6 +1308,7 @@
     loadExecMode();
     loadNichos();
     loadJobs();
+    fetchResourcesOnce();
     initResourceStream();
     initLogStream();
     state.checkpointInterval = setInterval(pollCheckpoints, 5000);

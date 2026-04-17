@@ -420,6 +420,43 @@ def _collect_recent_manifests(limit: int = 50) -> list[dict]:
     return results
 
 
+def _build_video_publish_index(limit_manifests: int = 150) -> dict[str, dict]:
+    """Map MP4 basename -> titulo / descripcion / hashtags from the newest manifest that references that file."""
+    index: dict[str, dict] = {}
+    for m in _collect_recent_manifests(limit_manifests):
+        vp = (m.get("video_path") or "").strip()
+        if not vp:
+            continue
+        try:
+            basename = Path(vp).name
+        except Exception:
+            continue
+        if not basename.lower().endswith(".mp4"):
+            continue
+        if basename in index:
+            continue
+        titulo = (m.get("titulo") or m.get("publish_title") or "").strip()
+        desc = (m.get("publish_description") or m.get("caption") or "").strip()
+        tags_text = (m.get("publish_hashtags_text") or "").strip()
+        if not tags_text:
+            raw_tags = m.get("publish_hashtags")
+            if isinstance(raw_tags, list) and raw_tags:
+                parts: list[str] = []
+                for t in raw_tags:
+                    s = str(t).strip()
+                    if not s:
+                        continue
+                    parts.append(s if s.startswith("#") else f"#{s}")
+                tags_text = " ".join(parts)
+        index[basename] = {
+            "job_id": str(m.get("job_id", "") or ""),
+            "titulo": titulo[:200],
+            "descripcion": desc[:600],
+            "hashtags": tags_text[:500],
+        }
+    return index
+
+
 def _resolve_downloadable_video(video_name: str, dir_hint: str = "") -> Optional[Path]:
     """Resolve a video file from output/review directories safely."""
     safe_name = Path(video_name).name
@@ -1568,10 +1605,42 @@ async def job_analysis(job_id: str):
     probe_data = _run_ffprobe(video_path)
     thumbnail = _generate_thumbnail(video_path)
 
+    cover_upload: dict[str, str] = {}
+    if video_path:
+        try:
+            vp = Path(video_path)
+            if vp.exists() and vp.is_file():
+                resolved = vp.resolve()
+                parent = resolved.parent
+                out_root = settings.output_dir.resolve()
+                rev_root = settings.review_dir.resolve()
+                if parent == out_root:
+                    cover_upload = {"video_name": vp.name, "dir": settings.output_dir.name}
+                elif parent == rev_root:
+                    cover_upload = {"video_name": vp.name, "dir": settings.review_dir.name}
+                else:
+                    cover_upload = {"video_name": vp.name, "dir": ""}
+            else:
+                cover_upload = {"video_name": Path(video_path).name, "dir": ""}
+        except Exception:
+            cover_upload = {"video_name": Path(str(video_path)).name, "dir": ""}
+
+    download_url = ""
+    if cover_upload.get("video_name"):
+        vn = cover_upload["video_name"]
+        vd = (cover_upload.get("dir") or "").strip()
+        download_url = (
+            f"/api/videos/download/{quote(vn)}?dir={quote(vd)}"
+            if vd
+            else f"/api/videos/download/{quote(vn)}"
+        )
+
     return {
         "job_id": job_id,
         "video_path": video_path,
         "video_exists": bool(video_path and Path(video_path).exists()),
+        "cover_upload": cover_upload,
+        "download_url": download_url,
         "ab_visual_split": _extract_ab_visual_split(manifest),
         "ffprobe": probe_data,
         "thumbnail": thumbnail,
@@ -2463,16 +2532,27 @@ async def stream_logs(request: Request):
 async def list_videos():
     """List generated video files."""
     videos = []
+    publish_idx = _build_video_publish_index()
     for d in [settings.output_dir, settings.review_dir]:
         if d.exists():
             for f in sorted(d.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
-                videos.append({
+                meta = publish_idx.get(f.name, {})
+                row = {
                     "name": f.name,
                     "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
                     "created": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
                     "dir": d.name,
                     "download_url": f"/api/videos/download/{quote(f.name)}?dir={d.name}",
-                })
+                }
+                if meta.get("job_id"):
+                    row["job_id"] = meta["job_id"]
+                if meta.get("titulo"):
+                    row["titulo"] = meta["titulo"]
+                if meta.get("descripcion"):
+                    row["descripcion"] = meta["descripcion"]
+                if meta.get("hashtags"):
+                    row["hashtags"] = meta["hashtags"]
+                videos.append(row)
     return videos
 
 
@@ -2535,6 +2615,7 @@ async def dashboard_overview():
     videos_total = 0
     videos_today = 0
     latest_videos: list[dict] = []
+    publish_idx = _build_video_publish_index()
     for d in [settings.output_dir, settings.review_dir]:
         if not d.exists():
             continue
@@ -2544,7 +2625,8 @@ async def dashboard_overview():
             if mtime >= today_start:
                 videos_today += 1
             if len(latest_videos) < 6:
-                latest_videos.append({
+                meta = publish_idx.get(f.name, {})
+                row = {
                     "name": f.name,
                     "dir": d.name,
                     "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
@@ -2552,7 +2634,16 @@ async def dashboard_overview():
                     "mtime": mtime,
                     "download_url": f"/api/videos/download/{quote(f.name)}?dir={d.name}",
                     "thumbnail_url": f"/api/videos/{quote(f.name)}/thumbnail?dir={d.name}",
-                })
+                }
+                if meta.get("job_id"):
+                    row["job_id"] = meta["job_id"]
+                if meta.get("titulo"):
+                    row["titulo"] = meta["titulo"]
+                if meta.get("descripcion"):
+                    row["descripcion"] = meta["descripcion"]
+                if meta.get("hashtags"):
+                    row["hashtags"] = meta["hashtags"]
+                latest_videos.append(row)
 
     # Jobs today = manifests in output written today + resumable jobs count.
     jobs_today = 0
