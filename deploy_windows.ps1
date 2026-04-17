@@ -55,10 +55,17 @@ $zipFile = Join-Path $TEMP_DIR "vf_deploy_$deployStamp.tar.gz"
 # Crear lista de exclusiones para tar
 $excludeFile = "$TEMP_DIR\exclude.txt"
 @(
-    '.git', '.venv', '__pycache__', '*.pyc', '*.pyo', '*.pyd',
+    '.git', '.venv', 'venv',
+    '.env', '.env.*',
+    '__pycache__', '*.pyc', '*.pyo', '*.pyd',
     '.pytest_cache', '*.egg-info', 'dist', 'build', '.windsurf',
     'OpenMontage-main', '*.tar.gz', '*.tgz', '*.zip',
-    'logs', 'temp', 'outputs', 'workspace'
+    'logs', 'temp', 'outputs', 'workspace',
+    'node_modules', '.next', '.turbo', '.cache',
+    'remotion-composer/out', 'remotion-composer/.remotion',
+    '*.mp4', '*.mov', '*.webm',
+    '*service-account*.json', 'inductive-actor-*.json',
+    'id_ed25519*', '*.pem', '*.ppk'
 ) | Set-Content $excludeFile
 
 # Comprimir usando tar (más rápido y soporta exclusiones reales en Windows 10/11)
@@ -83,25 +90,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Extraer y configurar en servidor
+# NOTA: el tar local excluye .env y credenciales, asi que la .env remota NO se pisa.
 Write-Host "📂 Configurando en servidor..." -ForegroundColor Yellow
 $remoteCommands = "
 set -e
 mkdir -p $REMOTE_DIR
 cd $REMOTE_DIR
 
-# Backup si existe
-if [ -f video_factory.py ]; then
-    mv config.py config.py.backup 2>/dev/null || true
+# Backup corto de config por si la extraccion cambia algo
+if [ -f config.py ]; then
+    cp -f config.py config.py.backup 2>/dev/null || true
 fi
 
-# Extraer nuevo codigo
+# Extraer nuevo codigo (el tar excluye .env y credenciales)
 tar -xzf /tmp/vf_deploy_incoming.tar.gz -C $REMOTE_DIR
 rm -f /tmp/vf_deploy_incoming.tar.gz
-
-# Restaurar .env si existe backup
-if [ -f $REMOTE_DIR/../.env ]; then
-    cp $REMOTE_DIR/../.env $REMOTE_DIR/.env
-fi
 
 # Permisos
 chmod +x setup_ubuntu.sh 2>/dev/null || true
@@ -121,3 +124,6 @@ Write-Host ""
 Write-Host "✅ DESPLIEGUE COMPLETADO!" -ForegroundColor Green
 Write-Host "📍 Ubicacion: $REMOTE_DIR"
 Write-Host "🎬 Para ejecutar: ssh $SSH_USER@$SSH_HOST 'cd $REMOTE_DIR && python video_factory.py --test curiosidades'"
+
+# Limpiar archivo de exclusiones local
+if (Test-Path $excludeFile) { Remove-Item $excludeFile -Force -ErrorAction SilentlyContinue }

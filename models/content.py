@@ -438,6 +438,9 @@ class JobManifest(BaseModel):
     publish_hashtags_text: str = ""
     publish_comment: str = ""
     publish_cover_path: str = ""
+    seo_title_variants: list[str] = Field(default_factory=list)
+    seo_description_variants: list[str] = Field(default_factory=list)
+    seo_hashtags: list[str] = Field(default_factory=list)
     reference_url: str = ""
     reference_notes: str = ""
     manual_ideas: list[str] = Field(default_factory=list)
