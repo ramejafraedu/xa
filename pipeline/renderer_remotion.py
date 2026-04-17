@@ -556,19 +556,52 @@ def _build_image_timeline(
     duration: float,
     composition_id: str = DEFAULT_REMOTION_COMPOSITION,
 ) -> dict:
-    """Build a Remotion timeline for images using Parallax/Ken Burns."""
+    """Build a Remotion timeline for images using Parallax/Ken Burns.
+
+    V16 PRO: enforces Shorts rhythm — the first scene (hook) is clamped to
+    ``settings.short_hook_max_seconds``, subsequent scenes are forced into
+    ``[short_scene_min_seconds, short_scene_max_seconds]``, image count is
+    capped at ``short_max_scenes`` and transitions are kept short for
+    snappy cuts.
+    """
     valid_images = [img for img in images if img.exists()]
     if not valid_images:
         return {}
 
-    scene_dur = max(0.8, duration / len(valid_images))
+    hard_limit = bool(getattr(settings, "enforce_duration_hard_limit", False))
+    max_scenes = int(getattr(settings, "short_max_scenes", 12)) if hard_limit else len(valid_images)
+    scene_min = float(getattr(settings, "short_scene_min_seconds", 2.5))
+    scene_max = float(getattr(settings, "short_scene_max_seconds", 5.0))
+    hook_max = float(getattr(settings, "short_hook_max_seconds", 2.0))
+    fade_frames = 6 if hard_limit else 15  # ~0.2s cross-fade on Shorts (30fps)
+
+    if hard_limit and len(valid_images) > max_scenes:
+        valid_images = valid_images[:max_scenes]
+
+    total = max(1.0, float(duration))
+    if hard_limit:
+        # Reserve the hook window, split the rest evenly across remaining scenes.
+        hook_dur = min(hook_max, total * 0.1 if len(valid_images) > 1 else total)
+        rest_count = max(1, len(valid_images) - 1)
+        rest_total = max(0.0, total - hook_dur)
+        rest_each = max(scene_min, min(scene_max, rest_total / rest_count))
+        durations = [hook_dur] + [rest_each] * rest_count
+        # Final scene soaks up any leftover to match the exact total.
+        drift = total - sum(durations)
+        if abs(drift) > 0.01 and len(durations) > 1:
+            durations[-1] = max(scene_min, durations[-1] + drift)
+    else:
+        scene_dur = max(0.8, total / len(valid_images))
+        durations = [scene_dur] * len(valid_images)
+
     scenes = []
     cursor = 0.0
     animations = ["parallax", "kenBurns", "panCross", "zoomPulse"]
     from itertools import cycle
     anim_cycle = cycle(animations)
-    
+
     for idx, img in enumerate(valid_images):
+        scene_dur = durations[idx]
         scenes.append({
             "id": f"image_scene_{idx + 1}",
             "kind": "image",
@@ -576,11 +609,11 @@ def _build_image_timeline(
             "startSeconds": round(cursor, 3),
             "durationSeconds": round(scene_dur, 3),
             "animation": next(anim_cycle),
-            "animationIntensity": 1.2,
-            "tone": "neutral",
+            "animationIntensity": 1.2 if not hard_limit else 1.4,
+            "tone": "shock" if idx == 0 and hard_limit else "neutral",
             "overlayParticles": True,
-            "fadeInFrames": 15 if idx > 0 else 0,
-            "fadeOutFrames": 15 if idx < len(valid_images) - 1 else 0,
+            "fadeInFrames": fade_frames if idx > 0 else 0,
+            "fadeOutFrames": fade_frames if idx < len(valid_images) - 1 else 0,
             "filter": "contrast(1.05) saturate(1.1) brightness(0.95)",
         })
         cursor += scene_dur
@@ -1137,19 +1170,38 @@ def build_edit_decisions_artifact(
 
 
 def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> list[dict]:
-    """Map composition-specific props to edit_decisions.cuts format."""
+    """Map composition-specific props to edit_decisions.cuts format.
+
+    V16 PRO: hook feature is capped at ``short_hook_max_seconds`` and
+    subsequent features fall inside ``[short_scene_min_seconds,
+    short_scene_max_seconds]``. Transition duration is
+    ``short_transition_seconds`` (default 0.08s) for punchy cuts.
+    """
+    hard_limit = bool(getattr(settings, "enforce_duration_hard_limit", False))
+    scene_min = float(getattr(settings, "short_scene_min_seconds", 2.5))
+    scene_max = float(getattr(settings, "short_scene_max_seconds", 5.0))
+    hook_max = float(getattr(settings, "short_hook_max_seconds", 2.0))
+    max_scenes = int(getattr(settings, "short_max_scenes", 12))
+    transition_dur = float(getattr(settings, "short_transition_seconds", 0.08))
+
     if composition_id == "UniversalCommercial":
         script = normalized_props.get("script") if isinstance(normalized_props.get("script"), dict) else {}
         features = script.get("features") if isinstance(script.get("features"), list) else []
         cuts: list[dict] = []
-        for idx, feature in enumerate(features):
+        feature_iter = features[:max_scenes] if hard_limit else features
+        for idx, feature in enumerate(feature_iter):
             if not isinstance(feature, dict):
                 continue
             image_path = str(feature.get("imagePath") or "").strip()
             if not image_path:
                 continue
 
-            duration = 6.0
+            if hard_limit:
+                duration = hook_max if idx == 0 else min(scene_max, max(scene_min, 4.0))
+                td = transition_dur
+            else:
+                duration = 6.0
+                td = 0.15
             title = str(feature.get("title") or f"Feature {idx + 1}")
             cuts.append(
                 {
@@ -1161,17 +1213,19 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
                     "transform": {
                         "scale": 1.0,
                         "position": "center",
-                        "animation": "ken-burns-slow-zoom",
+                        "animation": "ken-burns-slow-zoom" if not hard_limit or idx > 0 else "punch-in-fast",
                     },
                     "transition_in": "cut",
                     "transition_out": "cut",
-                    "transition_duration": 0.15,
+                    "transition_duration": td,
                     "reason": f"Feature visual: {title[:120]}",
                 }
             )
         return cuts
 
     scenes = normalized_props.get("scenes") if isinstance(normalized_props.get("scenes"), list) else []
+    if hard_limit and len(scenes) > max_scenes:
+        scenes = scenes[:max_scenes]
     cuts = []
     for idx, scene in enumerate(scenes):
         if not isinstance(scene, dict):
@@ -1185,6 +1239,12 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
             duration = max(0.8, float(scene.get("durationSeconds", 0.0) or 0.0))
         except (TypeError, ValueError):
             duration = 0.8
+
+        if hard_limit:
+            if idx == 0:
+                duration = min(duration, hook_max)
+            else:
+                duration = max(scene_min, min(scene_max, duration))
 
         try:
             speed = max(0.1, float(scene.get("speedFactor", 1.0) or 1.0))
@@ -1204,6 +1264,11 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
         except (TypeError, ValueError):
             fade_out_frames = 0
 
+        computed_transition = round(max(0.0, fade_out_frames / 30.0), 3)
+        if hard_limit:
+            # Cap transition duration so cuts stay snappy for shorts.
+            computed_transition = min(computed_transition, transition_dur)
+
         cut = {
             "id": str(scene.get("id") or f"cut_{idx + 1}"),
             "source": _to_file_uri(src),
@@ -1214,7 +1279,7 @@ def _build_edit_decision_cuts(normalized_props: dict, composition_id: str) -> li
             "transform": transform,
             "transition_in": "cut",
             "transition_out": _normalize_cut_transition(str(scene.get("transitionOut") or "cut")),
-            "transition_duration": round(max(0.0, fade_out_frames / 30.0), 3),
+            "transition_duration": computed_transition,
         }
 
         reason = str(scene.get("sceneText") or "").strip()

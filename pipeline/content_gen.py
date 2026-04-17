@@ -66,8 +66,28 @@ def _hook_rules(platform: str, variant: str) -> str:
 
 
 def _script_profile(platform: str) -> tuple[int, int, str]:
-    """Return target script length profile by platform."""
+    """Return target script length profile by platform.
+
+    V16 PRO — Shorts strategy: prioritize 30-45s high-retention clips over
+    slow mini-documentaries. Word counts are derived from
+    ``settings.short_script_word_min/max`` and
+    ``settings.target_duration_seconds`` when ``enforce_duration_hard_limit``
+    is enabled (default).
+    """
     p = (platform or "").lower()
+
+    if getattr(settings, "enforce_duration_hard_limit", False):
+        word_min = int(getattr(settings, "short_script_word_min", 110))
+        word_max = int(getattr(settings, "short_script_word_max", 130))
+        target_s = int(getattr(settings, "target_duration_seconds", 40))
+        max_s = int(getattr(settings, "max_video_duration", 60))
+        target_label = f"{target_s - 5}-{max_s} segundos (objetivo {target_s}s)"
+        # Facebook allows slightly longer explanatory content.
+        if p == "facebook":
+            return word_min + 40, word_max + 80, f"{target_s + 20}-{max_s + 40} segundos"
+        return word_min, word_max, target_label
+
+    # Legacy fallback (when V16 PRO hard limit is disabled).
     if p == "facebook":
         return 170, 260, "70-120 segundos"
     if p == "reels":
@@ -83,6 +103,40 @@ def _script_word_count(data: dict) -> int:
     """Count words in generated script body."""
     text = str(data.get("guion", "") or "").strip()
     return len(text.split())
+
+
+def _trim_long_script(data: dict, word_max: int) -> dict:
+    """Hard-trim a too-long script to stay within the short-form word budget.
+
+    Keeps the hook, clips trailing sentences until budget is met, and
+    appends the ``micro_loop`` (or a default curiosity line) as closing.
+    """
+    if not isinstance(data, dict):
+        return data
+    text = str(data.get("guion", "") or "").strip()
+    if not text:
+        return data
+
+    words = text.split()
+    if len(words) <= word_max:
+        return data
+
+    # Keep headroom for the micro-loop closing line (~10 words).
+    budget = max(20, word_max - 10)
+    trimmed = " ".join(words[:budget]).rstrip(",;:- ")
+    # Snap to last sentence boundary if possible.
+    for stop in (".", "!", "?"):
+        idx = trimmed.rfind(stop)
+        if idx > len(trimmed) * 0.5:
+            trimmed = trimmed[: idx + 1]
+            break
+
+    loop = str(data.get("micro_loop", "") or "").strip()
+    if not loop:
+        loop = "pero lo peor todavia esta por venir..."
+    data["guion"] = f"{trimmed} {loop}".strip()
+    data["micro_loop"] = loop
+    return data
 
 
 def _rewrite_short_script(
@@ -123,27 +177,35 @@ def _rewrite_short_script(
         return None, model_used
 
 
-SYSTEM_PROMPT = """Eres head writer de videos faceless top 1%. Objetivo: CTR alto y retencion brutal.
+SYSTEM_PROMPT = """Eres head writer de videos faceless top 1% (TikTok/Reels/Shorts). Objetivo: retencion brutal de 30-45 segundos.
+
+ESTRATEGIA V16 PRO (OBLIGATORIA — SHORTS DE ALTA RETENCION):
+- Duracion objetivo: 35-45 segundos (MAX 55s). NO mini-documentales.
+- Estructura del guion en 3 bloques claros:
+  1. HOOK (0-2s): una frase brutal, curiosa o polarizante que obliga a quedarse.
+  2. DESARROLLO (2-35s): 8-10 micro-escenas cortas; cada frase = un cambio visual. Ritmo rapido, sin relleno.
+  3. MICRO-LOOP FINAL: frase que genera curiosidad para re-ver o continuar (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...", "y el final te va a romper la cabeza...").
+- Prohibido el CTA tradicional que pida like/follow: el cierre DEBE ser un micro-loop narrativo.
 
 REGLAS MAESTRAS:
-- Gancho en <=1.8 segundos con polarizacion real.
+- Gancho en <=2 segundos con polarizacion real o dato impactante.
 - En los primeros 3 segundos rompe una creencia popular o revela una trampa oculta.
 - Si recibes IDEAS MANUALES, tienen prioridad editorial sobre el resto del contexto.
-- Construye un mini-climax narrativo: tension creciente, giro claro y payoff antes del CTA.
+- Construye tension creciente con giro claro justo antes del micro-loop.
 - Usa polemica controlada para generar debate sin inventar datos ni hacer afirmaciones difamatorias.
 - Escribe 3 variantes de gancho: shock, pregunta, promesa.
-- Frases cortas de 5 a 12 palabras.
-- Cliffhangers cada 8-10 segundos.
+- Frases MUY cortas de 5 a 10 palabras (ritmo de escaneo rapido).
+- Cambio visual/concepto cada 3-5 segundos (una idea por frase).
 - Evita tono enciclopedico; usa conflicto, friccion y consecuencia directa.
-- Incluir 2 a 4 muletillas humanas naturales (mira, o sea, te digo algo, ...).
+- Incluir 1-2 muletillas humanas naturales (mira, o sea, te digo algo, ...).
 - PROHIBIDO: No uses comillas dobles en los textos generados. Si necesitas resaltar algo, usa comillas simples.
 - Mantener coherencia total con estilo, tendencia y nicho.
 - Modo razonamiento maximo: doble verificacion interna de consistencia y calidad antes de responder.
 
 RUBRICA OBLIGATORIA (0-10):
-- hook: fuerza de apertura y curiosidad inmediata.
-- desarrollo: claridad, progresion y ritmo narrativo.
-- cierre: payoff + CTA natural sin cortar la emocion.
+- hook: fuerza de apertura y curiosidad inmediata (<=2s).
+- desarrollo: ritmo rapido, cambios cada 3-5s, sin relleno.
+- micro_loop: cierre que genera curiosidad para re-ver / continuar.
 Si algun bloque queda < 7, reescribe internamente antes de responder.
 
 AB TEST ACTIVO:
@@ -154,41 +216,46 @@ AB TEST ACTIVO:
 ESTILO: {estilo_narrativo}
 DIRECCION VISUAL OBLIGATORIA: {direccion_visual}
 REGLA FRICCION: Abre rompiendo una creencia popular o revelando una trampa oculta en los primeros 3 segundos; evita tono enciclopedico.
-MULETILLAS: Incluye 2 a 4 muletillas naturales repartidas en el guion: mira, o sea, te digo algo...
+MULETILLAS: Incluye 1-2 muletillas naturales repartidas en el guion: mira, o sea, te digo algo...
 TRENDING: {trending_context}
 HISTORIAL: {memoria}
 IDEAS MANUALES PRIORITARIAS: {manual_ideas_block}
-LONGITUD OBJETIVO: {word_min}-{word_max} palabras ({target_duration}). Debe ser explicativo, claro y accionable.
+LONGITUD OBJETIVO: STRICTAMENTE {word_min}-{word_max} palabras ({target_duration}). Mas palabras sera RECHAZADO.
 
 Devuelve solo JSON valido, sin texto extra."""
 
-USER_PROMPT = """Genera contenido viral para {nicho} tono {tono} en {plataforma}. Usa variante {ab_variant}.
+USER_PROMPT = """Genera un SHORT viral de 30-45 segundos para {nicho}, tono {tono}, plataforma {plataforma}. Usa variante {ab_variant}.
 IDEAS MANUALES PRIORITARIAS: {manual_ideas_block}
 
-Tu apertura debe desafiar una creencia popular o exponer una manipulacion habitual.
+Tu apertura debe desafiar una creencia popular o exponer una manipulacion habitual EN LOS PRIMEROS 2 SEGUNDOS.
 Duracion objetivo del contenido: {target_duration}.
+ESTRUCTURA del guion:
+- Hook (0-2s)
+- Desarrollo: 8-10 frases cortas, cada una = un cambio visual (3-5s cada uno)
+- Cierre con MICRO-LOOP de curiosidad (ejemplo: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...")
 
 Devuelve EXACTAMENTE este JSON:
 {{
-  "num_clips": 8,
+  "num_clips": 10,
   "titulo": "titulo corto potente max 9 palabras",
-  "gancho": "gancho principal de 9 a 14 palabras",
+  "gancho": "hook max 10 palabras, impactante y curioso (leible en <=2s)",
   "gancho_variants": ["gancho shock","gancho pregunta","gancho promesa"],
   "hooks_alternos": ["hook alterno A","hook alterno B","hook alterno C"],
   "hook_score": 9,
   "block_scores": {{
     "hook": 9,
     "desarrollo": 8,
-    "cierre": 8
+    "micro_loop": 9
   }},
-    "guion": "guion de {word_min}-{word_max} palabras, explicativo y viral, con micro cliffhangers cada 8-10 segundos y 2-4 muletillas humanas naturales",
-  "cta": "cta breve natural de una oracion",
+    "guion": "guion de STRICTAMENTE {word_min}-{word_max} palabras, frases cortas de 5-10 palabras, ritmo rapido con cambio de idea cada 3-5s, terminando con un micro-loop de curiosidad (ej: 'pero lo peor todavia esta por venir...')",
+  "micro_loop": "frase final corta que genera curiosidad para re-ver o continuar (NO es un CTA tradicional)",
+  "cta": "frase corta suave de una sola oracion, opcional; puede repetir el micro_loop",
   "caption": "caption max 160 caracteres con 3 hashtags",
   "palabras_clave": ["kw1_ingles","kw2_ingles","kw3_ingles","kw4_ingles","kw5_ingles","kw6_ingles","kw7_ingles","kw8_ingles"],
   "mood_musica": "cinematic|motivational|dark|ambient|epic|sad|corporate",
-  "velocidad_cortes": "ultra_rapido|rapido|mixto|cinematografico",
+  "velocidad_cortes": "ultra_rapido",
   "prompt_imagen": "thumbnail prompt in English, ultra specific, must include: {direccion_visual}, dramatic premium composition, no text overlays",
-  "duraciones_clips": [2.0,2.0,2.0,2.0,2.0,2.0,2.0,2.0],
+  "duraciones_clips": [2.0,3.0,3.0,4.0,4.0,4.0,4.0,4.0,4.0,3.5],
   "viral_score": 9
 }}"""
 
@@ -285,6 +352,12 @@ def generate_content(
                 parsed = rewritten
                 model_used = rewrite_model or model_used
                 break
+    elif current_words > word_max:
+        logger.warning(
+            f"Script too long for {platform}: {current_words} words > {word_max}. "
+            "Trimming hard to keep 30-45s short-form rhythm."
+        )
+        parsed = _trim_long_script(parsed, word_max)
 
     parsed["_ab_variant"] = ab_variant
     parsed["_platform"] = platform

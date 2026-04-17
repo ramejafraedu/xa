@@ -324,6 +324,26 @@ class Settings(BaseSettings):
     # Video format: vertical (1080x1920), horizontal (1920x1080), square (1080x1080)
     default_video_format: str = "vertical"
 
+    # --- V16 PRO: Estrategia Shorts de alta retención ---
+    # Videos 30-45s con hook en primeros 2s + body rítmico (3-5s cambios) + micro-loop final.
+    target_duration_seconds: int = 40
+    max_video_duration: int = 60
+    min_video_duration: int = 28
+    enforce_duration_hard_limit: bool = True
+    auto_trim_if_over: bool = True
+    # Script profile aligned with 40s (~3 words/second a velocidad viral).
+    short_script_word_min: int = 110
+    short_script_word_max: int = 130
+    # Max scenes and cut rhythm for Shorts/TikTok/Reels pacing.
+    short_max_scenes: int = 12
+    short_min_scenes: int = 8
+    short_scene_min_seconds: float = 2.5
+    short_scene_max_seconds: float = 5.0
+    short_hook_max_seconds: float = 2.0
+    short_transition_seconds: float = 0.08
+    # Ending with curiosity micro-loop for auto-replay retention.
+    enforce_micro_loop_ending: bool = True
+
     # --- V16 Integration: Playbook System ---
     playbook_validation_enabled: bool = True
     playbook_dir: str = "./nichos"
@@ -524,6 +544,15 @@ class Settings(BaseSettings):
             "max_ram_percent_per_job": self.max_ram_percent_per_job,
             "enable_memory_streaming": self.enable_memory_streaming,
             "force_gc_between_stages": self.force_gc_between_stages,
+            # V16 PRO short-form strategy
+            "target_duration_seconds": self.target_duration_seconds,
+            "max_video_duration": self.max_video_duration,
+            "enforce_duration_hard_limit": self.enforce_duration_hard_limit,
+            "auto_trim_if_over": self.auto_trim_if_over,
+            "short_script_word_min": self.short_script_word_min,
+            "short_script_word_max": self.short_script_word_max,
+            "short_max_scenes": self.short_max_scenes,
+            "enforce_micro_loop_ending": self.enforce_micro_loop_ending,
         }
 
     def openmontage_root(self) -> Path:

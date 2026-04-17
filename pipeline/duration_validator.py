@@ -1,7 +1,11 @@
 """Duration Validator — enforce platform max duration limits.
 
-TikTok: 60m, Reels: 3m, Shorts: 3m, Facebook: 120s.
-If the generated audio exceeds the limit, trim it.
+V16 PRO: When ``settings.enforce_duration_hard_limit`` is enabled (default),
+the pipeline caps every non long-form niche at
+``settings.max_video_duration`` (default 60s) regardless of platform. This
+keeps Shorts/Reels/TikTok under the 30-45s retention-optimised window.
+
+Legacy behaviour (long-form) is preserved when the hard limit is disabled.
 """
 from __future__ import annotations
 
@@ -10,14 +14,15 @@ from pathlib import Path
 
 from loguru import logger
 
-from config import app_config
+from config import app_config, settings
 
 
 def get_max_duration(platform: str) -> float:
     """Get maximum allowed duration for a platform.
 
     If multiple targets are encoded in the platform label (e.g. "tiktok_reels"),
-    apply the strictest cap among those targets.
+    apply the strictest cap among those targets. Under V16 PRO the global
+    ``max_video_duration`` cap is applied on top of platform limits.
     """
     p = (platform or "").lower()
 
@@ -37,9 +42,14 @@ def get_max_duration(platform: str) -> float:
     if "facebook" in p:
         targets.append(facebook_cap)
 
-    if targets:
-        return min(targets)
-    return shorts_cap
+    platform_cap = min(targets) if targets else shorts_cap
+
+    # V16 PRO global hard cap for high-retention short-form output.
+    if getattr(settings, "enforce_duration_hard_limit", False):
+        global_cap = float(getattr(settings, "max_video_duration", 60))
+        return min(platform_cap, global_cap)
+
+    return platform_cap
 
 
 def validate_duration(
@@ -53,17 +63,30 @@ def validate_duration(
 
     Returns (final_duration, was_trimmed).
     """
-    # Some story-first niches intentionally allow long-form narration.
-    if (niche_slug or "").strip().lower() == "historias_reddit":
+    hard_limit = bool(getattr(settings, "enforce_duration_hard_limit", False))
+    auto_trim = bool(getattr(settings, "auto_trim_if_over", True))
+
+    # Some story-first niches intentionally allow long-form narration — unless
+    # the operator explicitly turned on the V16 PRO hard limit.
+    if (niche_slug or "").strip().lower() == "historias_reddit" and not hard_limit:
         logger.info("Skipping duration cap for niche historias_reddit")
         return audio_duration, False
 
     max_dur = get_max_duration(platform)
     if max_duration_override > 0:
         max_dur = max_duration_override
+    if hard_limit:
+        max_dur = min(max_dur, float(getattr(settings, "max_video_duration", 60)))
 
     if audio_duration <= max_dur:
         logger.debug(f"Duration OK: {audio_duration:.1f}s <= {max_dur:.1f}s ({platform})")
+        return audio_duration, False
+
+    if not auto_trim:
+        logger.warning(
+            f"Duration exceeds {platform} limit: {audio_duration:.1f}s > {max_dur:.1f}s "
+            "but AUTO_TRIM_IF_OVER=false — keeping original."
+        )
         return audio_duration, False
 
     logger.warning(

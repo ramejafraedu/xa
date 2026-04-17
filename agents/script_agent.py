@@ -65,8 +65,26 @@ def _build_skills_block(*skill_paths: str) -> str:
 
 
 def _script_profile(platform: str) -> tuple[int, int, str]:
-    """Return target script length profile by platform."""
+    """Return target script length profile by platform.
+
+    V16 PRO — Shorts strategy (30-45s). When
+    ``settings.enforce_duration_hard_limit`` is True (default), word budgets
+    are clamped to ``settings.short_script_word_min/max`` regardless of
+    platform; Facebook gets a slightly bigger explanatory budget.
+    """
     p = (platform or "").lower()
+
+    if getattr(settings, "enforce_duration_hard_limit", False):
+        word_min = int(getattr(settings, "short_script_word_min", 110))
+        word_max = int(getattr(settings, "short_script_word_max", 130))
+        target_s = int(getattr(settings, "target_duration_seconds", 40))
+        max_s = int(getattr(settings, "max_video_duration", 60))
+        label = f"{max(25, target_s - 10)}-{max_s} segundos (objetivo {target_s}s)"
+        if p == "facebook":
+            return word_min + 40, word_max + 80, f"{target_s + 20}-{max_s + 40} segundos"
+        return word_min, word_max, label
+
+    # Legacy long-form defaults.
     if p == "facebook":
         return 190, 240, "70-120 segundos"
     if p == "reels":
@@ -319,7 +337,7 @@ EJEMPLO 2 (Finanzas/Éxito):
             "script/niche_templates.md",
         )
 
-        system = f"""Eres head writer de videos faceless top 1%. Objetivo: CTR alto y retención brutal.
+        system = f"""Eres head writer de SHORTS virales top 1%. Objetivo: retencion brutal en 30-45 segundos.
 
 CONTEXTO NARRATIVO:
 {state.to_context_string()}
@@ -329,25 +347,30 @@ OUTLINE APROBADO:
 {few_shot_examples}
 {skills_block}
 
+ESTRATEGIA V16 PRO (MANDATORIA — SHORTS 30-45s):
+- Duracion objetivo: 35-45 segundos. MAX 55s. NO mini-documentales.
+- Estructura del guion en 3 bloques:
+  1. HOOK (0-2s): frase brutal/curiosa que obliga a quedarse. Max 10 palabras.
+  2. DESARROLLO (2-35s): 8-10 frases cortas; cada frase = un cambio visual/idea. Ritmo rapido.
+  3. MICRO-LOOP FINAL: frase que genera curiosidad para re-ver o continuar (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...", "y el final te va a romper la cabeza..."). NO es un CTA tradicional.
+- El campo 'guion' DEBE terminar con el micro-loop.
+
 REGLAS MAESTRAS Y NEGATIVE PROMPTS (MANDATORIO):
 - PROHIBIDO: No saludes ("Hola a todos"), no te presentes ("Soy tu presentador").
 - PROHIBIDO: Estilo Wikipedia o ensayo escolar. Ve directo al problema, controversia o punto de fricción.
-- Gancho en <=1.8 segundos con polarización real. En los primeros 3s rompe una creencia popular.
-- Incluye un mini-climax antes del cierre: sube tension, revela giro y entrega payoff claro.
+- PROHIBIDO: No pidas "like", "follow", "guarda este video". Cierre = micro-loop narrativo.
+- Gancho en <=2 segundos con polarización real. En los primeros 3s rompe una creencia popular.
+- Incluye un mini-climax antes del micro-loop: sube tension, revela giro y entrega payoff corto.
 - ESTRUCTURA OBLIGATORIA: sigue esta plantilla del nicho de inicio a fin:
 {niche_template}
-- SECUENCIA NARRATIVA OBLIGATORIA: Hook → Context → Mechanism → Twist → Payoff → CTA.
-- CONTEXT debe enmarcar el problema en menos de 2 frases, sin relleno.
-- MECHANISM debe explicar causa/efecto con ejemplo verificable.
-- TWIST debe contradecir una intuicion comun o revelar una implicacion inesperada.
+- SECUENCIA NARRATIVA OBLIGATORIA: Hook (<=2s) → Context (1 frase) → Mechanism (2-3 frases) → Twist (1 frase) → Micro-loop final.
 - Escribe 3 variantes de gancho: shock, pregunta, promesa.
-- Longitud OBLIGATORIA para {platform}: STRICTAMENTE entre {word_min} y {word_max} palabras. SI ES MÁS CORTO, SERÁ RECHAZADO.
-- Frases cortas de 5 a 12 palabras. Cliffhangers cada 8-10 segundos.
+- Longitud OBLIGATORIA para {platform}: STRICTAMENTE entre {word_min} y {word_max} palabras. FUERA DE ESE RANGO SERA RECHAZADO.
+- Frases MUY cortas de 5 a 10 palabras. Una idea = una frase = un corte visual cada 3-5s.
 - Usa conflicto, fricción y consecuencia directa. No seas genérico ("aplica esto a tu vida").
-- Incluir 2 a 4 muletillas humanas naturales (mira, o sea, seamos sinceros, la verdad es que).
-- Cada guion debe incluir al menos 1 ejemplo concreto con detalle verificable (fecha, numero, caso, estudio o evento puntual).
+- Incluir 1 a 2 muletillas humanas naturales (mira, o sea, seamos sinceros, la verdad es que).
+- Al menos 1 dato concreto/verificable (fecha, numero, caso puntual).
 - PROHIBIDO: No uses comillas dobles en los textos generados.
-- NO incluyas frases de despedida, ni pidas "like", ni pidas "guarda este video" en el campo guion. El guion debe terminar en el clímax narrativo. El campo cta es otra cosa.
 - Las 'palabras_clave' DEBEN ser traducciones a INTENCIONES VISUALES en INGLÉS (ej. "red stock chart falling", "person worried laptop"). NO repitas el guion literalmente.
 - Mantener coherencia total con el OUTLINE. Si hay conflicto de fuentes, respeta estrictamente: {state.precedence_rule}.
 
@@ -367,14 +390,15 @@ MEMORIA_LOCAL_NICHO: {' | '.join(state.niche_memory_entries[:6]) if state.niche_
 
 Devuelve SOLO JSON válido, sin texto extra."""
 
-        user = f"""Genera contenido viral para {nicho.nombre} tono {nicho.tono} en {platform}.
+        user = f"""Genera un SHORT viral de 30-45s para {nicho.nombre} tono {nicho.tono} en {platform}.
 Usa variante {ab_variant}. Sigue el OUTLINE proporcionado.
+El cierre del guion DEBE ser un micro-loop de curiosidad (sin pedir likes ni follow).
 
 Devuelve EXACTAMENTE este JSON:
 {{
-  "num_clips": 8,
+  "num_clips": 10,
   "titulo": "titulo corto potente max 9 palabras",
-  "gancho": "gancho principal de 9 a 14 palabras",
+  "gancho": "hook max 10 palabras, leible en <=2s, polarizante o curioso",
   "gancho_variants": ["gancho shock","gancho pregunta","gancho promesa"],
   "hooks_alternos": ["hook alterno A","hook alterno B","hook alterno C"],
   "hook_score": 9,
@@ -382,17 +406,18 @@ Devuelve EXACTAMENTE este JSON:
   "block_scores": {{
     "hook": 9,
     "desarrollo": 8,
-    "cierre": 8
+    "micro_loop": 9
   }},
-    "guion": "guion de {word_min}-{word_max} palabras, explicativo, viral y coherente con el OUTLINE",
-  "cta": "cta breve natural de una oración",
+    "guion": "guion de STRICTAMENTE {word_min}-{word_max} palabras, frases cortas de 5-10 palabras, una idea por frase, terminando con el micro-loop",
+  "micro_loop": "frase final corta que genera curiosidad (ej: 'pero lo peor todavia esta por venir...')",
+  "cta": "frase corta opcional, puede repetir el micro_loop",
   "caption": "caption max 160 caracteres con 3 hashtags",
   "key_points": ["punto clave 1", "punto clave 2", "punto clave 3"],
   "palabras_clave": ["visual concept 1", "aesthetic scene 2", "b-roll action 3", "cinematic shot 4"],
   "mood_musica": "cinematic|motivational|dark|ambient|epic",
-  "velocidad_cortes": "ultra_rapido|rapido|mixto|cinematografico",
+  "velocidad_cortes": "ultra_rapido",
   "prompt_imagen": "thumbnail prompt in English with {nicho.direccion_visual}",
-  "duraciones_clips": [2.0,2.0,2.0,2.0,2.0,2.0,2.0,2.0],
+  "duraciones_clips": [2.0,3.0,3.0,4.0,4.0,4.0,4.0,4.0,4.0,3.5],
   "viral_score": 9
 }}"""
 
@@ -408,7 +433,7 @@ Devuelve EXACTAMENTE este JSON:
                 rewrite_system = (
                     "Eres editor de guiones virales. "
                     "Amplia el guion para que sea mas explicativo y claro sin perder impacto. "
-                    "Mantén tema, hook y CTA. Devuelve SOLO JSON valido con la misma estructura."
+                    "Mantén tema, hook y micro-loop final. Devuelve SOLO JSON valido con la misma estructura."
                 )
                 rewrite_user = (
                     f"Reescribe este JSON para que el campo guion tenga entre {word_min} y {word_max} palabras "
@@ -418,6 +443,12 @@ Devuelve EXACTAMENTE este JSON:
                 rewritten = self._parse_json(self._call_llm(rewrite_system, rewrite_user, temperature=0.7))
                 if rewritten and _script_word_count(rewritten) >= word_min:
                     parsed = rewritten
+            elif current_words > word_max and getattr(settings, "enforce_duration_hard_limit", False):
+                logger.warning(
+                    f"ScriptAgent long output for {platform}: {current_words} words > {word_max}. "
+                    "Trimming to enforce short-form rhythm."
+                )
+                parsed = self._trim_script_to_budget(parsed, word_max)
 
         if parsed:
             parsed = self._sanitize_script_payload(parsed)
@@ -478,6 +509,37 @@ Devuelve EXACTAMENTE este JSON:
 
         logger.error("ScriptAgent: Gemini+GPT fallback failed")
         return ""
+
+    def _trim_script_to_budget(self, payload: dict, word_max: int) -> dict:
+        """Hard-trim a script JSON payload to fit the short-form word budget.
+
+        Keeps the hook and early sentences, snaps to a sentence boundary, and
+        appends the ``micro_loop`` (or a default curiosity tag) as closing.
+        """
+        if not isinstance(payload, dict):
+            return payload
+        text = str(payload.get("guion", "") or "").strip()
+        if not text:
+            return payload
+
+        words = text.split()
+        if len(words) <= word_max:
+            return payload
+
+        budget = max(20, word_max - 10)
+        trimmed = " ".join(words[:budget]).rstrip(",;:- ")
+        for stop in (".", "!", "?"):
+            idx = trimmed.rfind(stop)
+            if idx > len(trimmed) * 0.5:
+                trimmed = trimmed[: idx + 1]
+                break
+
+        loop = str(payload.get("micro_loop", "") or "").strip()
+        if not loop:
+            loop = "pero lo peor todavia esta por venir..."
+        payload["guion"] = f"{trimmed} {loop}".strip()
+        payload["micro_loop"] = loop
+        return payload
 
     def _sanitize_script_payload(self, payload: dict) -> dict:
         cleaned = dict(payload or {})

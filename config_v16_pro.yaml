@@ -188,10 +188,10 @@ video:
   video_codec: "h264"
   audio_codec: "aac"
   
-  # Duration
-  min_duration: 15
+  # Duration (V16 PRO: shorts 30-45s high retention window)
+  min_duration: 28
   max_duration: 60
-  target_duration: 30
+  target_duration: 40
 
 # ============================================
 # Subtitle Configuration (ShortGPT EML)

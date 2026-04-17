@@ -1,4 +1,4 @@
-"""Video Factory V15 — Scene Agent.
+"""Video Factory V15/V16 PRO — Scene Agent.
 
 Takes the approved script and breaks it into SceneBlueprints.
 Each scene gets:
@@ -7,7 +7,10 @@ Each scene gets:
   - Mood + camera notes
   - Duration + transitions
 
-This is what makes V15 visually coherent (not random).
+V16 PRO: enforces Shorts rhythm — hook scene <=2s, max 10-12 scenes,
+duration per scene between ``short_scene_min_seconds`` and
+``short_scene_max_seconds`` (default 2.5-5.0s), and total time capped
+by ``settings.max_video_duration``.
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from typing import Optional
 
 from loguru import logger
 
+from config import settings
 from core.state import SceneBlueprint, StoryState
 from models.config_models import NichoConfig
 from services.llm_router import call_llm_primary_gemini
@@ -54,6 +58,9 @@ class SceneAgent:
             # Fallback: simple split by sentences
             raw_scenes = self._fallback_split(state)
 
+        # V16 PRO: enforce Shorts pacing, hook <=2s, and hard cap on scene count.
+        raw_scenes = self._enforce_short_form_rhythm(raw_scenes)
+
         # Enrich with visual prompts
         scenes = self._enrich_visuals(raw_scenes, state, nicho)
 
@@ -81,35 +88,47 @@ class SceneAgent:
         if correction_notes:
             correction_block = f"\n⚠️ CORRECCIONES: {correction_notes}\n"
 
-        system = f"""Eres un director de producción audiovisual especializado en videos cortos virales.
+        scene_min = float(getattr(settings, "short_scene_min_seconds", 2.5))
+        scene_max = float(getattr(settings, "short_scene_max_seconds", 5.0))
+        max_scenes = int(getattr(settings, "short_max_scenes", 12))
+        min_scenes = int(getattr(settings, "short_min_scenes", 8))
+        hook_max = float(getattr(settings, "short_hook_max_seconds", 2.0))
+        target_total = int(getattr(settings, "target_duration_seconds", 40))
+        max_total = int(getattr(settings, "max_video_duration", 60))
 
-Tu trabajo: dividir un guión en ESCENAS cinematográficas.
+        system = f"""Eres un director de produccion audiovisual especializado en SHORTS virales (30-45s).
+
+Tu trabajo: dividir un guion en ESCENAS cinematograficas para un video corto de alta retencion.
 
 CONTEXTO:
 {state.to_context_string()}
 
 STYLE PROFILE:
 - Plataforma: {state.platform}
-- Velocidad de corte: {state.style_profile.cut_speed}
+- Velocidad de corte: ultra_rapido (V16 PRO shorts)
 - Transiciones preferidas: {', '.join(state.style_profile.transitions)}
 - Visual base: {state.style_profile.visual_base}
 
-REGLAS DE ESCENAS:
-- Cada escena dura entre 1.5 y 4 segundos
-- El hook debe ser la escena 1 (máx 2s)
+REGLAS V16 PRO (OBLIGATORIAS):
+- Maximo {max_scenes} escenas, minimo {min_scenes}.
+- Escena 1 = HOOK: dura MAX {hook_max:.1f} segundos.
+- Cada escena restante dura entre {scene_min:.1f} y {scene_max:.1f} segundos (ritmo rapido).
+- Duracion total del video: entre {max(25, target_total - 10)} y {max_total} segundos. NUNCA mas de {max_total}s.
+- La ultima escena debe ser el MICRO-LOOP (frase de curiosidad, NO un CTA tipico).
+- Cambio visual/camara cada 3-5s.
 - Incluye mood emocional por escena (tense, calm, revelatory, inspiring, shock)
-- Incluye nota de cámara (slow zoom in, static, pan left, dutch angle, close up)
-- Incluye tipo de transición (cut, fade, whip, zoom_cut)
-- Las escenas deben progresar narrativamente
+- Incluye nota de camara (slow zoom in, static, pan left, dutch angle, close up)
+- Incluye tipo de transicion (cut, fade, whip, zoom_cut). Prioriza cortes secos y whip.
+- Las escenas deben progresar narrativamente.
 - Si hay conflicto de fuentes, respeta: {state.precedence_rule}
 {correction_block}
 {reference_block}
 
-Devuelve SOLO JSON válido. Formato:
+Devuelve SOLO JSON valido. Formato:
 [
   {{
     "scene_number": 1,
-    "text": "texto de narración para esta escena",
+    "text": "texto de narracion para esta escena",
     "mood": "shock",
     "duration_seconds": 1.8,
     "camera_notes": "slow zoom in on subject",
@@ -242,25 +261,87 @@ Divide en escenas cinematográficas. Incluye el hook como escena 1 y el CTA como
 
     def _fallback_split(self, state: StoryState) -> list[SceneBlueprint]:
         """Simple sentence-based splitting when LLM fails."""
+        max_scenes = int(getattr(settings, "short_max_scenes", 12))
+        scene_min = float(getattr(settings, "short_scene_min_seconds", 2.5))
+        scene_max = float(getattr(settings, "short_scene_max_seconds", 5.0))
+        hook_max = float(getattr(settings, "short_hook_max_seconds", 2.0))
+
         full_text = " ".join(filter(None, [state.hook, state.script_full, state.cta]))
         sentences = re.split(r"[.!?]+", full_text)
         sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 5]
 
-        scenes = []
-        for i, text in enumerate(sentences[:10]):  # Max 10 scenes
+        scenes: list[SceneBlueprint] = []
+        for i, text in enumerate(sentences[:max_scenes]):
             words = len(text.split())
-            dur = max(1.5, min(4.0, words * 0.25))  # ~0.25s per word
+            dur = max(scene_min, min(scene_max, words * 0.28))  # ~0.28s per word
+            if i == 0:
+                dur = min(dur, hook_max)
 
             scenes.append(SceneBlueprint(
                 scene_number=i + 1,
                 text=text,
-                mood="neutral",
-                duration_seconds=round(dur, 1),
-                camera_notes="static" if i > 0 else "slow zoom in",
-                transition_out="cut",
+                mood="shock" if i == 0 else "neutral",
+                duration_seconds=round(dur, 2),
+                camera_notes="slow zoom in" if i == 0 else "static",
+                transition_out="whip" if i == 0 else "cut",
             ))
 
         return scenes
+
+    def _enforce_short_form_rhythm(
+        self,
+        scenes: list[SceneBlueprint],
+    ) -> list[SceneBlueprint]:
+        """Clamp LLM-proposed scenes to the V16 PRO short-form contract.
+
+        - At most ``short_max_scenes`` scenes.
+        - Hook scene duration <= ``short_hook_max_seconds``.
+        - Remaining scenes clamped to ``[short_scene_min_seconds, short_scene_max_seconds]``.
+        - Total duration <= ``max_video_duration`` (excess scaled down proportionally).
+        """
+        if not scenes:
+            return scenes
+
+        max_scenes = int(getattr(settings, "short_max_scenes", 12))
+        scene_min = float(getattr(settings, "short_scene_min_seconds", 2.5))
+        scene_max = float(getattr(settings, "short_scene_max_seconds", 5.0))
+        hook_max = float(getattr(settings, "short_hook_max_seconds", 2.0))
+        max_total = float(getattr(settings, "max_video_duration", 60))
+
+        clamped = scenes[:max_scenes]
+        for idx, scene in enumerate(clamped):
+            try:
+                dur = float(scene.duration_seconds or 0.0)
+            except (TypeError, ValueError):
+                dur = 2.5
+
+            if idx == 0:
+                dur = min(max(0.8, dur), hook_max)
+            else:
+                dur = max(scene_min, min(scene_max, dur))
+
+            scene.duration_seconds = round(dur, 2)
+            scene.scene_number = idx + 1
+
+        total = sum(float(s.duration_seconds or 0.0) for s in clamped)
+        if total > max_total and total > 0:
+            scale = max_total / total
+            for idx, scene in enumerate(clamped):
+                floor_dur = hook_max if idx == 0 else scene_min
+                scaled = max(floor_dur * 0.8, scene.duration_seconds * scale)
+                scene.duration_seconds = round(scaled, 2)
+            logger.info(
+                f"🎯 V16 PRO: scaled scene durations by {scale:.2f} to fit {max_total:.0f}s cap "
+                f"(from {total:.1f}s)"
+            )
+
+        if len(clamped) < len(scenes):
+            logger.info(
+                f"🎯 V16 PRO: trimmed scene count {len(scenes)} → {len(clamped)} "
+                f"(max {max_scenes} for shorts)"
+            )
+
+        return clamped
 
     def _parse_scenes(self, raw: str) -> list[SceneBlueprint]:
         """Parse scene JSON from LLM response."""
