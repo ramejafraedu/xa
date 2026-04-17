@@ -188,10 +188,10 @@ video:
   video_codec: "h264"
   audio_codec: "aac"
   
-  # Duration (V16 PRO: shorts 30-45s high retention window)
-  min_duration: 28
-  max_duration: 60
-  target_duration: 40
+  # Duration (V16.2 PRO: shorts 62-90s, apto TikTok Creator Rewards >60s)
+  min_duration: 62
+  max_duration: 90
+  target_duration: 70
 
 # ============================================
 # Short-form rhythm (V16.1 PRO)
@@ -199,14 +199,17 @@ video:
 short_form:
   enforce_hard_limit: true
   enforce_micro_loop_ending: true
-  max_scenes: 12
-  min_scenes: 10
+  max_scenes: 16
+  min_scenes: 12
   scene_min_seconds: 2.8
-  scene_max_seconds: 4.8
+  scene_max_seconds: 5.5
   hook_max_seconds: 2.0
   transition_seconds: 0.12
-  script_word_min: 110
-  script_word_max: 130
+  # Script >60s narration: 170-200 words @ ~150 wpm español.
+  script_word_min: 170
+  script_word_max: 200
+  # Guardia duro: regenerar si audio TTS < 61s (margen para Creator Rewards).
+  min_narration_seconds: 61.0
 
 # ============================================
 # Subtitle Configuration (ShortGPT EML)

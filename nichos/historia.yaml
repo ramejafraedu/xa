@@ -1,5 +1,5 @@
 # Nicho: Historia Oscura, Crímenes Reales y Conspiraciones
-# V16.1 PRO — Shorts 30-45s de alta retencion.
+# V16.2 PRO — Shorts 62-90s (TikTok Creator Rewards >60s).
 
 slug: historia
 nombre: "historia oscura y crimenes reales y conspiraciones"
@@ -10,16 +10,17 @@ num_clips: 11
 keywords_count: 12
 tipo_cortes: "ultra rapidos con 1-2 planos lentos en revelacion"
 estilo_narrativo: >
-  MODO V16.1 PRO: short viral 30-45s (max 55s) con retencion brutal.
-  Objetivo de script: 110-130 palabras totales, ritmo de TikTok/Reels.
+  MODO V16.2 PRO: short viral 62-90s (objetivo 70s, minimo 62s para Creator Rewards de TikTok).
+  Objetivo de script: 170-200 palabras totales, ritmo de TikTok/Reels sin caer debajo de 1 minuto.
   ESTRUCTURA OBLIGATORIA:
   1) HOOK (0-2s): una frase brutal, dato imposible o pregunta prohibida que obliga a quedarse.
      Prohibido empezar con "hola", "hoy", "sabes que...", "te voy a contar".
-  2) DESARROLLO (2-35s): 10-12 micro-escenas, cada frase = un cambio visual (3-5s).
+  2) DESARROLLO (2-62s): 12-15 micro-escenas, cada frase = un cambio visual (3-5s).
      - Hechos concretos: fecha, lugar, actor, documento, evidencia.
      - Cero relleno. Cero contexto innecesario. Cada frase avanza la tension.
+     - Incluye un giro intermedio (~30-40s) que reencuadre la historia.
      - Revelaciones por bloques cortos; cliffhanger implicito cada 2 frases.
-  3) MICRO-LOOP FINAL (ultimos 3-5s): frase corta que genera curiosidad para re-ver o continuar
+  3) MICRO-LOOP FINAL (63-75s): frase corta que genera curiosidad para re-ver o continuar
      (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...",
      "y el final te va a romper la cabeza...").
      NO es un CTA tradicional; el cierre es narrativo.

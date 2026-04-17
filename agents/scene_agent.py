@@ -96,7 +96,8 @@ class SceneAgent:
         target_total = int(getattr(settings, "target_duration_seconds", 40))
         max_total = int(getattr(settings, "max_video_duration", 60))
 
-        system = f"""Eres un director de produccion audiovisual especializado en SHORTS virales (30-45s).
+        min_total = int(getattr(settings, "min_video_duration", 62))
+        system = f"""Eres un director de produccion audiovisual especializado en SHORTS virales >60s (TikTok Creator Rewards, {min_total}-{max_total}s).
 
 Tu trabajo: dividir un guion en ESCENAS cinematograficas para un video corto de alta retencion.
 
@@ -109,11 +110,11 @@ STYLE PROFILE:
 - Transiciones preferidas: {', '.join(state.style_profile.transitions)}
 - Visual base: {state.style_profile.visual_base}
 
-REGLAS V16 PRO (OBLIGATORIAS):
+REGLAS V16.2 PRO (OBLIGATORIAS):
 - Maximo {max_scenes} escenas, minimo {min_scenes}.
 - Escena 1 = HOOK: dura MAX {hook_max:.1f} segundos.
 - Cada escena restante dura entre {scene_min:.1f} y {scene_max:.1f} segundos (ritmo rapido).
-- Duracion total del video: entre {max(25, target_total - 10)} y {max_total} segundos. NUNCA mas de {max_total}s.
+- Duracion total del video: entre {min_total} y {max_total} segundos (objetivo {target_total}s). NUNCA mas de {max_total}s y NUNCA menos de {min_total}s.
 - La ultima escena debe ser el MICRO-LOOP (frase de curiosidad, NO un CTA tipico).
 - Cambio visual/camara cada 3-5s.
 - Incluye mood emocional por escena (tense, calm, revelatory, inspiring, shock)

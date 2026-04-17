@@ -80,20 +80,21 @@ def _hook_rules(platform: str, variant: str) -> str:
 def _script_profile(platform: str) -> tuple[int, int, str]:
     """Return target script length profile by platform.
 
-    V16 PRO — Shorts strategy: prioritize 30-45s high-retention clips over
-    slow mini-documentaries. Word counts are derived from
-    ``settings.short_script_word_min/max`` and
+    V16.2 PRO — Shorts >60s Creator Rewards: prioritise 62-90s high-retention
+    clips, never dipping below the TikTok monetisation floor. Word counts are
+    derived from ``settings.short_script_word_min/max`` and
     ``settings.target_duration_seconds`` when ``enforce_duration_hard_limit``
     is enabled (default).
     """
     p = (platform or "").lower()
 
     if getattr(settings, "enforce_duration_hard_limit", False):
-        word_min = int(getattr(settings, "short_script_word_min", 110))
-        word_max = int(getattr(settings, "short_script_word_max", 130))
-        target_s = int(getattr(settings, "target_duration_seconds", 40))
-        max_s = int(getattr(settings, "max_video_duration", 60))
-        target_label = f"{target_s - 5}-{max_s} segundos (objetivo {target_s}s)"
+        word_min = int(getattr(settings, "short_script_word_min", 170))
+        word_max = int(getattr(settings, "short_script_word_max", 200))
+        target_s = int(getattr(settings, "target_duration_seconds", 70))
+        max_s = int(getattr(settings, "max_video_duration", 90))
+        min_s = int(getattr(settings, "min_video_duration", 62))
+        target_label = f"{min_s}-{max_s} segundos (objetivo {target_s}s, minimo {min_s}s)"
         # Facebook allows slightly longer explanatory content.
         if p == "facebook":
             return word_min + 40, word_max + 80, f"{target_s + 20}-{max_s + 40} segundos"
@@ -189,14 +190,14 @@ def _rewrite_short_script(
         return None, model_used
 
 
-SYSTEM_PROMPT = """Eres head writer de videos faceless top 1% (TikTok/Reels/Shorts). Objetivo: retencion brutal de 30-45 segundos.
+SYSTEM_PROMPT = """Eres head writer de videos faceless top 1% (TikTok/Reels/Shorts). Objetivo: retencion brutal de 62-90 segundos, SIEMPRE por encima de 61s de locucion para cumplir con TikTok Creator Rewards (>60s).
 
-ESTRATEGIA V16 PRO (OBLIGATORIA — SHORTS DE ALTA RETENCION):
-- Duracion objetivo: 35-45 segundos (MAX 55s). NO mini-documentales.
+ESTRATEGIA V16.2 PRO (OBLIGATORIA — SHORTS DE ALTA RETENCION >60s):
+- Duracion objetivo: 65-80 segundos (MAX 90s, MINIMO 62s). Densidad alta, nunca mini-documentales pesados, pero tampoco cortes por debajo del minuto.
 - Estructura del guion en 3 bloques claros:
   1. HOOK (0-2s): una frase brutal, curiosa o polarizante que obliga a quedarse.
-  2. DESARROLLO (2-35s): 8-10 micro-escenas cortas; cada frase = un cambio visual. Ritmo rapido, sin relleno.
-  3. MICRO-LOOP FINAL: frase que genera curiosidad para re-ver o continuar (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...", "y el final te va a romper la cabeza...").
+  2. DESARROLLO (2-62s): 12-15 micro-escenas cortas; cada frase = un cambio visual. Ritmo rapido, sin relleno pero con datos concretos y un segundo mini-giro en la mitad.
+  3. MICRO-LOOP FINAL (62-70s+): frase que genera curiosidad para re-ver o continuar (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...", "y el final te va a romper la cabeza...").
 - Prohibido el CTA tradicional que pida like/follow: el cierre DEBE ser un micro-loop narrativo.
 
 REGLAS MAESTRAS:
@@ -236,7 +237,7 @@ LONGITUD OBJETIVO: STRICTAMENTE {word_min}-{word_max} palabras ({target_duration
 
 Devuelve solo JSON valido, sin texto extra."""
 
-USER_PROMPT = """Genera un SHORT viral de 30-45 segundos para {nicho}, tono {tono}, plataforma {plataforma}. Usa variante {ab_variant}.
+USER_PROMPT = """Genera un SHORT viral de {target_duration} para {nicho}, tono {tono}, plataforma {plataforma}. Usa variante {ab_variant}.
 IDEAS MANUALES PRIORITARIAS: {manual_ideas_block}
 
 HOOK BRUTAL (0-2s) — ESCOGE UNA tactica concreta:
@@ -244,12 +245,12 @@ HOOK BRUTAL (0-2s) — ESCOGE UNA tactica concreta:
   2) QUESTION: pregunta prohibida o imposible ("Por que nadie te cuenta que...?").
   3) STATEMENT: afirmacion polemica/contra-intuitiva que rompe el sentido comun.
 PROHIBIDO empezar con "hola", "hoy", "sabes que", "te voy a contar".
-Duracion objetivo del contenido: {target_duration}.
+Duracion objetivo del contenido: {target_duration}. La locucion NUNCA puede bajar de 61 segundos.
 
 ESTRUCTURA del guion (OBLIGATORIA):
 - Hook (0-2s) — frase de <=12 palabras que cumple una tactica de arriba.
-- Desarrollo (2-35s): 10-12 micro-escenas, cada frase = un cambio visual (3-5s).
-- Cierre con MICRO-LOOP de curiosidad (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...", "y el final te va a romper la cabeza...").
+- Desarrollo (2-62s): 12-15 micro-escenas, cada frase = un cambio visual (3-5s). Incluye un giro adicional a mitad (30-40s).
+- Cierre con MICRO-LOOP de curiosidad (62-70s+) (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...", "y el final te va a romper la cabeza...").
 
 Devuelve EXACTAMENTE este JSON (num_clips DEBE estar entre 10 y 12):
 {{
@@ -374,7 +375,7 @@ def generate_content(
     elif current_words > word_max:
         logger.warning(
             f"Script too long for {platform}: {current_words} words > {word_max}. "
-            "Trimming hard to keep 30-45s short-form rhythm."
+            "Trimming hard to keep Creator-Rewards compliant 62-90s short-form rhythm."
         )
         parsed = _trim_long_script(parsed, word_max)
 

@@ -67,7 +67,7 @@ def _build_skills_block(*skill_paths: str) -> str:
 def _script_profile(platform: str) -> tuple[int, int, str]:
     """Return target script length profile by platform.
 
-    V16 PRO — Shorts strategy (30-45s). When
+    V16.2 PRO — Shorts >60s (TikTok Creator Rewards). When
     ``settings.enforce_duration_hard_limit`` is True (default), word budgets
     are clamped to ``settings.short_script_word_min/max`` regardless of
     platform; Facebook gets a slightly bigger explanatory budget.
@@ -75,11 +75,12 @@ def _script_profile(platform: str) -> tuple[int, int, str]:
     p = (platform or "").lower()
 
     if getattr(settings, "enforce_duration_hard_limit", False):
-        word_min = int(getattr(settings, "short_script_word_min", 110))
-        word_max = int(getattr(settings, "short_script_word_max", 130))
-        target_s = int(getattr(settings, "target_duration_seconds", 40))
-        max_s = int(getattr(settings, "max_video_duration", 60))
-        label = f"{max(25, target_s - 10)}-{max_s} segundos (objetivo {target_s}s)"
+        word_min = int(getattr(settings, "short_script_word_min", 170))
+        word_max = int(getattr(settings, "short_script_word_max", 200))
+        target_s = int(getattr(settings, "target_duration_seconds", 70))
+        max_s = int(getattr(settings, "max_video_duration", 90))
+        min_s = int(getattr(settings, "min_video_duration", 62))
+        label = f"{min_s}-{max_s} segundos (objetivo {target_s}s, minimo {min_s}s)"
         if p == "facebook":
             return word_min + 40, word_max + 80, f"{target_s + 20}-{max_s + 40} segundos"
         return word_min, word_max, label
@@ -337,7 +338,14 @@ EJEMPLO 2 (Finanzas/Éxito):
             "script/niche_templates.md",
         )
 
-        system = f"""Eres head writer de SHORTS virales top 1%. Objetivo: retencion brutal en 30-45 segundos.
+        _min_s = int(getattr(settings, "min_video_duration", 62))
+        _tgt_s = int(getattr(settings, "target_duration_seconds", 70))
+        _max_s = int(getattr(settings, "max_video_duration", 90))
+        _min_narr = int(getattr(settings, "min_narration_seconds", 61))
+        _dev_end = max(18, _tgt_s - 8)  # desarrollo termina ~8s antes del micro-loop
+        _duration_range = f"{_min_s}-{_max_s}s (objetivo {_tgt_s}s)"
+
+        system = f"""Eres head writer de SHORTS virales top 1%. Objetivo: retencion brutal en {_duration_range}, SIEMPRE por encima de {_min_narr}s de locucion (requisito TikTok Creator Rewards).
 
 CONTEXTO NARRATIVO:
 {state.to_context_string()}
@@ -347,11 +355,11 @@ OUTLINE APROBADO:
 {few_shot_examples}
 {skills_block}
 
-ESTRATEGIA V16 PRO (MANDATORIA — SHORTS 30-45s):
-- Duracion objetivo: 35-45 segundos. MAX 55s. NO mini-documentales.
+ESTRATEGIA V16 PRO (MANDATORIA — SHORTS {_duration_range}):
+- Duracion objetivo de locucion: {_tgt_s}s. MINIMO {_min_narr}s, MAXIMO {_max_s}s. NO mini-documentales pero SI mas densos que 40s.
 - Estructura del guion en 3 bloques:
   1. HOOK (0-2s): frase brutal/curiosa que obliga a quedarse. Max 10 palabras.
-  2. DESARROLLO (2-35s): 8-10 frases cortas; cada frase = un cambio visual/idea. Ritmo rapido.
+  2. DESARROLLO (2-{_dev_end}s): 12-15 frases cortas; cada frase = un cambio visual/idea. Ritmo rapido.
   3. MICRO-LOOP FINAL: frase que genera curiosidad para re-ver o continuar (ej: "pero lo peor todavia esta por venir...", "nadie sabe que paso despues...", "y el final te va a romper la cabeza..."). NO es un CTA tradicional.
 - El campo 'guion' DEBE terminar con el micro-loop.
 
@@ -390,7 +398,7 @@ MEMORIA_LOCAL_NICHO: {' | '.join(state.niche_memory_entries[:6]) if state.niche_
 
 Devuelve SOLO JSON válido, sin texto extra."""
 
-        user = f"""Genera un SHORT viral de 30-45s para {nicho.nombre} tono {nicho.tono} en {platform}.
+        user = f"""Genera un SHORT viral de {_duration_range} para {nicho.nombre} tono {nicho.tono} en {platform}.
 Usa variante {ab_variant}. Sigue el OUTLINE proporcionado.
 El cierre del guion DEBE ser un micro-loop de curiosidad (sin pedir likes ni follow).
 

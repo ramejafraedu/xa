@@ -97,7 +97,8 @@ class Settings(BaseSettings):
     # Thought-mode setting for Gemma/Gemini. Examples: "", "standard", "ultra"
     gemma_thought_mode: str = ""
 
-    # ElevenLabs TTS
+    # ElevenLabs TTS (set ENABLE_ELEVENLABS_TTS=false to force Google/Gemini/Edge only)
+    enable_elevenlabs_tts: bool = True
     elevenlabs_api_key: str = ""
     elevenlabs_api_url: str = "https://api.elevenlabs.io/v1/text-to-speech"
     elevenlabs_voice_id: str = "EXAVITQu4vr4xnSDxMaL"
@@ -324,25 +325,32 @@ class Settings(BaseSettings):
     # Video format: vertical (1080x1920), horizontal (1920x1080), square (1080x1080)
     default_video_format: str = "vertical"
 
-    # --- V16 PRO: Estrategia Shorts de alta retención ---
-    # Videos 30-45s con hook en primeros 2s + body rítmico (3-5s cambios) + micro-loop final.
-    target_duration_seconds: int = 40
-    max_video_duration: int = 60
-    min_video_duration: int = 28
+    # --- V16 PRO: Estrategia Shorts de alta retención + TikTok Creator Rewards ---
+    # Videos 62-90s (objetivo 70s) con hook en primeros 2s, desarrollo rítmico (3-5s por
+    # cambio visual) y micro-loop final. El piso de 62s deja margen sobre el mínimo de
+    # monetización de TikTok (Creator Rewards exige >60s) aunque la locución se trime
+    # unos decimales en post (loudnorm/silencios).
+    target_duration_seconds: int = 70
+    max_video_duration: int = 90
+    min_video_duration: int = 62
     enforce_duration_hard_limit: bool = True
     auto_trim_if_over: bool = True
-    # Script profile aligned with 40s (~3 words/second a velocidad viral).
-    short_script_word_min: int = 110
-    short_script_word_max: int = 130
+    # Presupuesto duro para narración en español a ~150 palabras/minuto:
+    #   170 palabras ≈ 68s, 200 palabras ≈ 80s.
+    # Mantener el límite inferior por encima de 160 garantiza ~>62s de TTS.
+    short_script_word_min: int = 170
+    short_script_word_max: int = 200
     # Max scenes and cut rhythm for Shorts/TikTok/Reels pacing.
-    short_max_scenes: int = 12
-    short_min_scenes: int = 8
-    short_scene_min_seconds: float = 2.5
-    short_scene_max_seconds: float = 5.0
+    short_max_scenes: int = 16
+    short_min_scenes: int = 12
+    short_scene_min_seconds: float = 2.8
+    short_scene_max_seconds: float = 5.5
     short_hook_max_seconds: float = 2.0
     short_transition_seconds: float = 0.08
     # Ending with curiosity micro-loop for auto-replay retention.
     enforce_micro_loop_ending: bool = True
+    # Duración mínima de audio TTS tolerada antes de regenerar el guion (Creator Rewards safety).
+    min_narration_seconds: float = 61.0
 
     # --- V16 Integration: Playbook System ---
     playbook_validation_enabled: bool = True
@@ -523,7 +531,7 @@ class Settings(BaseSettings):
             "enable_manim_animations": self.enable_manim_animations,
             "gemini_usage_stats": self.gemini_enable_usage_stats,
             "openrouter_enabled": bool(self.openrouter_api_key),
-            "elevenlabs_enabled": bool(self.elevenlabs_api_key),
+            "elevenlabs_enabled": bool(self.elevenlabs_api_key and self.enable_elevenlabs_tts),
             "suno_enabled": bool(self.suno_api_key and self.use_suno_music),
             "scheduler_canary_mode": self.scheduler_canary_mode,
             "scheduler_use_v15": self.scheduler_use_v15,

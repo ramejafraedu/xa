@@ -1,9 +1,10 @@
-"""Duration Validator — enforce platform max duration limits.
+"""Duration Validator — enforce platform min/max duration limits.
 
-V16 PRO: When ``settings.enforce_duration_hard_limit`` is enabled (default),
+V16.2 PRO: When ``settings.enforce_duration_hard_limit`` is enabled (default),
 the pipeline caps every non long-form niche at
-``settings.max_video_duration`` (default 60s) regardless of platform. This
-keeps Shorts/Reels/TikTok under the 30-45s retention-optimised window.
+``settings.max_video_duration`` (default 90s) regardless of platform. Target
+narration lives in the 62-90s band so output always crosses TikTok Creator
+Rewards' 60-second monetisation floor.
 
 Legacy behaviour (long-form) is preserved when the hard limit is disabled.
 """
@@ -77,6 +78,17 @@ def validate_duration(
         max_dur = max_duration_override
     if hard_limit:
         max_dur = min(max_dur, float(getattr(settings, "max_video_duration", 60)))
+
+    # Creator-Rewards floor: warn loudly when narration is below the
+    # monetisable minute. The pipeline cannot re-generate audio here safely,
+    # but emitting a WARNING surfaces it in logs + manifest so the job is
+    # flagged and the next run tightens the word budget automatically.
+    min_narration = float(getattr(settings, "min_narration_seconds", 0.0))
+    if hard_limit and min_narration > 0 and audio_duration < min_narration:
+        logger.warning(
+            f"Narration {audio_duration:.1f}s < {min_narration:.1f}s floor "
+            f"({platform}). Video may not qualify for TikTok Creator Rewards."
+        )
 
     if audio_duration <= max_dur:
         logger.debug(f"Duration OK: {audio_duration:.1f}s <= {max_dur:.1f}s ({platform})")
