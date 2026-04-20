@@ -581,16 +581,13 @@ def _stage_subtitles(ctx: dict) -> dict:
 
 
 def _stage_media(ctx: dict) -> dict:
-    """Stage 6: Media (Stock clips, Images, Music, SFX).
-
-    V16.1: Usa VideoCompositionMasterPRO para clips 100% frescos y temáticos.
-    Nunca reutiliza clips de videos anteriores. Analiza el guion escena por
-    escena y selecciona clips directamente relevantes al contenido narrado.
-    """
+    """Etapa de selección de media (clips, imágenes, música) con OpenMontage scoring."""
     from pipeline.image_gen import generate_images
     from pipeline.music import fetch_music
     from pipeline.sfx import fetch_sfx
 
+    logger.info("=== STAGE: MEDIA (OpenMontage + Scoring) ===")
+    
     timer = _stage_timer()
     ctx["progress"].update(ctx["task_id"], description="[cyan]🎨 Generating media...")
 
@@ -601,55 +598,51 @@ def _stage_media(ctx: dict) -> dict:
     content = ctx["content"]
     timestamp = ctx["timestamp"]
     audio_duration = ctx["audio_duration"]
-
+    
+    guion = content.guion or content.titulo
     keywords = content.palabras_clave[:nicho.keywords_count]
 
-    # === ACTIVAR OPENMONTAGE + SCORING ===
-    from tools.openmontage.smart_scorer import score_and_rank_clips, evaluate_scene_quality
-
-    # ── V16.1: VideoCompositionMasterPRO ───────────────────────────────────
-    # Clips 100% frescos, temáticos y sin repetición histórica.
-    # Analiza el guion escena por escena con LLM antes de buscar.
-    stock_clips = []
+    # 1. Obtener clips crudos
     try:
         from pipeline.composition_master import fetch_fresh_stock_videos
         ctx["progress"].update(
             ctx["task_id"],
             description="[cyan]🎬 CompositionMaster: buscando clips frescos..."
         )
-        
-        raw_stock_clips = fetch_fresh_stock_videos(
-            guion=content.guion or "",
+        raw_clips = fetch_fresh_stock_videos(
+            guion=guion,
             tema=content.titulo or " ".join(keywords[:3]),
             nicho_slug=nicho_slug,
             keywords=keywords,
             num_clips=nicho.num_clips,
             job_id=manifest.job_id,
         )
-
-        if "openmontage" in str(settings).lower() or True:  # activado por defecto
-            scored = score_and_rank_clips(
-                clips=raw_stock_clips,
-                guion=content.guion or content.titulo,
-                nicho_slug=nicho_slug
-            )
-            stock_clips = [c for c in scored if evaluate_scene_quality(c) > 0.6]
-        else:
-            stock_clips = raw_stock_clips
-
-        logger.info(
-            f"🎬 CompositionMaster: {len(stock_clips)} clips frescos y temáticos "
-            f"seleccionados para '{content.titulo[:50]}'"
-        )
-        # Guardar info de composición en el manifest para auditoría
-        manifest.stage_artifacts["composition_clips"] = len(stock_clips)
     except Exception as e:
-        # Fallback: sistema legacy de video_stock si hay error
-        logger.warning(f"CompositionMaster: fallo (usando sistema legacy) — {e}")
+        logger.warning(f"CompositionMaster fallo (usando legacy): {e}")
         from pipeline.video_stock import fetch_stock_videos
-        stock_clips = fetch_stock_videos(keywords, nicho.num_clips)
-        logger.info(f"📦 Stock (legacy): {len(stock_clips)} clips recuperados")
+        raw_clips = fetch_stock_videos(keywords, nicho.num_clips)
+    
+    # 2. Aplicar OpenMontage scoring (si está disponible)
+    try:
+        from tools.openmontage.smart_scorer import score_and_rank_clips, evaluate_scene_quality
+        
+        scored_clips = score_and_rank_clips(
+            clips=raw_clips,
+            guion=guion,
+            nicho_slug=nicho_slug
+        )
+        # Filtrar solo clips de buena calidad
+        stock_clips = [c for c in scored_clips if evaluate_scene_quality(c) > 0.65]
+        logger.success(f"OpenMontage scoring aplicado → {len(stock_clips)} clips seleccionados")
+    except Exception as e:
+        logger.warning(f"OpenMontage no disponible, usando clips crudos: {e}")
+        stock_clips = raw_clips
+    
+    ctx["stock_clips"] = stock_clips
+    ctx["clips"] = stock_clips  # alias para compatibilidad
+    manifest.stage_artifacts["composition_clips"] = len(stock_clips)
 
+    # 3. Imágenes, Música y SFX (si aplica)
     ctx["progress"].update(ctx["task_id"], description="[cyan]🎨 Generating images...")
 
     images = generate_images(
