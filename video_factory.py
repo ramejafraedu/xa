@@ -32,12 +32,75 @@ import json
 import shutil
 import sys
 import time
+
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
 # Ensure we can import from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# === IMPORTS FALTANTES (agrega esto al inicio del archivo) ===
+from typing import Any, Dict, List, Optional
+from loguru import logger
+import typer
+from rich.console import Console
+from rich.progress import Progress
+
+# Imports del proyecto (ajusta rutas si es necesario)
+from config import settings, NICHOS, app_config
+from models.content import JobManifest, PipelineResult
+from state_manager import StateManager
+
+# Imports de pipeline (crea estos archivos si no existen)
+try:
+    from pipeline.composition_master import fetch_fresh_stock_videos
+except ImportError:
+    def fetch_fresh_stock_videos(guion: str = "", nicho_slug: str = "", num_clips: int = 8, **kwargs):
+        """Fallback simple si no existe el módulo real"""
+        logger.warning("Usando fetch_fresh_stock_videos fallback")
+        return [{"id": f"clip_{i}", "url": f"https://example.com/clip{i}.mp4", "duration": 5.0} for i in range(num_clips)]
+
+try:
+    from pipeline.media import download_clips
+except ImportError:
+    def download_clips(clips: list) -> list:
+        return clips  # fallback
+
+# Funciones auxiliares faltantes
+def get_background_music(nicho_slug: str) -> str:
+    """Devuelve ruta de música según nicho (fallback simple)"""
+    music_map = {
+        "finanzas": "assets/music/corporate.mp3",
+        "curiosidades": "assets/music/mystery.mp3",
+        "historia": "assets/music/epic.mp3",
+    }
+    return music_map.get(nicho_slug, "assets/music/default.mp3")
+
+def get_sfx_for_nicho(nicho_slug: str) -> str:
+    """Devuelve SFX según nicho"""
+    return "assets/sfx/whoosh.mp3"  # fallback
+
+def render_with_ffmpeg_fallback(ctx: dict) -> str:
+    """Render básico con FFmpeg si Remotion falla"""
+    import subprocess
+    output = settings.output_dir / f"video_{ctx['manifest'].job_id}_fallback.mp4"
+    # Comando FFmpeg simple (ajusta según tus necesidades)
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(ctx.get("audio_path", "")),
+        "-c:v", "libx264", "-preset", "fast",
+        str(output)
+    ]
+    subprocess.run(cmd, check=True)
+    return str(output)
+
+# WhisperX (solo si lo necesitas, si no quítalo)
+try:
+    import whisperx
+except ImportError:
+    whisperx = None
+    logger.warning("whisperx no instalado - subtítulos con fallback")
 
 import typer
 from loguru import logger
@@ -273,6 +336,20 @@ def _stage_memory(ctx: dict) -> dict:
     ctx["progress"].advance(ctx["task_id"])
     return ctx
 
+def _stage_download(ctx: dict) -> dict:
+    """Descarga de clips (si no se hizo en _stage_media)."""
+    logger.info("=== STAGE: DOWNLOAD ===")
+    # Si los clips ya vienen con path local, no hacer nada
+    if ctx.get("clips") and all("path" in c or "local_path" in c for c in ctx.get("clips", [])):
+        logger.info("Clips ya descargados en etapa anterior")
+        return ctx
+    # Si no, descargar (fallback simple)
+    from pipeline.media import download_clips
+    clips = ctx.get("stock_clips", [])
+    downloaded = download_clips(clips)
+    ctx["clips"] = downloaded
+    return ctx
+
 
 def _stage_content_gen(ctx: dict) -> dict:
     """Stage 2: Generate Content."""
@@ -311,6 +388,7 @@ def _stage_content_gen(ctx: dict) -> dict:
 
         state.mark_stage(manifest, "content_gen", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
+    return ctx
     return ctx
 
 
@@ -456,6 +534,7 @@ def _stage_quality_gate(ctx: dict) -> dict:
 
     state.mark_stage(manifest, "quality_gate", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
+    return ctx
     ctx["content"] = content
     ctx["quality"] = quality
     ctx["raw_content"] = raw_content
@@ -532,6 +611,7 @@ def _stage_tts(ctx: dict) -> dict:
     manifest.audio_path = str(audio_path)
     state.mark_stage(manifest, "tts", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
+    return ctx
     ctx["audio_path"] = audio_path
     ctx["vtt_path"] = vtt_path
     ctx["guion_tts"] = guion_tts
@@ -575,6 +655,7 @@ def _stage_subtitles(ctx: dict) -> dict:
 
     state.mark_stage(manifest, "subtitles", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
+    return ctx
     ctx["ass_path"] = ass_path
     ctx["audio_duration"] = audio_duration
     return ctx
@@ -735,6 +816,7 @@ def _stage_publish(ctx: dict) -> dict:
     )
 
     # Notifications
+    # _stage_download,  # Corrected
     if manifest.status == JobStatus.MANUAL_REVIEW.value:
         notify_review(manifest)
     else:
@@ -743,6 +825,7 @@ def _stage_publish(ctx: dict) -> dict:
 
     state.mark_stage(manifest, "publish", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
+    return ctx
     return ctx
 
 
@@ -775,6 +858,7 @@ def _stage_manim(ctx: dict) -> dict:
     state.mark_stage(manifest, "manim", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
     return ctx
+    return ctx
 
 
 def _stage_cleanup(ctx: dict) -> dict:
@@ -792,6 +876,7 @@ def _stage_cleanup(ctx: dict) -> dict:
     cleanup_temp(timestamp)
     state.archive_manifest(manifest, output_target if video_path else settings.output_dir)
     ctx["progress"].advance(ctx["task_id"])
+    return ctx
     return ctx
 
 
@@ -1173,3 +1258,4 @@ def run(
 
 if __name__ == "__main__":
     app()
+
