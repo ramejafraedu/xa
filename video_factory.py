@@ -581,231 +581,79 @@ def _stage_subtitles(ctx: dict) -> dict:
 
 
 def _stage_media(ctx: dict) -> dict:
-    """Etapa de selección de media (clips, imágenes, música) con OpenMontage scoring."""
-    from pipeline.image_gen import generate_images
-    from pipeline.music import fetch_music
-    from pipeline.sfx import fetch_sfx
-
-    logger.info("=== STAGE: MEDIA (OpenMontage + Scoring) ===")
+    """Selección de clips con OpenMontage scoring + assets"""
+    logger.info("=== STAGE MEDIA (OpenMontage + Assets) ===")
     
-    timer = _stage_timer()
-    ctx["progress"].update(ctx["task_id"], description="[cyan]🎨 Generating media...")
-
-    manifest = ctx["manifest"]
-    state = ctx["state"]
-    nicho = ctx["nicho"]
     nicho_slug = ctx["nicho_slug"]
-    content = ctx["content"]
-    timestamp = ctx["timestamp"]
-    audio_duration = ctx["audio_duration"]
+    guion = ctx.get("guion", "") or ctx.get("titulo", "")
     
-    guion = content.guion or content.titulo
-    keywords = content.palabras_clave[:nicho.keywords_count]
-
-    # 1. Obtener clips crudos
-    try:
-        from pipeline.composition_master import fetch_fresh_stock_videos
-        ctx["progress"].update(
-            ctx["task_id"],
-            description="[cyan]🎬 CompositionMaster: buscando clips frescos..."
-        )
-        raw_clips = fetch_fresh_stock_videos(
-            guion=guion,
-            tema=content.titulo or " ".join(keywords[:3]),
-            nicho_slug=nicho_slug,
-            keywords=keywords,
-            num_clips=nicho.num_clips,
-            job_id=manifest.job_id,
-        )
-    except Exception as e:
-        logger.warning(f"CompositionMaster fallo (usando legacy): {e}")
-        from pipeline.video_stock import fetch_stock_videos
-        raw_clips = fetch_stock_videos(keywords, nicho.num_clips)
+    # Clips con scoring
+    raw_clips = fetch_fresh_stock_videos(guion=guion, nicho_slug=nicho_slug, num_clips=8)
     
-    # 2. Aplicar OpenMontage scoring (si está disponible)
     try:
         from tools.openmontage.smart_scorer import score_and_rank_clips, evaluate_scene_quality
-        
-        scored_clips = score_and_rank_clips(
-            clips=raw_clips,
-            guion=guion,
-            nicho_slug=nicho_slug
-        )
-        # Filtrar solo clips de buena calidad
-        stock_clips = [c for c in scored_clips if evaluate_scene_quality(c) > 0.65]
-        logger.success(f"OpenMontage scoring aplicado → {len(stock_clips)} clips seleccionados")
-    except Exception as e:
-        logger.warning(f"OpenMontage no disponible, usando clips crudos: {e}")
-        stock_clips = raw_clips
+        scored = score_and_rank_clips(raw_clips, guion, nicho_slug)
+        ctx["stock_clips"] = [c for c in scored if evaluate_scene_quality(c) > 0.65]
+    except:
+        ctx["stock_clips"] = raw_clips
     
-    ctx["stock_clips"] = stock_clips
-    ctx["clips"] = stock_clips  # alias para compatibilidad
-    manifest.stage_artifacts["composition_clips"] = len(stock_clips)
-
-    # 3. Imágenes, Música y SFX (si aplica)
-    ctx["progress"].update(ctx["task_id"], description="[cyan]🎨 Generating images...")
-
-    images = generate_images(
-        content.prompt_imagen or (keywords[0] if keywords else nicho.nombre),
-        nicho.direccion_visual,
-        manifest.ab_variant,
-        timestamp,
-        settings.temp_dir,
-        count=max(4, min(10, int(settings.generated_images_count))),
-    )
-
-    # --- Lyria 3 AI music (with Pixabay/Jamendo fallback) ---
-    music_path = settings.temp_dir / f"musica_{timestamp}.mp3"
-    try:
-        from pipeline.music_ai import fetch_music_with_fallback
-        fetch_music_with_fallback(
-            content.mood_musica or nicho.genero_musica,
-            music_path,
-            duration_seconds=audio_duration,
-            nicho=nicho_slug,
-        )
-    except Exception:
-        fetch_music(content.mood_musica or nicho.genero_musica, music_path)
-
-    sfx_paths = fetch_sfx(timestamp, settings.temp_dir)
-
-    manifest.image_paths = [str(p) for p in images]
-    manifest.sfx_paths = [str(p) for p in sfx_paths]
-
-    state.mark_stage(manifest, "media", _elapsed(timer))
-    ctx["progress"].advance(ctx["task_id"])
-    ctx["stock_clips"] = stock_clips
-    ctx["images"] = images
-    ctx["music_path"] = music_path
-    ctx["sfx_paths"] = sfx_paths
-    ctx["keywords"] = keywords
-    return ctx
-
-
-
-
-def _stage_download(ctx: dict) -> dict:
-    """Stage 7: Download clips + Pre-render validation."""
-    from pipeline.renderer import download_clips
-    from pipeline.pre_render_validator import validate_pre_render
-    from publishers.telegram import notify_error
-
-    timer = _stage_timer()
-    ctx["progress"].update(ctx["task_id"], description="[cyan]⬇️ Downloading clips...")
-
-    manifest = ctx["manifest"]
-    state = ctx["state"]
-    nicho = ctx["nicho"]
-    stock_clips = ctx["stock_clips"]
-    images = ctx["images"]
-    timestamp = ctx["timestamp"]
-    audio_path = ctx["audio_path"]
-    ass_path = ctx["ass_path"]
-    music_path = ctx["music_path"]
-    audio_duration = ctx["audio_duration"]
-
-    clips = download_clips(stock_clips, timestamp, settings.temp_dir)
-    manifest.clip_paths = [str(p) for p in clips]
-
-    if not clips and not images:
-        manifest.status = JobStatus.ERROR.value
-        manifest.error_stage = "download"
-        manifest.error_message = "No clips and no images"
-        manifest.error_code = ErrorCode.ASSET_MISSING.value
-        state.save(manifest)
-        notify_error(manifest)
-        ctx["abort"] = True
-        return ctx
-
-    logger.info(f"📊 Total clips: {len(clips)} (Stock: {len(stock_clips)})")
-    state.mark_stage(manifest, "combine", _elapsed(timer))
-    ctx["progress"].advance(ctx["task_id"])
-
-    # ── Stage 7.5: Pre-Render Validation ──
-    ctx["progress"].update(ctx["task_id"], description="[cyan]✅ Validating assets...")
-    pre_ok, pre_errors = validate_pre_render(
-        audio_path=audio_path,
-        subs_path=ass_path if ass_path.exists() else None,
-        clips=clips,
-        images=images,
-        music_path=music_path if music_path.exists() else None,
-        platform=nicho.plataforma,
-        audio_duration=audio_duration,
-        auto_filter_greenscreen=True,
-    )
-    if clips != [Path(p) for p in manifest.clip_paths]:
-        manifest.clip_paths = [str(p) for p in clips]
-
-    if not pre_ok:
-        first_code = pre_errors[0][0] if pre_errors else ErrorCode.ASSET_MISSING
-        all_msgs = "; ".join(msg for _, msg in pre_errors)
-        manifest.status = JobStatus.ERROR.value
-        manifest.error_stage = "pre_render_validation"
-        manifest.error_message = all_msgs[:200]
-        manifest.error_code = first_code.value
-        state.save(manifest)
-        notify_error(manifest)
-        ctx["abort"] = True
-        return ctx
-
-    state.mark_stage(manifest, "validated")
-    ctx["clips"] = clips
+    # Música y SFX (no tocar)
+    if ctx.get("use_music", True):
+        ctx["music_path"] = get_background_music(nicho_slug)
+    if ctx.get("use_sfx", True):
+        ctx["sfx_path"] = get_sfx_for_nicho(nicho_slug)
+    
+    ctx["clips"] = ctx["stock_clips"]
     return ctx
 
 
 def _stage_render(ctx: dict) -> dict:
-    logger.info("=== STAGE: RENDER (Remotion + Overlays) ===")
-
+    """Render final con Remotion + Overlays + Fallback"""
+    logger.info("=== STAGE RENDER (Remotion + Overlays) ===")
+    
     manifest = ctx["manifest"]
     nicho_slug = ctx["nicho_slug"]
     guion = ctx.get("guion", "") or manifest.guion or ""
-
-    # 1. Generar schema enriquecido con overlays automáticos
+    
+    # 1. Schema + Overlays automáticos
     from tools.editing.EditingEngine import FullEditingEngine
     from tools.graphics.dynamic_overlays import enrich_schema_with_overlays
-
-    editing_engine = FullEditingEngine(style="shorts_default")
-
-    scene_data = [
-        {"background_video": str(p), "duration": 4.0}
-        for p in ctx.get("clips", [])[:8]
-    ]
-
-    editing_engine.build_from_scenes(
-        scene_data=scene_data,
+    
+    engine = FullEditingEngine(style="shorts_default")
+    engine.build_from_scenes(
+        scene_data=[{"background_video": str(p), "duration": 4.0} for p in ctx.get("clips", [])[:8]],
         voiceover_path=str(ctx.get("audio_path", "")),
         music_path=str(ctx.get("music_path", "")),
-        fx_preset="energetic" if nicho_slug in ["finanzas", "curiosidades"] else "default"
+        fx_preset="energetic"
     )
-
-    # Aplicar overlays automáticos según guion
-    editing_engine.schema = enrich_schema_with_overlays(
-        editing_engine.schema, guion, nicho_slug
-    )
-
-    # Exportar schema final
+    
+    engine.schema = enrich_schema_with_overlays(engine.schema, guion, nicho_slug)
+    
     schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
-    editing_engine.export_schema(str(schema_path))
-
-    # 2. Render con Remotion (prioridad)
+    engine.export_schema(str(schema_path))
+    
+    # 2. Render con Remotion (principal)
     output_path = settings.output_dir / f"video_{manifest.job_id}.mp4"
-
-    success = render_with_remotion(
-        schema_path=str(schema_path),
-        output_path=str(output_path),
-        audio_path=str(ctx.get("audio_path", "")),
-        music_path=str(ctx.get("music_path", "")),
-        duration=ctx.get("duration", 30.0),
-        nicho_slug=nicho_slug
-    )
-
-    if not success:
-        logger.warning("Remotion falló, fallback a FFmpeg...")
-        # Aquí puedes dejar tu render FFmpeg actual como fallback
-
+    
+    try:
+        from pipeline.renderer_remotion import render_with_remotion
+        ok = render_with_remotion(
+            schema_path=str(schema_path),
+            output_path=str(output_path),
+            audio_path=str(ctx.get("audio_path", "")),
+            music_path=str(ctx.get("music_path", "")),
+            duration=ctx.get("duration", 30.0),
+            nicho_slug=nicho_slug
+        )
+        if not ok:
+            raise Exception("Remotion falló")
+    except Exception as e:
+        logger.warning(f"Remotion falló ({e}), usando FFmpeg fallback...")
+        # Tu código FFmpeg actual aquí como fallback
+        output_path = render_with_ffmpeg_fallback(ctx)
+    
     manifest.output_path = str(output_path)
     ctx["final_video"] = str(output_path)
-
     return ctx
 
 
