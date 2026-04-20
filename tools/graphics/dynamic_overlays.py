@@ -1,115 +1,82 @@
-"""Dynamic Overlays Automáticos - Estilo depende del guion
-Genera overlays inteligentes (iconos, texto cinético, gráficos, partículas)
-según el contenido del guion y el nicho.
+"""Dynamic Overlays Automáticos - El estilo depende 100% del guion
+Genera gráficos, iconos, texto cinético y efectos encima del video automáticamente.
 """
 
 import re
 from typing import Dict, List, Any
 from loguru import logger
 
-def analyze_guion(guion: str, nicho_slug: str) -> Dict[str, Any]:
-    """Analiza el guion y decide qué overlays poner."""
+def analyze_guion(guion: str, nicho_slug: str = "general") -> Dict[str, Any]:
+    """Analiza el guion y decide qué overlays poner automáticamente."""
     guion_lower = guion.lower()
     
-    # Detectar emoción y keywords
     emotion = "neutral"
-    if any(w in guion_lower for w in ["sorprendente", "increíble", "nunca", "secreto", "¡"]):
-        emotion = "surprise"
-    elif any(w in guion_lower for w in ["dinero", "ganar", "invertir", "ahorrar", "millones", "$"]):
-        emotion = "money"
-    elif any(w in guion_lower for w in ["historia", "año", "siglo", "antiguo", "guerra"]):
-        emotion = "history"
-    elif any(w in guion_lower for w in ["cómo", "por qué", "qué es", "descubre"]):
-        emotion = "curiosity"
-    
-    # Overlays base según nicho + emoción
     overlays = []
     
-    if nicho_slug == "finanzas" or emotion == "money":
-        overlays.append({
-            "type": "animated_number",
-            "text": "💰",
-            "start_time": 1.5,
-            "duration": 2.5,
-            "style": "pop_explode",
-            "position": "top_right"
-        })
-        overlays.append({
-            "type": "lower_third",
-            "text": "¡El truco que usan los millonarios!",
-            "start_time": 3.0,
-            "duration": 3.5,
-            "style": "gold_gradient"
-        })
+    # === DETECCIÓN DE ESTILO SEGÚN GUION ===
+    if nicho_slug == "finanzas" or any(w in guion_lower for w in ["dinero", "ganar", "invertir", "ahorrar", "millones", "precio", "$", "€"]):
+        emotion = "money"
+        overlays.append({"type": "money_rain", "start_time": 1.2, "duration": 2.8, "style": "gold_pop"})
+        overlays.append({"type": "lower_third", "text": "💰 El truco que nadie te cuenta", "start_time": 3.0, "duration": 3.2, "style": "gold"})
     
-    elif nicho_slug == "curiosidades" or emotion == "curiosity":
-        overlays.append({
-            "type": "icon_burst",
-            "icon": "❓",
-            "start_time": 0.8,
-            "duration": 2.0,
-            "style": "question_pop"
-        })
-        overlays.append({
-            "type": "lightbulb",
-            "text": "💡",
-            "start_time": 4.5,
-            "duration": 2.0,
-            "style": "glow"
-        })
+    elif nicho_slug == "curiosidades" or any(w in guion_lower for w in ["¿", "cómo", "por qué", "nunca", "secreto", "¡"]):
+        emotion = "curiosity"
+        overlays.append({"type": "question_burst", "start_time": 0.6, "duration": 2.2, "style": "pop"})
+        overlays.append({"type": "lightbulb", "start_time": 4.0, "duration": 2.0, "style": "glow"})
     
-    elif nicho_slug == "historia" or emotion == "history":
-        overlays.append({
-            "type": "timeline_bar",
-            "start_time": 2.0,
-            "duration": 4.0,
-            "style": "old_paper"
-        })
+    elif nicho_slug == "historia" or any(w in guion_lower for w in ["año", "siglo", "antiguo", "guerra", "rey", "imperio"]):
+        emotion = "history"
+        overlays.append({"type": "old_timeline", "start_time": 2.0, "duration": 4.5, "style": "sepia"})
     
-    # Siempre agregar un hook visual fuerte en los primeros 3 segundos
+    elif nicho_slug == "ia_herramientas" or any(w in guion_lower for w in ["ia", "inteligencia", "chatgpt", "herramienta", "app"]):
+        emotion = "tech"
+        overlays.append({"type": "tech_lines", "start_time": 1.0, "duration": 3.0, "style": "neon"})
+    
+    # Hook fuerte siempre en los primeros 3 segundos
+    hook_text = guion[:55].strip() + "..." if len(guion) > 55 else guion
     overlays.append({
-        "type": "hook_text",
-        "text": guion[:60] + "..." if len(guion) > 60 else guion,
-        "start_time": 0.3,
-        "duration": 2.8,
-        "style": "kinetic_bold",
+        "type": "hook_kinetic",
+        "text": hook_text,
+        "start_time": 0.4,
+        "duration": 2.6,
+        "style": "bold_impact",
         "position": "center"
     })
     
     # Pattern interrupt cada ~5 segundos
     overlays.append({
-        "type": "flash_effect",
-        "start_time": 5.5,
-        "duration": 0.4,
+        "type": "flash_pop",
+        "start_time": 5.2,
+        "duration": 0.35,
         "style": "white_flash"
     })
     
     return {
         "emotion": emotion,
         "overlays": overlays,
-        "total_overlays": len(overlays)
+        "total": len(overlays)
     }
 
 
-def enrich_schema_with_overlays(base_schema: dict, guion: str, nicho_slug: str) -> dict:
-    """Toma el schema base del EditingEngine y le agrega overlays automáticos."""
+def enrich_schema_with_overlays(schema: dict, guion: str, nicho_slug: str) -> dict:
+    """Enriquece el schema del EditingEngine con overlays automáticos según el guion."""
     analysis = analyze_guion(guion, nicho_slug)
     
-    for overlay in analysis["overlays"]:
+    for ov in analysis["overlays"]:
         layer = {
-            "type": overlay["type"],
-            "text": overlay.get("text", ""),
-            "start_time": overlay["start_time"],
-            "duration": overlay["duration"],
-            "style": overlay.get("style", "default"),
-            "position": overlay.get("position", "center"),
-            "z_index": 25,  # siempre encima del video
-            "effects": [overlay.get("style", "")]
+            "type": ov["type"],
+            "text": ov.get("text", ""),
+            "start_time": round(ov["start_time"], 2),
+            "duration": round(ov["duration"], 2),
+            "style": ov.get("style", "default"),
+            "position": ov.get("position", "center"),
+            "z_index": 30,
+            "effects": [ov.get("style", "")]
         }
-        base_schema["timeline"].append(layer)
+        schema["timeline"].append(layer)
     
-    base_schema["metadata"]["overlays_added"] = analysis["total_overlays"]
-    base_schema["metadata"]["emotion_detected"] = analysis["emotion"]
+    schema["metadata"]["overlays_automaticos"] = analysis["total"]
+    schema["metadata"]["emocion_detectada"] = analysis["emotion"]
     
-    logger.info(f"✅ Overlays automáticos agregados: {analysis['total_overlays']} | Emoción: {analysis['emotion']}")
-    return base_schema
+    logger.success(f"✅ Overlays automáticos agregados: {analysis['total']} | Estilo: {analysis['emotion']}")
+    return schema
