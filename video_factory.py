@@ -604,14 +604,8 @@ def _stage_media(ctx: dict) -> dict:
 
     keywords = content.palabras_clave[:nicho.keywords_count]
 
-    # === ACTIVAR OPENMONTAGE REAL ===
-    try:
-        from tools.openmontage.om_scoring import score_and_rank_clips
-        from tools.openmontage.om_scene_evaluator import evaluate_scene_quality
-        OPENMONTAGE_AVAILABLE = True
-    except ImportError:
-        OPENMONTAGE_AVAILABLE = False
-        logger.warning("OpenMontage no disponible - usando selección básica")
+    # === ACTIVAR OPENMONTAGE + SCORING ===
+    from tools.openmontage.smart_scorer import score_and_rank_clips, evaluate_scene_quality
 
     # ── V16.1: VideoCompositionMasterPRO ───────────────────────────────────
     # Clips 100% frescos, temáticos y sin repetición histórica.
@@ -633,17 +627,14 @@ def _stage_media(ctx: dict) -> dict:
             job_id=manifest.job_id,
         )
 
-        if OPENMONTAGE_AVAILABLE:
-            # Usar OpenMontage scoring
-            scored_clips = score_and_rank_clips(
+        if "openmontage" in str(settings).lower() or True:  # activado por defecto
+            scored = score_and_rank_clips(
                 clips=raw_stock_clips,
-                guion=content.guion,
-                nicho_slug=nicho_slug,
-                target_duration=getattr(content, "duracion_total", audio_duration)
+                guion=content.guion or content.titulo,
+                nicho_slug=nicho_slug
             )
-            stock_clips = [c for c in scored_clips if evaluate_scene_quality(c) > 0.65]
+            stock_clips = [c for c in scored if evaluate_scene_quality(c) > 0.6]
         else:
-            # Fallback actual
             stock_clips = raw_stock_clips
 
         logger.info(
