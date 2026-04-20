@@ -389,7 +389,6 @@ def _stage_content_gen(ctx: dict) -> dict:
         state.mark_stage(manifest, "content_gen", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
     return ctx
-    return ctx
 
 
 def _stage_quality_gate(ctx: dict) -> dict:
@@ -532,12 +531,14 @@ def _stage_quality_gate(ctx: dict) -> dict:
         manifest.status = JobStatus.MANUAL_REVIEW.value
         logger.warning(f"Content sent to manual review (score: {quality.quality_score})")
 
-    state.mark_stage(manifest, "quality_gate", _elapsed(timer))
-    ctx["progress"].advance(ctx["task_id"])
-    return ctx
     ctx["content"] = content
     ctx["quality"] = quality
     ctx["raw_content"] = raw_content
+    ctx["guion"] = content.guion
+    ctx["titulo"] = content.titulo
+
+    state.mark_stage(manifest, "quality_gate", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
     return ctx
 
 
@@ -609,13 +610,13 @@ def _stage_tts(ctx: dict) -> dict:
         manifest.tts_engine_used = tts_engine
 
     manifest.audio_path = str(audio_path)
-    state.mark_stage(manifest, "tts", _elapsed(timer))
-    ctx["progress"].advance(ctx["task_id"])
-    return ctx
-    ctx["audio_path"] = audio_path
+    ctx["audio_path"] = str(audio_path)
     ctx["vtt_path"] = vtt_path
     ctx["guion_tts"] = guion_tts
     ctx["tts_engine"] = tts_engine
+
+    state.mark_stage(manifest, "tts", _elapsed(timer))
+    ctx["progress"].advance(ctx["task_id"])
     return ctx
 
 
@@ -653,11 +654,12 @@ def _stage_subtitles(ctx: dict) -> dict:
     if was_trimmed:
         manifest.duration_seconds = audio_duration
 
+    ctx["ass_path"] = str(ass_path)
+    ctx["audio_duration"] = audio_duration
+    ctx["duration"] = audio_duration
+
     state.mark_stage(manifest, "subtitles", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
-    return ctx
-    ctx["ass_path"] = ass_path
-    ctx["audio_duration"] = audio_duration
     return ctx
 
 
@@ -783,6 +785,7 @@ def _stage_render(ctx: dict) -> dict:
         manifest.render_backend = ctx["render_profile"]
 
     ctx["final_video"] = str(output_path)
+    ctx["video_path"] = ctx["final_video"]
     manifest.output_path = str(output_path)
     manifest.video_path = str(output_path)
 
@@ -802,14 +805,15 @@ def _stage_publish(ctx: dict) -> dict:
     state = ctx["state"]
     content = ctx["content"]
     quality = ctx["quality"]
-    video_path = ctx["video_path"]
+    video_path = ctx.get("video_path") or ctx.get("final_video")
     timestamp = ctx["timestamp"]
     tts_engine = ctx["tts_engine"]
     nicho_slug = ctx["nicho_slug"]
 
     drive_link = "N/A"
     if settings.use_drive and video_path:
-        link = upload_to_drive(video_path, video_path.name)
+        vp = Path(video_path) if not isinstance(video_path, Path) else video_path
+        link = upload_to_drive(str(vp), vp.name)
         if link:
             drive_link = link
             manifest.drive_link = link
@@ -877,7 +881,6 @@ def _stage_publish(ctx: dict) -> dict:
     state.mark_stage(manifest, "publish", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
     return ctx
-    return ctx
 
 
 def _stage_manim(ctx: dict) -> dict:
@@ -909,7 +912,6 @@ def _stage_manim(ctx: dict) -> dict:
     state.mark_stage(manifest, "manim", _elapsed(timer))
     ctx["progress"].advance(ctx["task_id"])
     return ctx
-    return ctx
 
 
 def _stage_cleanup(ctx: dict) -> dict:
@@ -927,7 +929,6 @@ def _stage_cleanup(ctx: dict) -> dict:
     cleanup_temp(timestamp)
     state.archive_manifest(manifest, output_target if video_path else settings.output_dir)
     ctx["progress"].advance(ctx["task_id"])
-    return ctx
     return ctx
 
 
