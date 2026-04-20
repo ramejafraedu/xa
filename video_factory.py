@@ -889,6 +889,7 @@ def _stage_render(ctx: dict) -> dict:
     # Genera el JSON markup completo para auditoría y posible re-render
     try:
         from tools.editing.EditingEngine import build_editing_schema, FullEditingEngine
+        from tools.graphics.dynamic_overlays import enrich_schema_with_overlays
         schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
         scene_data_for_schema = [
             {"visual_1": str(p), "duration": 4.0}
@@ -911,6 +912,10 @@ def _stage_render(ctx: dict) -> dict:
             editing_engine.schema["timeline"] = editing_engine.apply_dynamic_pacing(editing_engine.schema.get("timeline", []))
             editing_engine.add_kinematic_effects(first_scene)
             
+            # === AGREGAR OVERLAYS ===
+            guion_text = manifest.guion or ctx.get("guion_tts", "")
+            editing_engine.schema = enrich_schema_with_overlays(editing_engine.schema, guion_text, ctx.get("nicho_slug", "default"))
+
             editing_engine.export_schema(str(schema_path))
             
             manifest.stage_artifacts["editing_schema"] = str(schema_path)
