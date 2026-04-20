@@ -685,50 +685,107 @@ def _stage_media(ctx: dict) -> dict:
     return ctx
 
 
+def _clip_local_path(item: Any) -> str:
+    """Return the best local path from a clip dict or string."""
+    if isinstance(item, dict):
+        for key in ("local_path", "path", "clip", "visual_1", "video_path", "asset"):
+            val = item.get(key)
+            if val:
+                return str(val)
+        return ""
+    return str(item or "")
+
+
 def _stage_render(ctx: dict) -> dict:
+    """Render the final video via Remotion (with FFmpeg as controlled fallback)."""
     logger.info("=== STAGE: RENDER (Remotion + Overlays) ===")
-    
+
     manifest = ctx["manifest"]
     nicho_slug = ctx["nicho_slug"]
-    guion = ctx.get("guion", "") or manifest.guion or ""
-    
+    guion = ctx.get("guion", "") or getattr(manifest, "guion", "") or ""
+    audio_path = str(ctx.get("audio_path", "") or "")
+    music_path = str(ctx.get("music_path", "") or "")
+    duration = float(ctx.get("duration", ctx.get("audio_duration", 30.0)) or 30.0)
+
     from tools.editing.EditingEngine import FullEditingEngine
     from tools.graphics.dynamic_overlays import enrich_schema_with_overlays
-    
+    from pipeline.schema_to_props import schema_to_remotion_props
+
+    # Build scene_data with the key FullEditingEngine actually reads ("clip").
+    raw_clips = ctx.get("clips", []) or []
+    per_scene = max(0.8, duration / max(1, min(len(raw_clips), 8))) if raw_clips else 4.0
+    scene_data: list[dict] = []
+    clip_paths: list[Path] = []
+    for item in raw_clips[:8]:
+        local = _clip_local_path(item)
+        if not local:
+            continue
+        scene_data.append({"clip": local, "duration": round(per_scene, 3)})
+        clip_paths.append(Path(local))
+
     engine = FullEditingEngine(style="shorts_default")
     engine.build_from_scenes(
-        scene_data=[{"background_video": str(p), "duration": 4.0} for p in ctx.get("clips", [])[:8]],
-        voiceover_path=str(ctx.get("audio_path", "")),
-        music_path=str(ctx.get("music_path", "")),
-        fx_preset="energetic"
+        scene_data=scene_data,
+        voiceover_path=audio_path,
+        music_path=music_path,
+        fx_preset="energetic",
     )
-    
     engine.schema = enrich_schema_with_overlays(engine.schema, guion, nicho_slug)
-    
+
     schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
     engine.export_schema(str(schema_path))
-    
+    ctx["schema_path"] = str(schema_path)
+    ctx["overlays_count"] = int(engine.schema.get("metadata", {}).get("overlays_automaticos", 0) or 0)
+
     output_path = settings.output_dir / f"video_{manifest.job_id}.mp4"
-    
+    metadata = {
+        "job_id": manifest.job_id,
+        "timestamp": int(time.time() * 1000),
+        "titulo": getattr(manifest, "titulo", "") or ctx.get("titulo", "") or "Video Factory",
+        "nicho": nicho_slug,
+        "duration": duration,
+        "composition_id": "CinematicRenderer",
+    }
+
+    remotion_ok = False
+    remotion_err = ""
     try:
         from pipeline.renderer_remotion import render_with_remotion
-        ok = render_with_remotion(
-            schema_path=str(schema_path),
-            output_path=str(output_path),
-            audio_path=str(ctx.get("audio_path", "")),
-            music_path=str(ctx.get("music_path", "")),
-            duration=ctx.get("duration", 30.0),
-            nicho_slug=nicho_slug
+        props = schema_to_remotion_props(
+            engine.schema,
+            voiceover_path=audio_path or None,
+            music_path=music_path or None,
+            audio_duration=duration,
+            titulo=metadata["titulo"],
         )
-        if not ok:
-            raise Exception("Remotion falló")
-    except Exception as e:
-        logger.warning(f"Remotion falló ({e}), usando FFmpeg...")
-        output_path = render_with_ffmpeg_fallback(ctx)
-    
+        remotion_ok, remotion_err = render_with_remotion(
+            clips=clip_paths,
+            audio_path=Path(audio_path) if audio_path else Path(""),
+            subtitles_path=Path(ctx["ass_path"]) if ctx.get("ass_path") else None,
+            music_path=Path(music_path) if music_path else None,
+            output_path=output_path,
+            metadata=metadata,
+            timeline_payload=props,
+        )
+    except Exception as exc:
+        remotion_err = f"{type(exc).__name__}: {exc}"
+        logger.warning(f"Remotion render raised: {remotion_err}")
+
+    if not remotion_ok:
+        logger.warning(f"Remotion falló ({remotion_err}), usando FFmpeg fallback…")
+        output_path = Path(render_with_ffmpeg_fallback(ctx))
+        ctx["render_profile"] = "ffmpeg_fallback"
+    else:
+        ctx["render_profile"] = "remotion"
+
+    manifest.render_profile = ctx["render_profile"]
+    if not getattr(manifest, "render_backend", ""):
+        manifest.render_backend = ctx["render_profile"]
+
     ctx["final_video"] = str(output_path)
     manifest.output_path = str(output_path)
-    
+    manifest.video_path = str(output_path)
+
     return ctx
 
 
@@ -934,6 +991,20 @@ def run_pipeline(
 
     # V14 entrypoint should explicitly tag manifests as v14 to avoid alert confusion.
     manifest.pipeline_type = "v14"
+
+    # Assign experiment metadata so downstream analytics can compare variants.
+    try:
+        from services.experiments import assign_variant, stable_style_seed
+        if not getattr(manifest, "experiment_id", ""):
+            manifest.experiment_id = f"default_{nicho_slug}"
+        if not getattr(manifest, "variant", ""):
+            manifest.variant = assign_variant(manifest.experiment_id, manifest.job_id)
+            manifest.ab_variant = manifest.variant
+        if not getattr(manifest, "style_seed", 0):
+            manifest.style_seed = stable_style_seed(manifest.job_id)
+    except Exception as exc:
+        logger.debug(f"experiment assignment skipped: {exc}")
+
     manual_idea_lines = normalize_manual_ideas(manual_ideas)
     niche_memory_lines = get_niche_memory_lines(nicho_slug, limit=10)
 
@@ -1020,6 +1091,23 @@ def run_pipeline(
             manifest.error_code = ErrorCode.UNKNOWN.value
             state.save(manifest)
             notify_error(manifest)
+
+    try:
+        from services.alerts import record_pipeline_result
+        record_pipeline_result(
+            success=(manifest.status == JobStatus.SUCCESS.value),
+            stage=str(getattr(manifest, "error_stage", "") or ""),
+            error=str(getattr(manifest, "error_message", "") or ""),
+            job_id=str(getattr(manifest, "job_id", "") or ""),
+        )
+    except Exception as exc:
+        logger.debug(f"alerts tracker skipped: {exc}")
+
+    try:
+        from services.experiments import record_outcome
+        record_outcome(manifest)
+    except Exception as exc:
+        logger.debug(f"experiment outcome skipped: {exc}")
 
     _print_summary(manifest)
     return manifest

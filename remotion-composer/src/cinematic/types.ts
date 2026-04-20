@@ -63,6 +63,37 @@ export interface CinematicCaptionConfig {
   backgroundColor?: string;
 }
 
+export type DynamicOverlayType =
+  | "hook_kinetic"
+  | "lower_third"
+  | "money_rain"
+  | "question_burst"
+  | "lightbulb"
+  | "old_timeline"
+  | "tech_lines"
+  | "flash_pop"
+  | "caption"
+  | string;
+
+export type DynamicOverlayPosition =
+  | "top"
+  | "center"
+  | "bottom"
+  | "bottom_third"
+  | "top_third"
+  | "left"
+  | "right"
+  | string;
+
+export interface DynamicOverlay {
+  type: DynamicOverlayType;
+  startSeconds: number;
+  durationSeconds: number;
+  text?: string;
+  style?: string;
+  position?: DynamicOverlayPosition;
+}
+
 export interface CinematicRendererProps {
   [key: string]: unknown;
   scenes: CinematicScene[];
@@ -73,4 +104,11 @@ export interface CinematicRendererProps {
   soundtrack?: CinematicSoundtrack;
   music?: CinematicSoundtrack;
   captions?: CinematicCaptionConfig;
+  dynamicOverlays?: DynamicOverlay[];
+  /**
+   * Short-form indicator: "9:16" renders 1080x1920 by default, "16:9" keeps the
+   * legacy 1920x1080 output. Ignored when `resolution` is provided explicitly.
+   */
+  format?: "9:16" | "16:9" | string;
+  resolution?: { width: number; height: number };
 }

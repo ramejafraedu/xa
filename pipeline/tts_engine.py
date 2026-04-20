@@ -79,6 +79,28 @@ def generate_tts(
             _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
         return True, "cached"
 
+    # Content-hash cache — reuse identical TTS across jobs / retries.
+    try:
+        from services.content_cache import get_cached, put_cached
+        cache_payload = {
+            "text": text,
+            "voz_gemini": voz_gemini,
+            "voz_edge": voz_edge,
+            "rate": rate_tts,
+            "pitch": pitch_tts,
+        }
+        cached_path = get_cached("tts_mp3", cache_payload, suffix=".mp3")
+        if cached_path is not None:
+            import shutil as _shutil
+            output_mp3.parent.mkdir(parents=True, exist_ok=True)
+            _shutil.copyfile(cached_path, output_mp3)
+            if subs_vtt_path and sync_subtitles and not subs_vtt_path.exists():
+                _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
+            return True, "content_cache"
+    except Exception as exc:
+        logger.debug(f"TTS content cache lookup skipped: {exc}")
+        cache_payload = None  # type: ignore[assignment]
+
     strict_free = enforce_provider_policy and (
         settings.v15_strict_free_media_tools
         or (settings.free_mode and not settings.allow_freemium_in_free_mode)
@@ -180,8 +202,15 @@ def generate_tts(
             else:
                 if not subs_vtt_path.exists():
                     subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+        # Persist result in the content-hash cache so future jobs with the same
+        # text + voice can skip the provider call entirely.
+        try:
+            if cache_payload is not None and output_mp3.exists() and output_mp3.stat().st_size > 1000:
+                put_cached("tts_mp3", cache_payload, output_mp3, suffix=".mp3")
+        except Exception as exc:
+            logger.debug(f"TTS content cache store skipped: {exc}")
         return True, result.provider_name
-    
+
     logger.warning(f"All TTS providers failed: {result.error}")
     return False, "none"
 

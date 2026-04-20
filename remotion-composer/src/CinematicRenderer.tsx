@@ -12,8 +12,15 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { CinematicRendererProps, CinematicTone, CinematicVideoScene } from "./cinematic/types";
+import {
+  CinematicImageScene,
+  CinematicRendererProps,
+  CinematicTone,
+  CinematicVideoScene,
+} from "./cinematic/types";
 import { CaptionOverlay } from "./components/CaptionOverlay";
+import { DynamicOverlayLayer } from "./components/DynamicOverlayLayer";
+import { ImageScene } from "./components/ImageScene";
 
 function resolveAsset(src: string): string {
   if (!src) {
@@ -352,11 +359,23 @@ export const calculateCinematicMetadata: CalculateMetadataFunction<CinematicRend
       );
     }
 
+    // Default to vertical 9:16 for shorts. Callers can pass `format` or an
+    // explicit `resolution` to override (e.g. 16:9 landscape).
+    let width = 1080;
+    let height = 1920;
+    if (props.resolution && props.resolution.width && props.resolution.height) {
+      width = props.resolution.width;
+      height = props.resolution.height;
+    } else if (props.format === "16:9") {
+      width = 1920;
+      height = 1080;
+    }
+
     return {
       durationInFrames: Math.max(1, Math.ceil(totalSeconds * FPS)),
       fps: FPS,
-      width: 1920,
-      height: 1080,
+      width,
+      height,
     };
   };
 
@@ -368,6 +387,7 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
   soundtrack,
   music,
   captions,
+  dynamicOverlays,
 }) => {
   return (
     <AbsoluteFill style={{ backgroundColor: "#000000" }}>
@@ -393,7 +413,7 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
           fadeOutSeconds={music.fadeOutSeconds ?? 3}
         />
       ) : null}
-      {/* Layer 3: Video scenes */}
+      {/* Layer 3: Video / image / title scenes */}
       {scenes.map((scene) => (
         <Sequence
           key={scene.id}
@@ -401,7 +421,9 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
           durationInFrames={Math.round(scene.durationSeconds * FPS)}
         >
           {scene.kind === "video" ? (
-            <SceneVideo scene={scene as any} />
+            <SceneVideo scene={scene as CinematicVideoScene} />
+          ) : scene.kind === "image" ? (
+            <ImageScene scene={scene as CinematicImageScene} />
           ) : (
             <TitleCard
               text={(scene as any).text}
@@ -414,7 +436,9 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
           )}
         </Sequence>
       ))}
-      {/* Layer 4: TikTok-style captions */}
+      {/* Layer 4: Dynamic overlays (hook, lower-thirds, pattern interrupts) */}
+      <DynamicOverlayLayer overlays={dynamicOverlays} fps={FPS} />
+      {/* Layer 5: TikTok-style word-by-word captions */}
       {captions?.words ? (
         <CaptionOverlay
           words={captions.words}

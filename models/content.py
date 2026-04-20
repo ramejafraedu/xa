@@ -456,6 +456,12 @@ class JobManifest(BaseModel):
     ab_variant: str = "A"
     plataforma: str = "shorts"
 
+    # Experimentation (lightweight A/B + variant tracking)
+    experiment_id: str = ""
+    variant: str = ""
+    style_seed: int = 0
+    render_profile: str = ""  # remotion | ffmpeg_fallback | none
+
     # Scores
     quality_score: float = 0
     viral_score: float = 0

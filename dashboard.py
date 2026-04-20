@@ -2647,11 +2647,23 @@ async def dashboard_overview():
 
     # Jobs today = manifests in output written today + resumable jobs count.
     jobs_today = 0
+    errors_today = 0
+    successes_today = 0
     if settings.output_dir.exists():
         for f in settings.output_dir.glob("job_manifest_*.json"):
             try:
-                if f.stat().st_mtime >= today_start:
-                    jobs_today += 1
+                if f.stat().st_mtime < today_start:
+                    continue
+                jobs_today += 1
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                status = str(data.get("status", "") or "")
+                if status == "error":
+                    errors_today += 1
+                elif status == "success":
+                    successes_today += 1
             except Exception:
                 pass
 
@@ -2692,6 +2704,11 @@ async def dashboard_overview():
             "videos_total": videos_total,
             "active_running": active_running,
             "cost_today_usd": round(cost_today_usd, 4),
+            "successes_today": successes_today,
+            "errors_today": errors_today,
+            "success_rate_today": round(
+                successes_today / max(1, jobs_today), 3
+            ) if jobs_today else 0.0,
         },
         "latest_videos": latest_videos,
         "execution_mode": settings.execution_mode_label(),
@@ -2704,6 +2721,129 @@ async def dashboard_overview():
         },
         "timestamp": int(now),
     }
+
+
+@app.get("/api/dashboard/pipeline-health")
+async def pipeline_health_endpoint(limit: int = 30):
+    """Aggregate per-stage timings, render backend split, and recent errors.
+
+    Reads manifests under ``settings.output_dir`` (job_manifest_*.json) and
+    summarises the last ``limit`` jobs for the dashboard's health panel.
+    """
+    limit = max(1, min(int(limit or 30), 200))
+
+    manifests_dir = settings.output_dir
+    if not manifests_dir.exists():
+        return {
+            "jobs_analyzed": 0,
+            "stage_timings": {},
+            "render_profile_breakdown": {},
+            "status_breakdown": {},
+            "recent_errors": [],
+        }
+
+    manifests_sorted = sorted(
+        manifests_dir.glob("job_manifest_*.json"),
+        key=lambda p: p.stat().st_mtime if p.exists() else 0,
+        reverse=True,
+    )[:limit]
+
+    stage_timings: dict[str, dict[str, float]] = {}
+    render_profiles: dict[str, int] = {}
+    statuses: dict[str, int] = {}
+    recent_errors: list[dict] = []
+    total_duration_sum = 0.0
+    total_duration_count = 0
+
+    for path in manifests_sorted:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        status = str(data.get("status") or "")
+        statuses[status] = statuses.get(status, 0) + 1
+
+        render_profile = str(
+            data.get("render_profile") or data.get("render_backend") or "unknown"
+        )
+        render_profiles[render_profile] = render_profiles.get(render_profile, 0) + 1
+
+        timings = data.get("timings") if isinstance(data.get("timings"), dict) else {}
+        for stage, seconds in timings.items():
+            try:
+                value = float(seconds or 0)
+            except (TypeError, ValueError):
+                continue
+            bucket = stage_timings.setdefault(stage, {"count": 0, "sum": 0.0, "max": 0.0})
+            bucket["count"] += 1
+            bucket["sum"] += value
+            if value > bucket["max"]:
+                bucket["max"] = value
+
+        try:
+            duration = float(data.get("duration_seconds") or 0)
+            if duration > 0:
+                total_duration_sum += duration
+                total_duration_count += 1
+        except (TypeError, ValueError):
+            pass
+
+        if status == "error" and len(recent_errors) < 8:
+            recent_errors.append(
+                {
+                    "job_id": data.get("job_id"),
+                    "nicho_slug": data.get("nicho_slug"),
+                    "error_stage": data.get("error_stage"),
+                    "error_code": data.get("error_code"),
+                    "error_message": str(data.get("error_message") or "")[:240],
+                    "timestamp": data.get("timestamp"),
+                }
+            )
+
+    stage_timing_stats = {
+        stage: {
+            "runs": int(bucket["count"]),
+            "avg_seconds": round(bucket["sum"] / max(1, bucket["count"]), 2),
+            "max_seconds": round(bucket["max"], 2),
+        }
+        for stage, bucket in stage_timings.items()
+    }
+
+    return {
+        "jobs_analyzed": len(manifests_sorted),
+        "avg_video_duration_seconds": round(
+            total_duration_sum / max(1, total_duration_count), 2
+        ),
+        "stage_timings": stage_timing_stats,
+        "render_profile_breakdown": render_profiles,
+        "status_breakdown": statuses,
+        "recent_errors": recent_errors,
+    }
+
+
+@app.get("/api/experiments/summary")
+async def experiments_summary_endpoint():
+    """Aggregated A/B experiment outcomes recorded by the pipeline."""
+    try:
+        from services.experiments import summary as experiments_summary
+        return experiments_summary()
+    except Exception as exc:
+        logger.warning(f"experiments summary failed: {exc}")
+        return {"experiments": [], "total_outcomes": 0, "error": str(exc)}
+
+
+@app.get("/api/alerts/state")
+async def alerts_state_endpoint():
+    """Current consecutive-failure tracker state."""
+    try:
+        from services.alerts import peek_state
+        return peek_state()
+    except Exception as exc:
+        logger.warning(f"alerts state failed: {exc}")
+        return {"error": str(exc)}
 
 
 @app.post("/api/videos/{video_name}/upload-cover")
