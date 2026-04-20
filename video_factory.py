@@ -604,6 +604,15 @@ def _stage_media(ctx: dict) -> dict:
 
     keywords = content.palabras_clave[:nicho.keywords_count]
 
+    # === ACTIVAR OPENMONTAGE REAL ===
+    try:
+        from tools.openmontage.om_scoring import score_and_rank_clips
+        from tools.openmontage.om_scene_evaluator import evaluate_scene_quality
+        OPENMONTAGE_AVAILABLE = True
+    except ImportError:
+        OPENMONTAGE_AVAILABLE = False
+        logger.warning("OpenMontage no disponible - usando selección básica")
+
     # ── V16.1: VideoCompositionMasterPRO ───────────────────────────────────
     # Clips 100% frescos, temáticos y sin repetición histórica.
     # Analiza el guion escena por escena con LLM antes de buscar.
@@ -614,7 +623,8 @@ def _stage_media(ctx: dict) -> dict:
             ctx["task_id"],
             description="[cyan]🎬 CompositionMaster: buscando clips frescos..."
         )
-        stock_clips = fetch_fresh_stock_videos(
+        
+        raw_stock_clips = fetch_fresh_stock_videos(
             guion=content.guion or "",
             tema=content.titulo or " ".join(keywords[:3]),
             nicho_slug=nicho_slug,
@@ -622,6 +632,20 @@ def _stage_media(ctx: dict) -> dict:
             num_clips=nicho.num_clips,
             job_id=manifest.job_id,
         )
+
+        if OPENMONTAGE_AVAILABLE:
+            # Usar OpenMontage scoring
+            scored_clips = score_and_rank_clips(
+                clips=raw_stock_clips,
+                guion=content.guion,
+                nicho_slug=nicho_slug,
+                target_duration=getattr(content, "duracion_total", audio_duration)
+            )
+            stock_clips = [c for c in scored_clips if evaluate_scene_quality(c) > 0.65]
+        else:
+            # Fallback actual
+            stock_clips = raw_stock_clips
+
         logger.info(
             f"🎬 CompositionMaster: {len(stock_clips)} clips frescos y temáticos "
             f"seleccionados para '{content.titulo[:50]}'"
