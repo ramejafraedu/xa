@@ -59,25 +59,36 @@ const toneGradient = (tone: CinematicTone) => {
 const SceneVideo: React.FC<{ scene: CinematicVideoScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { durationInFrames, fps } = useVideoConfig();
-  const fadeInFrames = scene.fadeInFrames ?? 10;
-  const fadeOutFrames = scene.fadeOutFrames ?? 10;
-  const fadeOutStart = Math.max(fadeInFrames, durationInFrames - fadeOutFrames);
+  // Clamp fade windows so that on very short scenes (V16 PRO shorts can have
+  // hook scenes of ~2s / 60f) we never produce a degenerate inputRange like
+  // [2,2] that breaks Remotion's interpolate().
+  const rawFadeIn = scene.fadeInFrames ?? 10;
+  const rawFadeOut = scene.fadeOutFrames ?? 10;
+  const maxFadeBudget = Math.max(1, Math.floor(durationInFrames / 2));
+  const fadeInFrames = Math.min(rawFadeIn, maxFadeBudget);
+  const fadeOutFrames = Math.min(rawFadeOut, maxFadeBudget);
+  const fadeOutStart = Math.max(
+    fadeInFrames + 1,
+    durationInFrames - fadeOutFrames,
+  );
+  const safeFadeOutEnd = Math.max(fadeOutStart + 1, durationInFrames);
+  const scaleEnd = Math.max(1, durationInFrames);
   const fadeInOpacity =
-    fadeInFrames === 0
+    fadeInFrames <= 0
       ? 1
       : interpolate(frame, [0, fadeInFrames], [0, 1], {
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
         });
   const fadeOutOpacity =
-    fadeOutFrames === 0
+    fadeOutFrames <= 0
       ? 1
-      : interpolate(frame, [fadeOutStart, durationInFrames], [1, 0], {
+      : interpolate(frame, [fadeOutStart, safeFadeOutEnd], [1, 0], {
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
         });
   const opacity = Math.min(fadeInOpacity, fadeOutOpacity);
-  const scale = interpolate(frame, [0, durationInFrames], [1.015, 1], {
+  const scale = interpolate(frame, [0, scaleEnd], [1.015, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -197,15 +208,13 @@ const TitleCard: React.FC<{
     config: { damping: 18, stiffness: 90 },
   });
 
-  const exit = interpolate(
-    frame,
-    [durationInFrames - 12, durationInFrames],
-    [1, 0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    },
-  );
+  const exitWindow = Math.max(1, Math.min(12, Math.floor(durationInFrames / 3)));
+  const exitStart = Math.max(0, durationInFrames - exitWindow);
+  const exitEnd = Math.max(exitStart + 1, durationInFrames);
+  const exit = interpolate(frame, [exitStart, exitEnd], [1, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   const y = interpolate(reveal, [0, 1], [18, 0]);
   const letterSpacing = interpolate(reveal, [0, 1], [0.3, 0.18]);
@@ -288,8 +297,22 @@ const Soundtrack: React.FC<{
   const frame = useCurrentFrame();
   const { durationInFrames, fps } = useVideoConfig();
 
-  const fadeInFrames = Math.max(1, Math.round(fadeInSeconds * fps));
-  const fadeOutFrames = Math.max(1, Math.round(fadeOutSeconds * fps));
+  // Clamp audio fade windows so very short compositions never yield a
+  // degenerate [X, X] inputRange.
+  const audioBudget = Math.max(1, Math.floor(durationInFrames / 2));
+  const fadeInFrames = Math.min(
+    Math.max(1, Math.round(fadeInSeconds * fps)),
+    audioBudget,
+  );
+  const fadeOutFrames = Math.min(
+    Math.max(1, Math.round(fadeOutSeconds * fps)),
+    audioBudget,
+  );
+  const fadeOutStart = Math.max(
+    fadeInFrames + 1,
+    durationInFrames - fadeOutFrames,
+  );
+  const fadeOutEnd = Math.max(fadeOutStart + 1, durationInFrames);
   const trimBefore =
     trimBeforeSeconds !== undefined
       ? Math.round(trimBeforeSeconds * fps)
@@ -303,15 +326,10 @@ const Soundtrack: React.FC<{
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const fadeOut = interpolate(
-    frame,
-    [durationInFrames - fadeOutFrames, durationInFrames],
-    [volume, 0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    },
-  );
+  const fadeOut = interpolate(frame, [fadeOutStart, fadeOutEnd], [volume, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   return (
     <Audio

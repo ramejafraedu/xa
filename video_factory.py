@@ -888,21 +888,31 @@ def _stage_render(ctx: dict) -> dict:
     # ── V16.1: Exportar schema de edición con FullEditingEngine ───────────
     # Genera el JSON markup completo para auditoría y posible re-render
     try:
-        from tools.editing.EditingEngine import build_editing_schema
+        from tools.editing.EditingEngine import build_editing_schema, FullEditingEngine
         schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
         scene_data_for_schema = [
             {"visual_1": str(p), "duration": 4.0}
             for p in ctx.get("clips", [])[:10]
         ]
         if scene_data_for_schema:
-            build_editing_schema(
+            editing_engine = FullEditingEngine(style="shorts_default")
+            editing_engine.build_from_scenes(
                 scene_data=scene_data_for_schema,
                 voiceover_path=str(ctx.get("audio_path", "")),
                 music_path=str(ctx.get("music_path", "")),
                 thumbnail_path=manifest.thumbnail_path or "",
                 fx_preset="default",
-                export_path=str(schema_path),
             )
+            # Retención Brutal
+            first_scene = scene_data_for_schema[0]
+            if "background_video" not in first_scene:
+                first_scene["background_video"] = first_scene.get("visual_1") or ""
+            editing_engine.add_powerful_hook_3s(first_scene, str(ctx.get("audio_path", "")))
+            editing_engine.schema["timeline"] = editing_engine.apply_dynamic_pacing(editing_engine.schema.get("timeline", []))
+            editing_engine.add_kinematic_effects(first_scene)
+            
+            editing_engine.export_schema(str(schema_path))
+            
             manifest.stage_artifacts["editing_schema"] = str(schema_path)
             logger.info(f"V16.1 FullEditingEngine: schema exportado → {schema_path.name}")
     except Exception as e:

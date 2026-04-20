@@ -298,6 +298,14 @@ class Settings(BaseSettings):
     remotion_frame_cache_force_fallback: bool = False  # Forzar FFmpeg si recovery falla
     # Compositor memory limit in MB to pass to Remotion compositor (helps avoid OOMs)
     remotion_compositor_memory_limit: int = 49152
+    # Reactive Remotion supervisor (LLM + deterministic recovery before FFmpeg fallback)
+    render_supervisor_enabled: bool = True
+    render_supervisor_max_retries: int = 2
+
+    # Local TTS fallback (XTTS / Bark / Piper — see services/local_tts.py)
+    local_tts_enabled: bool = False
+    local_tts_backend: str = "none"  # none | piper | xtts | bark (when implemented)
+    local_tts_model_path: str = ""
     
     # Fact verification (NEW - protects Faceless Channels from misinformation)
     enable_fact_verification: bool = True

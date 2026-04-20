@@ -15,9 +15,12 @@ import subprocess
 import time
 from urllib.parse import unquote
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from models.content import JobManifest
 
 from config import settings
 
@@ -184,11 +187,15 @@ def render_with_remotion(
     timeline_path: Optional[Path] = None,
     timeline_payload: Optional[dict] = None,
     director_path: Optional[Path] = None,
-) -> bool:
-    """Render video using the selected Remotion composition."""
+) -> tuple[bool, str]:
+    """Render video using the selected Remotion composition.
+
+    Returns:
+        (success, error_log_snippet) — stderr or message on failure for supervisors.
+    """
     if not is_remotion_available():
         logger.info("Remotion not available, falling back to FFmpeg")
-        return False
+        return False, get_remotion_unavailability_reason() or "Remotion unavailable"
 
     requested_concurrency = max(1, int(getattr(settings, "remotion_concurrency", 1) or 1))
     available_cores = max(1, int(os.cpu_count() or 1))
@@ -301,7 +308,7 @@ def render_with_remotion(
                     "Remotion aborted: missing assets after reattempt: %s",
                     missing_assets,
                 )
-                return False
+                return False, f"missing assets after reattempt: {missing_assets[:3]}"
 
         props_file = output_path.parent / f"remotion_props_{metadata.get('timestamp', 0)}.json"
         props_file.write_text(json.dumps(props, indent=2), encoding="utf-8")
@@ -312,7 +319,7 @@ def render_with_remotion(
         remotion_runner, runner_kind = _resolve_remotion_runner()
         if not remotion_runner:
             logger.warning("Remotion render aborted: CLI runner not found")
-            return False
+            return False, "Remotion CLI runner not found"
 
         output_path_str = str(output_path.resolve().as_posix())
 
@@ -373,7 +380,7 @@ def render_with_remotion(
                 # Si está configurado forzar fallback ante errores persistentes
                 if getattr(settings, "remotion_frame_cache_force_fallback", False):
                     logger.warning("🔄 Forzando fallback a FFmpeg por configuración (remotion_frame_cache_force_fallback)")
-                    return False  # Esto activará el fallback en render_video_with_fallback
+                    return False, result.stderr or stderr_snippet or "frame_cache_force_fallback"  # Esto activará el fallback en render_video_with_fallback
             
             if stderr_snippet and not is_frame_cache:
                 logger.warning(
@@ -383,7 +390,7 @@ def render_with_remotion(
             elif not is_frame_cache:
                 logger.warning(f"Remotion render failed (exit {result.returncode}, runner={runner_kind})")
             
-            return False
+            return False, (result.stderr or "")[:4000] or f"exit {result.returncode}"
 
         if output_path.exists() and output_path.stat().st_size > 1024:
             suspicious_reason = _remotion_output_quality_issue(output_path)
@@ -393,29 +400,29 @@ def render_with_remotion(
                     f"({suspicious_reason}). Falling back to FFmpeg."
                 )
                 output_path.unlink(missing_ok=True)
-                return False
+                return False, suspicious_reason or "output quality check failed"
 
             md_error = _sanitize_video_metadata(output_path)
             if md_error:
                 logger.warning(f"Remotion metadata cleanup failed (non-fatal): {md_error}")
             size_mb = output_path.stat().st_size / (1024 * 1024)
             logger.info(f"✅ Remotion render complete: {output_path.name} ({size_mb:.1f}MB)")
-            return True
+            return True, ""
 
         logger.warning(f"Remotion render finished but output file missing or tiny.")
-        return False
+        return False, "output missing or tiny after render"
 
     except subprocess.TimeoutExpired:
         logger.error(f"Remotion render timed out ({remotion_timeout}s)")
-        return False
+        return False, f"timeout after {remotion_timeout}s"
     except FileNotFoundError:
         logger.error("Remotion executable not found")
-        return False
+        return False, "Remotion executable not found"
     except Exception as exc:
         logger.warning(f"Remotion render error: {exc}")
         if hasattr(exc, 'stderr') and exc.stderr:
             logger.debug(f"Remotion error detail: {exc.stderr}")
-        return False
+        return False, str(exc)[:2000]
 
 
 def render_video_with_fallback(
@@ -440,6 +447,7 @@ def render_video_with_fallback(
     director_path: Optional[Path] = None,
     style_playbook: str = "",
     video_format: str = "vertical",
+    manifest: Optional["JobManifest"] = None,
 ) -> tuple[Optional[Path], Optional[Path], str, str]:
     """Try Remotion first (when enabled), then fallback to FFmpeg renderer."""
     from pipeline.renderer import render_video
@@ -503,7 +511,7 @@ def render_video_with_fallback(
                     composition_id=requested_composition,
                 )
 
-            if render_with_remotion(
+            remotion_ok, remotion_err = render_with_remotion(
                 clips=clips,
                 audio_path=audio_path,
                 subtitles_path=subs_path,
@@ -513,7 +521,46 @@ def render_video_with_fallback(
                 timeline_path=timeline_path,
                 timeline_payload=timeline_payload,
                 director_path=director_path,
+            )
+
+            if (
+                not remotion_ok
+                and getattr(settings, "render_supervisor_enabled", True)
             ):
+                from pipeline.render_supervisor import run_remotion_supervisor_retries
+
+                job_id = str(getattr(manifest, "job_id", None) or timestamp)
+                orig_params = json.dumps(
+                    {
+                        "composition_id": requested_composition,
+                        "timestamp": timestamp,
+                        "velocidad": velocidad,
+                    },
+                    ensure_ascii=False,
+                )
+
+                def _rerender() -> tuple[bool, str]:
+                    return render_with_remotion(
+                        clips=clips,
+                        audio_path=audio_path,
+                        subtitles_path=subs_path,
+                        music_path=music_path,
+                        output_path=remotion_output,
+                        metadata=remotion_meta,
+                        timeline_path=timeline_path,
+                        timeline_payload=timeline_payload,
+                        director_path=director_path,
+                    )
+
+                remotion_ok, remotion_err = run_remotion_supervisor_retries(
+                    nicho_slug=nicho_slug,
+                    job_id=job_id,
+                    last_stderr=remotion_err,
+                    original_params=orig_params,
+                    rerender=_rerender,
+                )
+
+            if remotion_ok:
                 thumb = _extract_thumbnail(remotion_output, temp_dir, timestamp)
                 return remotion_output, thumb, "", "remotion"
 
@@ -691,7 +738,8 @@ def render_with_fallback(
     metadata: dict,
 ) -> bool:
     """Backward-compatible wrapper kept for older callers."""
-    return render_with_remotion(clips, audio_path, subtitles_path, music_path, output_path, metadata)
+    ok, _ = render_with_remotion(clips, audio_path, subtitles_path, music_path, output_path, metadata)
+    return ok
 
 
 def _extract_thumbnail(video_path: Path, temp_dir: Path, timestamp: int) -> Optional[Path]:

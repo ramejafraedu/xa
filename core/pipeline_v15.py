@@ -2157,6 +2157,7 @@ def run_pipeline_v15(
                 director_path=Path(manifest.director_json_path) if manifest.director_json_path else None,
                 style_playbook=manifest.style_playbook or "",
                 video_format=runtime_overrides.get("video_format") or getattr(settings, "default_video_format", getattr(settings, "defaultvideoformat", "vertical")),
+                manifest=manifest,
             )
             # Optional: post-process rendered video with local EditingEngine (EML)
             try:
@@ -2224,6 +2225,7 @@ def run_pipeline_v15(
                             director_path=Path(manifest.director_json_path) if manifest.director_json_path else None,
                             style_playbook=manifest.style_playbook or "",
                             video_format=runtime_overrides.get("video_format") or getattr(settings, "default_video_format", getattr(settings, "defaultvideoformat", "vertical")),
+                            manifest=manifest,
                         )
                         render_backend = render_backend2
                         if render_error2:

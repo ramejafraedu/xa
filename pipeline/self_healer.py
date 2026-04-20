@@ -349,3 +349,16 @@ Devuelve JSON con correcciones, ejemplo:
         "reduce_resolution": False,
         "add_flags": ["-max_muxing_queue_size", "2048"],
     })
+
+
+def propose_render_recovery(
+    error_message: str,
+    original_params: str = "",
+    error_code: ErrorCode = ErrorCode.UNKNOWN,
+) -> Optional[str]:
+    """Return the same JSON recovery plan as ``_fix_render`` without manifest bookkeeping.
+
+    Used by ``pipeline.render_supervisor`` for Remotion/FFmpeg reactive retries so
+    supervisor attempts do not consume ``attempt_healing`` quota on the manifest.
+    """
+    return _fix_render(error_message, original_params, error_code)

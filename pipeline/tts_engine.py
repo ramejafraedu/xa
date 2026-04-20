@@ -68,7 +68,7 @@ def generate_tts(
     """Generate TTS audio. Returns (success, engine_used).
 
     Uses ProviderCascade for scored fallback
-    (ElevenLabs > Google Cloud TTS > Gemini > Edge-TTS > Piper).
+    (Google Cloud TTS first when configured, else Gemini / Edge / Piper / ElevenLabs by scores).
     If sync_subtitles is True and TTS doesn't provide timing,
     uses AudioSubtitleSynchronizer to force-align text with audio.
     """
@@ -128,7 +128,11 @@ def generate_tts(
         wrap_elevenlabs,
         tier="premium",
         base_score=provider_scores["elevenlabs"],
-        enabled=bool(settings.elevenlabs_api_key) and eleven_allowed
+        enabled=(
+            bool(settings.elevenlabs_api_key)
+            and bool(settings.enable_elevenlabs_tts)
+            and eleven_allowed
+        ),
     )
 
     # Register Google Cloud TTS
@@ -198,6 +202,12 @@ def _build_tts_provider_scores(provider_order: Optional[list[str]], strict_free:
         default_order = ["elevenlabs", "google_tts", "gemini", "edge-tts", "piper"]
     if settings.gemini_everywhere_mode and not strict_free:
         default_order = ["gemini", "edge-tts", "piper", "google_tts", "elevenlabs"]
+    # When Google Cloud TTS is configured, prefer it over ElevenLabs (and over Gemini in everywhere mode).
+    if settings.google_tts_effective_enabled() and not strict_free:
+        if settings.gemini_everywhere_mode:
+            default_order = ["google_tts", "gemini", "edge-tts", "piper", "elevenlabs"]
+        else:
+            default_order = ["google_tts", "elevenlabs", "gemini", "edge-tts", "piper"]
 
     merged: list[str] = []
     seen: set[str] = set()
@@ -249,29 +259,17 @@ def _generate_tts_legacy(
                     subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "piper"
 
-    # Try ElevenLabs TTS
     eleven_allowed = (
         settings.provider_allowed("elevenlabs", usage="media")
         if enforce_provider_policy
         else True
     )
-    if settings.elevenlabs_api_key and eleven_allowed:
-        success = _elevenlabs_tts(text, output_mp3)
-        if success:
-            if subs_vtt_path:
-                if sync_subtitles:
-                    _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
-                else:
-                    subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
-            return True, "elevenlabs"
-
-    # Try Google Cloud TTS
     google_tts_allowed = (
         settings.provider_allowed("google_tts", usage="media")
         if enforce_provider_policy
         else True
     )
-    if settings.use_google_tts and google_tts_allowed:
+    if settings.google_tts_effective_enabled() and google_tts_allowed:
         success = _google_cloud_tts(text, output_mp3)
         if success:
             if subs_vtt_path:
@@ -280,6 +278,20 @@ def _generate_tts_legacy(
                 else:
                     subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
             return True, "google_tts"
+
+    if (
+        settings.enable_elevenlabs_tts
+        and settings.elevenlabs_api_key
+        and eleven_allowed
+    ):
+        success = _elevenlabs_tts(text, output_mp3)
+        if success:
+            if subs_vtt_path:
+                if sync_subtitles:
+                    _sync_subtitles_if_needed(output_mp3, text, subs_vtt_path)
+                else:
+                    subs_vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+            return True, "elevenlabs"
 
     # Try Gemini TTS
     gemini_allowed = (
