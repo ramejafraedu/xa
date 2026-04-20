@@ -662,41 +662,36 @@ def _stage_subtitles(ctx: dict) -> dict:
 
 
 def _stage_media(ctx: dict) -> dict:
-    """Selección de clips con OpenMontage scoring + assets"""
-    logger.info("=== STAGE MEDIA (OpenMontage + Assets) ===")
+    logger.info("=== STAGE: MEDIA (OpenMontage) ===")
     
     nicho_slug = ctx["nicho_slug"]
     guion = ctx.get("guion", "") or ctx.get("titulo", "")
     
-    # Clips con scoring
     raw_clips = fetch_fresh_stock_videos(guion=guion, nicho_slug=nicho_slug, num_clips=8)
     
     try:
         from tools.openmontage.smart_scorer import score_and_rank_clips, evaluate_scene_quality
         scored = score_and_rank_clips(raw_clips, guion, nicho_slug)
         ctx["stock_clips"] = [c for c in scored if evaluate_scene_quality(c) > 0.65]
-    except:
+    except Exception as e:
+        logger.warning(f"OpenMontage falló: {e}")
         ctx["stock_clips"] = raw_clips
     
-    # Música y SFX (no tocar)
+    ctx["clips"] = ctx["stock_clips"]   # ← IMPORTANTE: asignar aquí
+    
     if ctx.get("use_music", True):
         ctx["music_path"] = get_background_music(nicho_slug)
-    if ctx.get("use_sfx", True):
-        ctx["sfx_path"] = get_sfx_for_nicho(nicho_slug)
     
-    ctx["clips"] = ctx["stock_clips"]
     return ctx
 
 
 def _stage_render(ctx: dict) -> dict:
-    """Render final con Remotion + Overlays + Fallback"""
-    logger.info("=== STAGE RENDER (Remotion + Overlays) ===")
+    logger.info("=== STAGE: RENDER (Remotion + Overlays) ===")
     
     manifest = ctx["manifest"]
     nicho_slug = ctx["nicho_slug"]
     guion = ctx.get("guion", "") or manifest.guion or ""
     
-    # 1. Schema + Overlays automáticos
     from tools.editing.EditingEngine import FullEditingEngine
     from tools.graphics.dynamic_overlays import enrich_schema_with_overlays
     
@@ -713,7 +708,6 @@ def _stage_render(ctx: dict) -> dict:
     schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
     engine.export_schema(str(schema_path))
     
-    # 2. Render con Remotion (principal)
     output_path = settings.output_dir / f"video_{manifest.job_id}.mp4"
     
     try:
@@ -729,12 +723,12 @@ def _stage_render(ctx: dict) -> dict:
         if not ok:
             raise Exception("Remotion falló")
     except Exception as e:
-        logger.warning(f"Remotion falló ({e}), usando FFmpeg fallback...")
-        # Tu código FFmpeg actual aquí como fallback
+        logger.warning(f"Remotion falló ({e}), usando FFmpeg...")
         output_path = render_with_ffmpeg_fallback(ctx)
     
-    manifest.output_path = str(output_path)
     ctx["final_video"] = str(output_path)
+    manifest.output_path = str(output_path)
+    
     return ctx
 
 
