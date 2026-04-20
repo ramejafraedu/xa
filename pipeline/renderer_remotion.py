@@ -2543,10 +2543,7 @@ def _run_remotion_with_recovery(
             composition_id,
             output_path_str,
             "--props", payload_json,
-            "--codec", "h264",
-            "--width", "1080",
-            "--height", "1920",
-            "--concurrency", str(concurrency),
+            "--overwrite"
         ]
 
     env = os.environ.copy()

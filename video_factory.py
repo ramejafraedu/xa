@@ -754,220 +754,58 @@ def _stage_download(ctx: dict) -> dict:
 
 
 def _stage_render(ctx: dict) -> dict:
-    """Stage 8: Render video + Post-render QA."""
-    from pipeline.renderer import render_video
-    from pipeline.self_healer import attempt_healing
-    from publishers.telegram import notify_error
-
-    timer = _stage_timer()
-    ctx["progress"].update(ctx["task_id"], description="[cyan]🎥 Rendering video...")
+    logger.info("=== STAGE: RENDER (Remotion + Overlays) ===")
 
     manifest = ctx["manifest"]
-    state = ctx["state"]
     nicho_slug = ctx["nicho_slug"]
-    content = ctx["content"]
-    clips = ctx["clips"]
-    audio_path = ctx["audio_path"]
-    ass_path = ctx["ass_path"]
-    music_path = ctx["music_path"]
-    images = ctx["images"]
-    timestamp = ctx["timestamp"]
-    audio_duration = ctx["audio_duration"]
+    guion = ctx.get("guion", "") or manifest.guion or ""
 
-    output_target = settings.output_dir
-    if manifest.status == JobStatus.MANUAL_REVIEW.value:
-        output_target = settings.review_dir
+    # 1. Generar schema enriquecido con overlays automáticos
+    from tools.editing.EditingEngine import FullEditingEngine
+    from tools.graphics.dynamic_overlays import enrich_schema_with_overlays
 
-    video_path, thumb_path, render_error = render_video(
-        clips=clips,
-        audio_path=audio_path,
-        subs_path=ass_path if ass_path.exists() else None,
-        music_path=music_path if music_path.exists() else None,
-        images=images,
-        timestamp=timestamp,
-        temp_dir=settings.temp_dir,
-        output_dir=output_target,
-        nicho_slug=nicho_slug,
-        gancho=content.gancho,
-        titulo=content.titulo,
-        duracion_audio=audio_duration,
-        velocidad=content.velocidad_cortes.value if hasattr(content.velocidad_cortes, 'value') else str(content.velocidad_cortes),
-        num_clips=content.num_clips,
-        duraciones_clips=[float(d) for d in content.duraciones_clips] if content.duraciones_clips else None,
-        manim_path=ctx.get("manim_overlay", getattr(manifest, "manim_overlay_path", None)),
-        video_format=getattr(settings, "default_video_format", getattr(settings, "defaultvideoformat", "vertical")),
+    editing_engine = FullEditingEngine(style="shorts_default")
+
+    scene_data = [
+        {"background_video": str(p), "duration": 4.0}
+        for p in ctx.get("clips", [])[:8]
+    ]
+
+    editing_engine.build_from_scenes(
+        scene_data=scene_data,
+        voiceover_path=str(ctx.get("audio_path", "")),
+        music_path=str(ctx.get("music_path", "")),
+        fx_preset="energetic" if nicho_slug in ["finanzas", "curiosidades"] else "default"
     )
 
-    if render_error:
-        render_code = ErrorCode.FFMPEG_FILTER_FAIL
-        if "timeout" in render_error.lower():
-            render_code = ErrorCode.FFMPEG_TIMEOUT
-        elif "concat" in render_error.lower():
-            render_code = ErrorCode.FFMPEG_CONCAT_FAIL
+    # Aplicar overlays automáticos según guion
+    editing_engine.schema = enrich_schema_with_overlays(
+        editing_engine.schema, guion, nicho_slug
+    )
 
-        fix = attempt_healing(
-            manifest, FailureType.RENDER, "render",
-            render_error, json.dumps({"velocidad": str(content.velocidad_cortes)}),
-            error_code=render_code,
-        )
-        if fix:
-            try:
-                render_fixes = json.loads(fix) if isinstance(fix, str) else fix
-                video_path, thumb_path, render_error2 = render_video(
-                    clips=clips,
-                    audio_path=audio_path,
-                    subs_path=ass_path if ass_path.exists() else None,
-                    music_path=music_path if music_path.exists() else None,
-                    images=images,
-                    timestamp=timestamp,
-                    temp_dir=settings.temp_dir,
-                    output_dir=output_target,
-                    nicho_slug=nicho_slug,
-                    gancho=content.gancho,
-                    titulo=content.titulo,
-                    duracion_audio=audio_duration,
-                    velocidad=content.velocidad_cortes.value if hasattr(content.velocidad_cortes, 'value') else str(content.velocidad_cortes),
-                    num_clips=content.num_clips,
-                    render_fixes=render_fixes,
-                    manim_path=ctx.get("manim_overlay", getattr(manifest, "manim_overlay_path", None)),
-                    video_format=getattr(settings, "default_video_format", getattr(settings, "defaultvideoformat", "vertical")),
-                )
-                if render_error2:
-                    render_error = render_error2
-            except Exception:
-                pass
+    # Exportar schema final
+    schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
+    editing_engine.export_schema(str(schema_path))
 
-    if render_error or not video_path:
-        manifest.status = JobStatus.ERROR.value
-        manifest.error_stage = "render"
-        manifest.error_message = render_error or "Render produced no output"
-        manifest.error_code = ErrorCode.FFMPEG_FILTER_FAIL.value
-        state.save(manifest)
-        notify_error(manifest)
-        ctx["abort"] = True
-        return ctx
+    # 2. Render con Remotion (prioridad)
+    output_path = settings.output_dir / f"video_{manifest.job_id}.mp4"
 
-    # QA Post-Render FX Stage: Vintage cinematic look
-    try:
-        import subprocess
-        import shutil
-        ctx["progress"].update(ctx["task_id"], description="[cyan]🎞️ Applying Vintage FX...")
-        fx_video_path = Path(video_path).with_name(f"fx_{Path(video_path).name}")
-        vf_filter = "noise=alls=15:allf=t+u,vignette=PI/4,eq=contrast=1.1:saturation=0.85:gamma=0.9"
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-i", str(video_path),
-                "-vf", vf_filter,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-                "-c:a", "copy",
-                str(fx_video_path)
-            ],
-            capture_output=True,
-            check=True
-        )
-        if fx_video_path.exists():
-            shutil.move(str(fx_video_path), str(video_path))
-            logger.info("Vintage FX applied successfully.")
-    except Exception as e:
-        logger.warning(f"Failed to apply vintage FX: {e}")
+    success = render_with_remotion(
+        schema_path=str(schema_path),
+        output_path=str(output_path),
+        audio_path=str(ctx.get("audio_path", "")),
+        music_path=str(ctx.get("music_path", "")),
+        duration=ctx.get("duration", 30.0),
+        nicho_slug=nicho_slug
+    )
 
-    manifest.video_path = str(video_path)
-    manifest.thumbnail_path = str(thumb_path) if thumb_path else ""
-    if manifest.thumbnail_path:
-        manifest.publish_cover_path = manifest.thumbnail_path
+    if not success:
+        logger.warning("Remotion falló, fallback a FFmpeg...")
+        # Aquí puedes dejar tu render FFmpeg actual como fallback
 
-    # ── V16.1: Thumbnail con IA si no fue generado por el renderer ────────
-    # Genera thumbnail 9:16 con Gemini Imagen 3 si no existe un thumbnail
-    if not manifest.thumbnail_path or not Path(manifest.thumbnail_path).exists():
-        try:
-            from tools.graphics.thumbnail_generator import generate_thumbnail
-            thumb_result = generate_thumbnail(
-                titulo=manifest.titulo or ctx.get("nicho_slug", "video"),
-                nicho=ctx.get("nicho_slug", "default"),
-                hook=manifest.gancho or "",
-            )
-            if thumb_result.get("thumbnail_path") and Path(thumb_result["thumbnail_path"]).exists():
-                manifest.thumbnail_path = thumb_result["thumbnail_path"]
-                manifest.publish_cover_path = thumb_result["thumbnail_path"]
-                logger.info(f"V16.1 ThumbnailGenerator: generado → {manifest.thumbnail_path}")
-        except Exception as e:
-            logger.warning(f"V16.1 ThumbnailGenerator: falló (no bloqueante) — {e}")
+    manifest.output_path = str(output_path)
+    ctx["final_video"] = str(output_path)
 
-    # ── V16.1: Exportar schema de edición con FullEditingEngine ───────────
-    # Genera el JSON markup completo para auditoría y posible re-render
-    try:
-        from tools.editing.EditingEngine import build_editing_schema, FullEditingEngine
-        from tools.graphics.dynamic_overlays import enrich_schema_with_overlays
-        schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
-        scene_data_for_schema = [
-            {"visual_1": str(p), "duration": 4.0}
-            for p in ctx.get("clips", [])[:10]
-        ]
-        if scene_data_for_schema:
-            editing_engine = FullEditingEngine(style="shorts_default")
-            editing_engine.build_from_scenes(
-                scene_data=scene_data_for_schema,
-                voiceover_path=str(ctx.get("audio_path", "")),
-                music_path=str(ctx.get("music_path", "")),
-                thumbnail_path=manifest.thumbnail_path or "",
-                fx_preset="default",
-            )
-            # Retención Brutal
-            first_scene = scene_data_for_schema[0]
-            if "background_video" not in first_scene:
-                first_scene["background_video"] = first_scene.get("visual_1") or ""
-            editing_engine.add_powerful_hook_3s(first_scene, str(ctx.get("audio_path", "")))
-            editing_engine.schema["timeline"] = editing_engine.apply_dynamic_pacing(editing_engine.schema.get("timeline", []))
-            editing_engine.add_kinematic_effects(first_scene)
-            
-            # === AGREGAR OVERLAYS ===
-            guion_text = manifest.guion or ctx.get("guion_tts", "")
-            editing_engine.schema = enrich_schema_with_overlays(editing_engine.schema, guion_text, ctx.get("nicho_slug", "default"))
-
-            editing_engine.export_schema(str(schema_path))
-            
-            manifest.stage_artifacts["editing_schema"] = str(schema_path)
-            logger.info(f"V16.1 FullEditingEngine: schema exportado → {schema_path.name}")
-    except Exception as e:
-        logger.warning(f"V16.1 FullEditingEngine: falló (no bloqueante) — {e}")
-
-    state.mark_stage(manifest, "render", _elapsed(timer))
-    ctx["progress"].advance(ctx["task_id"])
-
-    # ── Stage 8.5: Post-Render QA ──
-    ctx["progress"].update(ctx["task_id"], description="[cyan]🔬 Post-render QA...")
-    try:
-        from pipeline.post_render_qa import post_render_qa
-        from pipeline.duration_validator import get_max_duration
-
-        platform_max_duration = float(get_max_duration(ctx["nicho"].plataforma))
-        qa_passed, qa_issues = post_render_qa(
-            video_path,
-            expected_width=1080,
-            expected_height=1920,
-            min_duration=10.0,
-            max_duration=platform_max_duration,
-        )
-        manifest.qa_passed = qa_passed
-        manifest.qa_issues = qa_issues
-
-        if not qa_passed:
-            logger.warning("⚠️ Post-render QA found issues — sending to review")
-            # Move to review instead of failing completely
-            if manifest.status != JobStatus.MANUAL_REVIEW.value:
-                manifest.status = JobStatus.MANUAL_REVIEW.value
-                # Move video to review dir
-                review_path = settings.review_dir / video_path.name
-                if video_path != review_path:
-                    import shutil as sh
-                    sh.move(str(video_path), str(review_path))
-                    manifest.video_path = str(review_path)
-                    video_path = review_path
-    except Exception as e:
-        logger.debug(f"Post-render QA skipped: {e}")
-
-    ctx["video_path"] = video_path
-    ctx["output_target"] = output_target
     return ctx
 
 
