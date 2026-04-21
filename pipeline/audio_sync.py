@@ -42,15 +42,15 @@ class AudioSubtitleSynchronizer:
         self._whisperx_available = self._check_whisperx()
     
     def _check_whisperx(self) -> bool:
-        """Check if WhisperX is installed."""
+        """Check if a word-timing transcriber (faster-whisper) is installed."""
         try:
             import importlib
-            importlib.import_module("whisperx")
-            logger.info("✅ WhisperX available for audio alignment")
+            importlib.import_module("faster_whisper")
+            logger.info("✅ faster-whisper available for audio alignment")
             return True
         except ImportError:
-            logger.warning("⚠️ WhisperX not installed. Alignment will use fallback.")
-            logger.info("   Install: pip install whisperx")
+            logger.warning("⚠️ faster-whisper not installed. Alignment will use fallback.")
+            logger.info("   Install: pip install faster-whisper")
             return False
     
     def align_script_with_audio(
@@ -89,55 +89,55 @@ class AudioSubtitleSynchronizer:
         output_vtt: Path,
         language: str
     ) -> bool:
-        """Use WhisperX for high-quality forced alignment."""
-        import whisperx
+        """Use faster-whisper for word-level forced alignment.
+
+        Kept the `_whisperx_` name for backwards compatibility; the original
+        `whisperx` package ships with a broken VAD download URL (S3 403), so
+        we use `faster-whisper` directly — it already emits word timestamps.
+        """
+        from faster_whisper import WhisperModel
         import torch
-        
-        logger.info(f"🔍 Starting WhisperX alignment with {self.model_size} model")
-        
-        # Load model
+
+        logger.info(f"🔍 Starting faster-whisper alignment with {self.model_size} model")
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
         compute_type = "float16" if device == "cuda" else "int8"
-        
-        model = whisperx.load_model(
+
+        model = WhisperModel(
             self.model_size,
-            device,
+            device=device,
             compute_type=compute_type,
-            language=language
         )
-        
-        # Load audio
-        audio = whisperx.load_audio(str(audio_path))
-        
-        # 1. Transcribe to get segments
-        result = model.transcribe(audio, batch_size=16)
-        
-        # 2. Load alignment model
-        align_model, align_metadata = whisperx.load_align_model(
-            language_code=language,
-            device=device
+
+        segments_iter, _info = model.transcribe(
+            str(audio_path),
+            language=language,
+            beam_size=5,
+            word_timestamps=True,
+            vad_filter=False,
+            condition_on_previous_text=False,
         )
-        
-        # 3. Align segments
-        aligned = whisperx.align(
-            result["segments"],
-            align_model,
-            align_metadata,
-            audio,
-            device,
-            return_char_alignments=False
-        )
-        
-        # 4. Adjust to match original script text (forced alignment)
-        # WhisperX transcribes, but we want to force the original text
+
+        whisper_segments: list[dict] = []
+        for seg in segments_iter:
+            seg_words = []
+            for w in (seg.words or []):
+                seg_words.append({
+                    "word": str(getattr(w, "word", "") or "").strip(),
+                    "start": float(getattr(w, "start", 0.0) or 0.0),
+                    "end": float(getattr(w, "end", 0.0) or 0.0),
+                    "score": 1.0,
+                })
+            if seg_words:
+                whisper_segments.append({"words": seg_words})
+
         adjusted_segments = self._adjust_to_original_script(
-            aligned["segments"],
-            script_text
+            whisper_segments,
+            script_text,
         )
-        
-        # 5. Generate VTT
+
         self._generate_vtt(adjusted_segments, output_vtt)
-        
+
         logger.info(f"✅ Alignment complete: {len(adjusted_segments)} segments")
         return True
     

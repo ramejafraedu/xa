@@ -134,10 +134,16 @@ class EditorAgent:
         kinetic_level: str = "",
         transition_preset: str = "",
         feature_card_mode: str = "",
+        guion: str = "",
+        nicho_slug: str = "",
     ) -> dict:
         """Build and persist a Remotion-compatible timeline JSON.
 
         The timeline is a structured artifact consumed by the Remotion renderer.
+        When `guion`/`nicho_slug` are provided, dynamic overlays derived from
+        the script (flash pops, hook kinetic text, lower thirds, etc.) are
+        attached under `dynamicOverlays` so the Remotion compositor can render
+        them above the base scenes.
         """
         timeline = self._build_timeline_payload(
             state=state,
@@ -153,6 +159,8 @@ class EditorAgent:
             kinetic_level=kinetic_level,
             transition_preset=transition_preset,
             feature_card_mode=feature_card_mode,
+            guion=guion,
+            nicho_slug=nicho_slug,
         )
 
         resolved_composition = str(composition_id or "UniversalCommercial").strip() or "UniversalCommercial"
@@ -256,6 +264,8 @@ class EditorAgent:
         kinetic_level: str = "",
         transition_preset: str = "",
         feature_card_mode: str = "",
+        guion: str = "",
+        nicho_slug: str = "",
     ) -> dict:
         """Create timeline payload with scene timing, style and captions."""
         valid_media = [p for p in media_paths if p and p.exists()]
@@ -446,6 +456,12 @@ class EditorAgent:
 
         playbook_slug = str(style_playbook or "").strip()
 
+        dynamic_overlays = self._build_dynamic_overlays(
+            guion=guion,
+            nicho_slug=nicho_slug,
+            audio_duration=audio_duration,
+        )
+
         return {
             "timelineVersion": "1.0",
             "generatedBy": "EditorAgent",
@@ -475,10 +491,72 @@ class EditorAgent:
             "soundtrack": soundtrack,
             "music": music,
             "captions": captions,
+            "dynamicOverlays": dynamic_overlays,
             "titleFontSize": 72,
             "titleWidth": 860,
             "signalLineCount": 18,
         }
+
+    @staticmethod
+    def _build_dynamic_overlays(
+        *,
+        guion: str,
+        nicho_slug: str,
+        audio_duration: float,
+    ) -> list[dict]:
+        """Generate dynamic overlays keyed off the narration script.
+
+        Delegates to `tools.graphics.dynamic_overlays.analyze_guion` so the
+        EditorAgent (V16 PRO multi-agent path) and the classic `_stage_render`
+        path produce identical overlays for the same script. Returns overlays
+        in the Remotion `dynamicOverlays` shape (camelCase, seconds).
+        """
+        if not guion or not str(guion).strip():
+            return []
+        try:
+            from tools.graphics.dynamic_overlays import analyze_guion
+        except Exception as exc:
+            logger.warning(f"dynamic_overlays import failed: {exc}")
+            return []
+
+        try:
+            analysis = analyze_guion(
+                guion,
+                nicho_slug or "general",
+                audio_duration=max(4.0, float(audio_duration or 0.0)),
+            )
+        except Exception as exc:
+            logger.warning(f"dynamic_overlays analysis failed: {exc}")
+            return []
+
+        result: list[dict] = []
+        for ov in analysis.get("overlays", []) or []:
+            try:
+                start_s = float(ov.get("start_time", 0.0) or 0.0)
+                dur_s = float(ov.get("duration", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if dur_s <= 0.0:
+                continue
+            entry = {
+                "type": str(ov.get("type", "")).strip(),
+                "startSeconds": round(max(0.0, start_s), 3),
+                "durationSeconds": round(max(0.12, dur_s), 3),
+                "style": str(ov.get("style", "") or "default"),
+                "position": str(ov.get("position", "") or "center"),
+            }
+            if not entry["type"]:
+                continue
+            text = ov.get("text")
+            if isinstance(text, str) and text.strip():
+                entry["text"] = text.strip()
+            result.append(entry)
+
+        logger.info(
+            f"🎬 EditorAgent overlays: {len(result)} for guion_len={len(guion)} "
+            f"nicho={nicho_slug} duration={audio_duration:.1f}s"
+        )
+        return result
 
     @staticmethod
     def _extract_palette_hexes(palette_text: str) -> list[str]:

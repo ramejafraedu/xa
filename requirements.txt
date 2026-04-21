@@ -54,9 +54,11 @@ google-cloud-aiplatform>=1.60.0
 google-cloud-texttospeech>=2.17.2
 google-auth>=2.36.0
 
-# WhisperX — word-level subtitles (optional, heavy install)
-# pip install whisperx  (requires torch, ~2GB)
-# Uncomment only if you want precise subtitle timing:
+# WhisperX — word-level subtitles (heavy install, torch-based ~2GB)
+# Torch is installed separately by scripts/vps_install_whisperx.sh to pin
+# a CPU-only build that matches the platform (avoids dragging CUDA wheels
+# onto the VPS). The line below is only respected when installing from a
+# machine that already has torch available.
 # whisperx>=3.1
 
 # Trends (optional, may fail due to Google blocks)

@@ -17,6 +17,7 @@ import {
   CinematicRendererProps,
   CinematicTone,
   CinematicVideoScene,
+  DynamicOverlay,
 } from "./cinematic/types";
 import { CaptionOverlay } from "./components/CaptionOverlay";
 import { DynamicOverlayLayer } from "./components/DynamicOverlayLayer";
@@ -44,6 +45,9 @@ function resolveAsset(src: string): string {
 }
 
 const FPS = 30;
+
+/** Full-screen or center bursts that must sit above caption pills so they read visually. */
+const OVERLAY_TYPES_ABOVE_CAPTIONS = new Set<string>(["flash_pop", "question_burst"]);
 const { fontFamily } = loadFont("normal", {
   weights: ["400", "500", "700"],
   subsets: ["latin"],
@@ -389,6 +393,14 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
   captions,
   dynamicOverlays,
 }) => {
+  const allOverlays: DynamicOverlay[] = Array.isArray(dynamicOverlays) ? dynamicOverlays : [];
+  const overlaysBelowCaptions = allOverlays.filter(
+    (o) => !OVERLAY_TYPES_ABOVE_CAPTIONS.has(String(o.type || "")),
+  );
+  const overlaysAboveCaptions = allOverlays.filter((o) =>
+    OVERLAY_TYPES_ABOVE_CAPTIONS.has(String(o.type || "")),
+  );
+
   return (
     <AbsoluteFill style={{ backgroundColor: "#000000" }}>
       {/* Layer 1: Narration audio */}
@@ -436,8 +448,8 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
           )}
         </Sequence>
       ))}
-      {/* Layer 4: Dynamic overlays (hook, lower-thirds, pattern interrupts) */}
-      <DynamicOverlayLayer overlays={dynamicOverlays} fps={FPS} />
+      {/* Layer 4: Dynamic overlays (hook, lower-thirds, etc.) — under captions */}
+      <DynamicOverlayLayer overlays={overlaysBelowCaptions} fps={FPS} />
       {/* Layer 5: TikTok-style word-by-word captions */}
       {captions?.words ? (
         <CaptionOverlay
@@ -449,6 +461,8 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = ({
           backgroundColor={captions.backgroundColor ?? "rgba(0, 0, 0, 0.6)"}
         />
       ) : null}
+      {/* Layer 6: Full-screen / burst overlays above captions so flashes read */}
+      <DynamicOverlayLayer overlays={overlaysAboveCaptions} fps={FPS} />
     </AbsoluteFill>
   );
 };

@@ -184,6 +184,8 @@ class Settings(BaseSettings):
 
     # WhisperX (local word-level subtitles)
     use_whisperx: bool = True
+    # Classic pipeline: try WhisperX alignment before text-based ASS (disable on CPU-only VPS).
+    subtitles_prefer_whisperx: bool = True
 
     # Keep narration/subtitles locked to the canonical script text.
     tts_use_script_text: bool = True

@@ -627,9 +627,10 @@ def _stage_tts(ctx: dict) -> dict:
 
 
 def _stage_subtitles(ctx: dict) -> dict:
-    """Stage 5: Subtitles (script-locked timing)."""
+    """Stage 5: Subtitles aligned to final narration audio (post platform trim)."""
+    from pathlib import Path
+
     from pipeline.tts_engine import get_audio_duration
-    from pipeline.subtitles import generate_timed_ass_from_text
     from pipeline.duration_validator import validate_duration
 
     timer = _stage_timer()
@@ -638,27 +639,54 @@ def _stage_subtitles(ctx: dict) -> dict:
     manifest = ctx["manifest"]
     state = ctx["state"]
     nicho = ctx["nicho"]
-    audio_path = ctx["audio_path"]
+    audio_path = Path(ctx["audio_path"])
     timestamp = ctx["timestamp"]
     guion_tts = ctx["guion_tts"]
 
     ass_path = settings.temp_dir / f"subs_{timestamp}.ass"
-    audio_duration = get_audio_duration(audio_path)
+
+    ctx["audio_path"] = str(audio_path)
+    manifest.audio_path = str(audio_path)
 
     if not state.should_skip_stage(manifest, "subtitles", ass_path):
-        subtitle_events = generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
-        logger.info(f"Script-locked subtitles: {subtitle_events} events")
+        # Enforce platform max on disk before ASS so timings match muxed audio.
+        pre_dur = get_audio_duration(str(audio_path))
+        _, was_trimmed = validate_duration(
+            pre_dur,
+            nicho.plataforma,
+            audio_path,
+            niche_slug=nicho.slug,
+        )
+        audio_duration = get_audio_duration(str(audio_path))
+        if was_trimmed:
+            logger.info(f"Subtitles: audio trimmed before ASS gen — duration={audio_duration:.2f}s")
+        ctx["audio_path"] = str(audio_path)
+        manifest.audio_path = str(audio_path)
+        prefer_whisper = bool(
+            getattr(settings, "subtitles_prefer_whisperx", True)
+            and getattr(settings, "use_whisperx", True)
+        )
+        if prefer_whisper:
+            from pipeline.subtitles_whisperx import generate_subtitles_with_fallback
+
+            subtitle_events = generate_subtitles_with_fallback(
+                audio_path,
+                guion_tts,
+                audio_duration,
+                ass_path,
+                language="es",
+            )
+            logger.info(f"Subtitles (WhisperX path or fallback): {subtitle_events} events")
+        else:
+            from pipeline.subtitles import generate_timed_ass_from_text
+
+            subtitle_events = generate_timed_ass_from_text(guion_tts, audio_duration, ass_path)
+            logger.info(f"Subtitles (text-proportional only): {subtitle_events} events")
+    else:
+        audio_duration = get_audio_duration(str(audio_path))
 
     manifest.subs_path = str(ass_path)
     manifest.duration_seconds = audio_duration
-
-    # Duration validation
-    audio_duration, was_trimmed = validate_duration(
-        audio_duration, nicho.plataforma, audio_path,
-        niche_slug=nicho.slug,
-    )
-    if was_trimmed:
-        manifest.duration_seconds = audio_duration
 
     ctx["ass_path"] = str(ass_path)
     ctx["audio_duration"] = audio_duration
@@ -737,6 +765,9 @@ def _stage_render(ctx: dict) -> dict:
     manifest = ctx["manifest"]
     nicho_slug = ctx["nicho_slug"]
     guion = ctx.get("guion", "") or getattr(manifest, "guion", "") or ""
+    guion_for_overlays = (
+        (guion or ctx.get("guion_tts") or getattr(manifest, "guion", "") or "").strip()
+    )
     audio_path = str(ctx.get("audio_path", "") or "")
     music_path = str(ctx.get("music_path", "") or "")
     duration = float(ctx.get("duration", ctx.get("audio_duration", 30.0)) or 30.0)
@@ -764,7 +795,13 @@ def _stage_render(ctx: dict) -> dict:
         music_path=music_path,
         fx_preset="energetic",
     )
-    engine.schema = enrich_schema_with_overlays(engine.schema, guion, nicho_slug)
+    engine.schema = enrich_schema_with_overlays(
+        engine.schema, guion_for_overlays, nicho_slug, audio_duration=duration
+    )
+    logger.info(
+        f"Render: dynamic overlays from guion_len={len(guion_for_overlays)} "
+        f"nicho={nicho_slug} duration={duration:.2f}s"
+    )
 
     schema_path = settings.output_dir / f"schema_{manifest.job_id}.json"
     engine.export_schema(str(schema_path))

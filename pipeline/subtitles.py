@@ -102,14 +102,32 @@ def vtt_to_ass(vtt_path: Path, ass_path: Path) -> int:
     return len(events)
 
 
+def _tokenize_subtitle_words(text: str) -> list[str]:
+    """Non-empty tokens in order; uppercased for on-screen style."""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    return [m.group(0).upper() for m in re.finditer(r"\S+", raw)]
+
+
+def _word_time_weights(words: list[str]) -> list[float]:
+    """Longer tokens get more time (closer to natural speech pacing heuristic)."""
+    weights: list[float] = []
+    for w in words:
+        core = re.sub(r"^[^\wÁÉÍÓÚÑÜáéíóúñü]+|[^\wÁÉÍÓÚÑÜáéíóúñü]+$", "", w)
+        ln = max(1, len(core))
+        weights.append(float(ln))
+    return weights
+
+
 def generate_timed_ass_from_text(
     text: str,
     audio_duration: float,
     ass_path: Path,
 ) -> int:
-    """Generate ASS subtitles from plain text when no VTT is available.
+    """Generate ASS from plain text: proportional word timing + 4-word karaoke lines.
 
-    Splits text into chunks and distributes evenly across audio duration.
+    Time budget is split by character-weighted tokens (not equal per word).
     """
     header = (
         "[Script Info]\n"
@@ -124,32 +142,54 @@ def generate_timed_ass_from_text(
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Default,Arial Black,90,"
+        "Style: Default,Arial Black,96,"
         "&H00FFFFFF,&H0000D7FF,&H00000000,&H99000000,"
-        "-1,0,0,0,100,100,2,0,1,4,2,2,80,80,220,1\n"
+        "-1,0,0,0,100,100,2,0,1,5,3,2,60,60,420,1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
-    words = text.upper().split()
+    words = _tokenize_subtitle_words(text)
     if not words:
         ass_path.write_text(header, encoding="utf-8")
         return 0
 
-    chunk_size = 4
-    events = []
-    time_per_word = audio_duration / len(words)
-    wdur_cs = max(6, int(round(time_per_word * 100)))
+    dur = max(0.5, float(audio_duration or 0.0))
+    weights = _word_time_weights(words)
+    total_w = sum(weights) or float(len(words))
+    # Per-word start/end in seconds
+    starts: list[float] = []
+    ends: list[float] = []
+    t = 0.0
+    for i, w in enumerate(words):
+        wlen = weights[i]
+        span = dur * (wlen / total_w)
+        span = max(span, 0.06)
+        starts.append(t)
+        ends.append(min(dur, t + span))
+        t = ends[-1]
+    if ends and ends[-1] < dur - 0.02:
+        scale = dur / max(ends[-1], 0.01)
+        starts = [min(dur, s * scale) for s in starts]
+        ends = [min(dur, e * scale) for e in ends]
+        for k in range(1, len(starts)):
+            starts[k] = max(starts[k], ends[k - 1])
 
+    chunk_size = 4
+    events: list[str] = []
     for i in range(0, len(words), chunk_size):
-        chunk = words[i : i + chunk_size]
-        c_start = i * time_per_word
-        c_end = min((i + len(chunk)) * time_per_word, audio_duration)
+        chunk_words = words[i : i + chunk_size]
+        idx_slice = slice(i, i + len(chunk_words))
+        c_start = starts[idx_slice.start]
+        c_end = ends[idx_slice.stop - 1]
 
         base = _subtitle_base_tag()
         line = base
-        for w in chunk:
+        for j, w in enumerate(chunk_words):
+            wi = i + j
+            word_dur = max(0.08, ends[wi] - starts[wi])
+            wdur_cs = max(6, int(round(word_dur * 100)))
             line += r"{\k" + str(wdur_cs) + "}" + w + " "
         line = _clean_subtitle_artifacts(line)
 
@@ -158,7 +198,7 @@ def generate_timed_ass_from_text(
         )
 
     ass_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
-    logger.info(f"ASS from text: {len(events)} events for {audio_duration:.1f}s")
+    logger.info(f"ASS from text (proportional): {len(events)} events for {dur:.1f}s")
     return len(events)
 
 
@@ -181,10 +221,10 @@ def _to_ass_time(sec: float) -> str:
 
 
 def _subtitle_base_tag() -> str:
-    """Animated subtitle style tag used across generators."""
+    """Animated subtitle style tag used across generators (9:16 mobile-first)."""
     return (
-        r"{\an2\bord4\blur3\1c&H00FFFFFF&\3c&H000000&\fs90"
-        r"\fad(100,120)\t(0,180,\fscx108\fscy108)\t(180,420,\fscx100\fscy100)}"
+        r"{\an2\bord5\blur2\shad3\1c&H00FFFFFF&\3c&H000000&\4c&H99000000&\fs96"
+        r"\fad(80,100)\t(0,160,\fscx107\fscy107)\t(160,380,\fscx100\fscy100)}"
     )
 
 

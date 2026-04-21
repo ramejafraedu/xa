@@ -237,8 +237,27 @@ def schema_to_remotion_props(
         normalized = _normalize_overlay(overlay)
         if normalized:
             dynamic_overlays.append(normalized)
+
+    audio_cap = float(props.get("audioDurationInSeconds") or 0.0)
+    if dynamic_overlays and audio_cap > 0.2:
+        clamped: list[dict] = []
+        for o in dynamic_overlays:
+            st = float(o.get("startSeconds", 0.0) or 0.0)
+            dur = float(o.get("durationSeconds", 0.0) or 0.0)
+            if st >= audio_cap - 0.04:
+                continue
+            if st + dur > audio_cap:
+                dur = max(0.12, audio_cap - st - 0.02)
+            o["startSeconds"] = round(max(0.0, st), 3)
+            o["durationSeconds"] = round(max(0.12, dur), 3)
+            clamped.append(o)
+        dynamic_overlays = clamped
+
     if dynamic_overlays:
         props["dynamicOverlays"] = dynamic_overlays
-        logger.info(f"schema_to_remotion_props: mapped {len(dynamic_overlays)} dynamic overlays")
+        logger.info(
+            f"schema_to_remotion_props: {len(dynamic_overlays)} dynamic overlays "
+            f"(audio_cap={audio_cap:.2f}s)"
+        )
 
     return props

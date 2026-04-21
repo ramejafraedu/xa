@@ -27,7 +27,13 @@ def generate_ass_whisperx(
     ass_path: Path,
     language: str = "es",
 ) -> int:
-    """Generate ASS subtitles using WhisperX word-level alignment.
+    """Generate ASS subtitles using faster-whisper word-level timings.
+
+    Historically this function used the `whisperx` package, but whisperx
+    3.1.5 hard-codes a VAD model URL on an S3 bucket that now returns 403.
+    `faster-whisper` already emits word-level timestamps directly, so we
+    use it as the primary provider and keep the name `whisperx` for
+    backwards compatibility with the rest of the pipeline.
 
     Args:
         audio_path: Path to audio file (MP3, WAV).
@@ -41,21 +47,20 @@ def generate_ass_whisperx(
         logger.debug("WhisperX disabled in config")
         return 0
 
-    # Idempotency check
     if ass_path.exists() and ass_path.stat().st_size > 100:
         logger.debug(f"ASS already exists: {ass_path.name}")
-        return 1  # Non-zero means "already done"
+        return 1
 
     if not audio_path.exists():
         logger.warning(f"Audio file not found: {audio_path}")
         return 0
 
     try:
-        import whisperx
+        from faster_whisper import WhisperModel
         import torch
     except ImportError:
         logger.warning(
-            "WhisperX not installed. Run: pip install whisperx torch\n"
+            "faster-whisper not installed. Run: pip install faster-whisper torch\n"
             "Falling back to character-estimation subtitles."
         )
         return 0
@@ -63,40 +68,54 @@ def generate_ass_whisperx(
     try:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         compute_type = "float16" if device == "cuda" else "int8"
+        model_size = getattr(settings, "whisper_model_size", "base") or "base"
 
-        logger.info(f"📝 WhisperX: Transcribing {audio_path.name} on {device}...")
+        logger.info(
+            f"📝 faster-whisper: Transcribing {audio_path.name} "
+            f"(model={model_size}, device={device}, language={language})"
+        )
 
-        # Step 1: Transcribe
-        model = whisperx.load_model(
-            "base",
-            device=device,
-            compute_type=compute_type,
+        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        segments_iter, info = model.transcribe(
+            str(audio_path),
             language=language,
-        )
-        audio = whisperx.load_audio(str(audio_path))
-        result = model.transcribe(audio, batch_size=8, language=language)
-
-        # Step 2: Word-level alignment
-        model_a, metadata = whisperx.load_align_model(
-            language_code=language,
-            device=device,
-        )
-        result = whisperx.align(
-            result["segments"],
-            model_a,
-            metadata,
-            audio,
-            device,
-            return_char_alignments=False,
+            beam_size=5,
+            word_timestamps=True,
+            vad_filter=False,
+            condition_on_previous_text=False,
         )
 
-        # Step 3: Convert to ASS
-        events = _whisperx_to_ass(result, ass_path)
-        logger.info(f"✅ WhisperX ASS: {events} events with word-level timing")
+        segments: list[dict] = []
+        for seg in segments_iter:
+            seg_words: list[dict] = []
+            for w in (seg.words or []):
+                seg_words.append({
+                    "word": str(getattr(w, "word", "") or "").strip(),
+                    "start": float(getattr(w, "start", 0.0) or 0.0),
+                    "end": float(getattr(w, "end", 0.0) or 0.0),
+                })
+            if not seg_words:
+                continue
+            segments.append({
+                "start": float(getattr(seg, "start", 0.0) or 0.0),
+                "end": float(getattr(seg, "end", 0.0) or 0.0),
+                "text": str(getattr(seg, "text", "") or "").strip(),
+                "words": seg_words,
+            })
+
+        if not segments:
+            logger.warning("faster-whisper returned no segments with words")
+            return 0
+
+        events = _whisperx_to_ass({"segments": segments}, ass_path)
+        logger.info(
+            f"✅ faster-whisper ASS: {events} events, language={info.language}, "
+            f"duration={info.duration:.2f}s"
+        )
         return events
 
     except Exception as e:
-        logger.warning(f"WhisperX failed: {e}")
+        logger.warning(f"faster-whisper failed: {e}")
         return 0
 
 
@@ -115,9 +134,9 @@ def _whisperx_to_ass(result: dict, ass_path: Path) -> int:
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Default,Arial Rounded MT Bold,90,"
+        "Style: Default,Arial Black,96,"
         "&H00FFFFFF,&H0000D7FF,&H00000000,&H99000000,"
-        "-1,0,0,0,100,100,2,0,1,4,2,2,80,80,220,1\n"
+        "-1,0,0,0,100,100,2,0,1,5,3,2,60,60,420,1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -260,7 +279,7 @@ def _as_float(value: object) -> Optional[float]:
 def _subtitle_base_tag() -> str:
     """Animated subtitle style tag used across generators."""
     return (
-        r"{\an2\bord4\blur3\1c&H00FFFFFF&\3c&H000000&\fs90"
+        r"{\an2\bord5\blur2\shad3\1c&H00FFFFFF&\3c&H000000&\4c&H99000000&\fs96"
         r"\fad(100,120)\t(0,180,\fscx108\fscy108)\t(180,420,\fscx100\fscy100)}"
     )
 

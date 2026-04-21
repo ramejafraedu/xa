@@ -52,6 +52,20 @@ $sourceDir = $PSScriptRoot
 # Nombre unico evita choque si otro deploy o tar.exe aun tiene el archivo abierto
 $zipFile = Join-Path $TEMP_DIR "vf_deploy_$deployStamp.tar.gz"
 
+# remotion-composer/public/workspace a veces es junction/symlink (p. ej. OneDrive) apuntando a ruta inexistente:
+# tar.exe falla con "Cannot stat". Solo si es reparse point: quitar junction y crear directorio vacío real.
+$wsPub = Join-Path $sourceDir "remotion-composer\public\workspace"
+if (Test-Path $wsPub) {
+    $attrs = (Get-Item $wsPub -Force).Attributes
+    if ($attrs -band [System.IO.FileAttributes]::ReparsePoint) {
+        Write-Host "⚠️  Junction en public/workspace → carpeta vacía para tar (solo empaquetado)" -ForegroundColor Yellow
+        Remove-Item $wsPub -Force -Recurse -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Path $wsPub -Force | Out-Null
+    }
+} else {
+    New-Item -ItemType Directory -Path $wsPub -Force | Out-Null
+}
+
 # Crear lista de exclusiones para tar
 $excludeFile = "$TEMP_DIR\exclude.txt"
 @(
@@ -60,7 +74,7 @@ $excludeFile = "$TEMP_DIR\exclude.txt"
     '__pycache__', '*.pyc', '*.pyo', '*.pyd',
     '.pytest_cache', '*.egg-info', 'dist', 'build', '.windsurf',
     'OpenMontage-main', '*.tar.gz', '*.tgz', '*.zip',
-    'logs', 'temp', 'outputs', 'workspace',
+    'logs', 'temp', 'outputs',
     'node_modules', '.next', '.turbo', '.cache',
     'remotion-composer/out', 'remotion-composer/.remotion',
     '*.mp4', '*.mov', '*.webm',
@@ -69,7 +83,12 @@ $excludeFile = "$TEMP_DIR\exclude.txt"
 ) | Set-Content $excludeFile
 
 # Comprimir usando tar (más rápido y soporta exclusiones reales en Windows 10/11)
-tar.exe -czf $zipFile -X $excludeFile -C $sourceDir .
+$tarOut = & tar.exe -czf $zipFile -X $excludeFile -C $sourceDir . 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ Error en tar.exe (exit $LASTEXITCODE): $tarOut" -ForegroundColor Red
+    if (Test-Path $excludeFile) { Remove-Item $excludeFile -Force -ErrorAction SilentlyContinue }
+    exit 1
+}
 
 # Verificar
 if (-not (Test-Path $zipFile)) {
@@ -105,6 +124,8 @@ fi
 # Extraer nuevo codigo (el tar excluye .env y credenciales)
 tar -xzf /tmp/vf_deploy_incoming.tar.gz -C $REMOTE_DIR
 rm -f /tmp/vf_deploy_incoming.tar.gz
+
+mkdir -p $REMOTE_DIR/remotion-composer/public/workspace
 
 # Permisos
 chmod +x setup_ubuntu.sh 2>/dev/null || true

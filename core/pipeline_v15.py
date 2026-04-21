@@ -1759,6 +1759,12 @@ def run_pipeline_v15(
                 render_inputs = clips if clips else images
                 
             timeline_path = settings.temp_dir / f"timeline_{timestamp}.json"
+            overlays_guion_text = (
+                guion_tts
+                or " ".join(filter(None, [manifest.gancho, manifest.guion, manifest.cta]))
+                or story.scene_texts_joined()
+                or ""
+            )
             timeline_payload = editor_agent.build_timeline_json(
                 state=story,
                 media_paths=render_inputs,
@@ -1790,6 +1796,8 @@ def run_pipeline_v15(
                     stage_runtime_overrides.get("remotion_feature_card_mode", settings.remotion_feature_card_mode)
                     or ""
                 ),
+                guion=overlays_guion_text,
+                nicho_slug=nicho_slug,
             )
             incremental_eml_seed = editor_agent.build_incremental_eml_seed(
                 state=story,
@@ -2014,6 +2022,8 @@ def run_pipeline_v15(
                             music_path=music_path if music_path and music_path.exists() else None,
                             composition_id=requested_remotion_composition,
                             style_playbook=manifest.style_playbook or "",
+                            guion=overlays_guion_text,
+                            nicho_slug=nicho_slug,
                             visual_theme=str(
                                 stage_runtime_overrides.get("remotion_theme", settings.remotion_theme)
                                 or ""

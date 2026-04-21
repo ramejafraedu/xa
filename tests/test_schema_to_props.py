@@ -125,6 +125,34 @@ def test_dynamic_overlays_are_normalized(minimal_schema: dict):
     flash = next(o for o in overlays if o["type"] == "flash_pop")
     assert flash["style"] == "white_flash"
     assert flash["durationSeconds"] > 0
+    for o in overlays:
+        assert o["startSeconds"] + o["durationSeconds"] <= 6.0 + 0.02
+
+
+def test_dynamic_overlays_clamped_or_dropped_past_audio_cap(minimal_schema: dict):
+    """Overlays must not extend past audioDurationInSeconds; late starts are dropped."""
+    minimal_schema = dict(minimal_schema)
+    minimal_schema["timeline"] = [
+        {
+            "type": "hook_kinetic",
+            "text": "Corta",
+            "start_time": 0.2,
+            "duration": 4.0,
+            "style": "bold_impact",
+            "position": "center",
+        },
+        {
+            "type": "flash_pop",
+            "start_time": 9.0,
+            "duration": 0.35,
+            "style": "white_flash",
+        },
+    ]
+    props = schema_to_remotion_props(minimal_schema, audio_duration=5.5)
+    overlays = props.get("dynamicOverlays") or []
+    assert not any(o["type"] == "flash_pop" for o in overlays)
+    hook = next(o for o in overlays if o["type"] == "hook_kinetic")
+    assert hook["startSeconds"] + hook["durationSeconds"] <= 5.5 + 0.02
 
 
 def test_fallback_title_when_no_scenes():

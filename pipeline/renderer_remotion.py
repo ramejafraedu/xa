@@ -1108,6 +1108,10 @@ def _normalize_timeline_props(
             overlays_clean.append(overlay)
         if overlays_clean:
             props["dynamicOverlays"] = overlays_clean
+            logger.info(
+                f"Remotion normalize: {len(overlays_clean)} dynamicOverlays "
+                f"(composition={composition_id})"
+            )
         else:
             props.pop("dynamicOverlays", None)
     else:
