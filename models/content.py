@@ -405,7 +405,7 @@ class JobManifest(BaseModel):
     feature_flags: dict[str, bool] = Field(default_factory=dict)
 
     # Stage-aware governance (dual-write compatible with checkpoint model)
-    pipeline_type: str = "v15"
+    pipeline_type: str = "v16"
     checkpoint_policy: str = "guided"
     human_approval_required: bool = False
     human_approved: bool = False

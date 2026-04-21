@@ -183,7 +183,7 @@ class StateManager:
         checkpoint = {
             "version": "1.0",
             "project_id": manifest.job_id,
-            "pipeline_type": manifest.pipeline_type or "v15",
+            "pipeline_type": manifest.pipeline_type or "v16",
             "stage": stage,
             "status": status,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -223,7 +223,7 @@ class StateManager:
                 stage=stage,
                 artifacts=artifacts,
                 status=status,
-                pipeline_type=manifest.pipeline_type or "v15",
+                pipeline_type=manifest.pipeline_type or "v16",
                 style_playbook=manifest.style_playbook or None,
                 metadata={**metadata, "elapsed_seconds": round(float(elapsed or 0.0), 2)},
             )

@@ -394,7 +394,7 @@ def run_pipeline_v15(
     )
     manifest.execution_mode = settings.execution_mode_label()
     manifest.feature_flags = settings.active_feature_flags()
-    manifest.pipeline_type = "v15"
+    manifest.pipeline_type = "v16"
     manifest.checkpoint_policy = "guided" if mode == DirectorMode.INTERACTIVE else "auto"
     manifest.human_approval_required = mode == DirectorMode.INTERACTIVE
     manifest.human_approved = mode != DirectorMode.INTERACTIVE
@@ -979,7 +979,7 @@ def run_pipeline_v15(
     with _progress_scope() as progress:
         total_stages = 5 if dry_run else 12
         main_task = progress.add_task(
-            f"[cyan]🎬 V15 {nicho_slug.upper()} Pipeline", total=total_stages,
+            f"[cyan]🎬 V16 PRO · {nicho_slug.upper()} (multi-agent)", total=total_stages,
         )
 
         try:
@@ -2507,7 +2507,7 @@ def run_pipeline_v15(
                     "hashtags": manifest.publish_hashtags_text,
                     "comment": manifest.publish_comment,
                     "cover_path": manifest.publish_cover_path,
-                    "version": "V15_PRO",
+                    "version": "V16_PRO",
                     "feedback_iterations": story.feedback_iterations,
                     "scenes_count": len(story.scenes),
                 })
@@ -2595,7 +2595,7 @@ def run_pipeline_v15(
             state_mgr.archive_manifest(manifest, archive_dir)
 
         except Exception as e:
-            logger.exception(f"V15 Pipeline crashed: {e}")
+            logger.exception(f"V16 PRO pipeline (multi-agent) crashed: {e}")
             for running_stage in list(stage_clock.keys()):
                 _stage_end(running_stage, "error", str(e)[:180])
             _add_decision("pipeline", "Pipeline crashed", str(e)[:220], severity="error")
@@ -2652,7 +2652,7 @@ def _print_v15_summary(manifest: JobManifest, story: StoryState):
     from rich.table import Table
 
     color = "green" if manifest.status == "success" else "red" if manifest.status == "error" else "yellow"
-    table = Table(title=f"[{color}]V15 PRO — {manifest.status.upper()}[/{color}]")
+    table = Table(title=f"[{color}]V16 PRO — {manifest.status.upper()}[/{color}]")
     table.add_column("Field", style="bold")
     table.add_column("Value")
 

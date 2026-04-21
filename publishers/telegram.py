@@ -18,8 +18,10 @@ _telegram_cooldown_until = 0.0
 
 def _pipeline_label(result: PipelineResult) -> str:
     """Return a stable human label for pipeline version in notifications."""
-    label = str(getattr(result, "pipeline_type", "") or "").strip().upper()
-    return label if label else "V14"
+    raw = str(getattr(result, "pipeline_type", "") or "").strip().lower()
+    if raw in ("", "v14", "v15", "v16"):
+        return "V16 PRO"
+    return raw.upper()
 
 
 def _public_url_line() -> str:

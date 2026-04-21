@@ -37,13 +37,13 @@ def _run_niche(nicho_slug: str):
             run_pipeline(nicho_slug)
     except Exception as e:
         if settings.scheduler_use_v15:
-            logger.exception(f"Scheduled V15 run failed for {nicho_slug}, trying V14 fallback: {e}")
+            logger.exception(f"Scheduled V16 PRO multi-agent run failed for {nicho_slug}, trying classic fallback: {e}")
             try:
                 from video_factory import run_pipeline
                 run_pipeline(nicho_slug)
                 return
             except Exception as v14_error:
-                logger.exception(f"Scheduled V14 fallback also failed for {nicho_slug}: {v14_error}")
+                logger.exception(f"Scheduled classic fallback also failed for {nicho_slug}: {v14_error}")
         else:
             logger.exception(f"Scheduled run failed for {nicho_slug}: {e}")
 

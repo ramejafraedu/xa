@@ -1,24 +1,22 @@
-"""Video Factory V15 PRO — Director-Based Multi-Agent Video Production.
+"""Video Factory V16 PRO — Director-Based Multi-Agent Video Production.
 
 Usage:
-    python video_factory.py --test              # Quick test V15 (finanzas, 1 video)
-    python video_factory.py --test curiosidades # Quick test V15 with specific niche
+    python video_factory.py --test              # Quick test (finanzas, 1 video)
+    python video_factory.py --test curiosidades # Quick test with specific niche
     python video_factory.py --director finanzas # Interactive mode (approve each stage)
-    python video_factory.py --v15 finanzas      # V15 autonomous (multi-agent + coherence)
-    python video_factory.py finanzas            # V14 classic mode (backward compat)
-    python video_factory.py --all-now           # Run all 5 nichos (V15)
-    python video_factory.py --schedule          # Start scheduler (V15 if SCHEDULER_USE_V15=true)
+    python video_factory.py --v15 finanzas      # Multi-agent autonomous (core.pipeline_v15)
+    python video_factory.py finanzas            # V16 PRO classic full stack (default)
+    python video_factory.py --all-now           # Run all nichos now
+    python video_factory.py --schedule          # Start scheduler (multi-agent if SCHEDULER_USE_V15=true)
     python video_factory.py --dry-run finanzas  # Content gen + QA only, no render
     python video_factory.py --resume JOB_ID     # Resume a crashed job
     python video_factory.py --render-only JOB_ID # Re-render from existing assets
     python video_factory.py --publish-only JOB_ID # Re-publish an already-rendered video
 
-V15 UPGRADE:
-  - Multi-agent system: Research → Script → Scene → Assets → Editor
-  - StoryState: global narrative memory for coherence
-  - Director: human-in-the-loop checkpoints (--director mode)
-  - Feedback Loop: AI quality review with auto-regeneration
-  - V14 pipeline preserved as fallback
+V16 PRO:
+  - Default CLI path: classic pipeline (content → QA → TTS → media → Remotion/FFmpeg → publish)
+  - Optional ``--v15`` / ``--director``: multi-agent pipeline (core.pipeline_v15)
+  - StateManager checkpoints, OpenMontage, dynamic overlays, dashboard metrics
 
 MODULE CONTRACT:
   Entry point → orchestrates all pipeline modules → produces final video + manifest
@@ -134,7 +132,7 @@ from state_manager import StateManager
 console = Console()
 app = typer.Typer(
     name="video-factory",
-    help="🎬 Video Factory V15 PRO — Director-Based Multi-Agent Video Production",
+    help="🎬 Video Factory V16 PRO — Director-Based Multi-Agent Video Production",
     add_completion=False,
 )
 
@@ -502,7 +500,7 @@ def _stage_quality_gate(ctx: dict) -> dict:
     manifest.publish_hashtags_text = publish_pkg["hashtags_text"]
     manifest.publish_comment = publish_pkg["comment"]
 
-    # ── V16.1: Mejora automática de metadatos con TitleGeneratorAgent ─────
+    # ── V16 PRO: metadatos SEO con TitleGeneratorAgent ─────
     # Enriquece títulos, descripciones y hashtags usando Gemini Flash + SEO
     try:
         from agents.title_generator import generate_metadata
@@ -525,9 +523,9 @@ def _stage_quality_gate(ctx: dict) -> dict:
         manifest.seo_title_variants = meta_seo.get("titulos", [])
         manifest.seo_description_variants = meta_seo.get("descripciones", [])
         manifest.seo_hashtags = meta_seo.get("hashtags", [])
-        logger.info(f"V16.1 TitleGenerator: título SEO → '{manifest.publish_title[:60]}'")
+        logger.info(f"V16 PRO TitleGenerator: título SEO → '{manifest.publish_title[:60]}'")
     except Exception as e:
-        logger.warning(f"V16.1 TitleGenerator: falló (no bloqueante) — {e}")
+        logger.warning(f"V16 PRO TitleGenerator: falló (no bloqueante) — {e}")
     manifest.quality_score = quality.quality_score
     manifest.viral_score = content.viral_score
     manifest.hook_score = quality.block_scores.hook
@@ -1023,8 +1021,8 @@ def run_pipeline(
             model_version=settings.inference_model,
         )
 
-    # V14 entrypoint should explicitly tag manifests as v14 to avoid alert confusion.
-    manifest.pipeline_type = "v14"
+    # Etiqueta de auditoría: pipeline clásico V16 PRO (run_pipeline).
+    manifest.pipeline_type = "v16"
 
     # Assign experiment metadata so downstream analytics can compare variants.
     try:
@@ -1175,34 +1173,39 @@ def _print_summary(manifest: JobManifest):
 def run(
     niche: str = typer.Argument(None, help="Niche: finanzas, historia, curiosidades, historias_reddit, ia_herramientas"),
     test: bool = typer.Option(False, "--test", help="Quick test (default: finanzas, or specify niche)"),
-    all_now: bool = typer.Option(False, "--all-now", help="Run all 5 nichos immediately (V15)"),
+    all_now: bool = typer.Option(False, "--all-now", help="Run all nichos immediately (V16 PRO)"),
     schedule: bool = typer.Option(False, "--schedule", help="Start 24/7 scheduler"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Content gen + QA only, no render"),
     resume: str = typer.Option("", "--resume", help="Resume a crashed job by JOB_ID"),
     render_only: str = typer.Option("", "--render-only", help="Re-render from existing assets by JOB_ID"),
     publish_only: str = typer.Option("", "--publish-only", help="Re-publish already-rendered video by JOB_ID"),
-    reference_url: str = typer.Option("", "--reference-url", help="Reference URL to guide script/scene generation (V15)"),
+    reference_url: str = typer.Option("", "--reference-url", help="Reference URL to guide script/scene generation"),
     manual_ideas: str = typer.Option("", "--manual-ideas", help="Ideas manuales prioritarias (usa | o saltos de linea)"),
     duration_mins: float = typer.Option(0.0, "--duration-mins", help="Duración objetivo en minutos (0=auto). Hasta 3 min en vertical."),
-    # ── V15 PRO flags ──
-    director: bool = typer.Option(False, "--director", help="🎬 V15 Interactive mode (approve each stage)"),
-    v15: bool = typer.Option(False, "--v15", help="🚀 V15 Autonomous mode (multi-agent + coherence)"),
-    v14: bool = typer.Option(False, "--v14", help="⚙️ Force V14 classic pipeline"),
+    # ── V16 PRO CLI flags (multi-agent path = --v15 / --director; classic = default) ──
+    director: bool = typer.Option(False, "--director", help="🎬 V16 PRO · Director (interactive, multi-agent path)"),
+    v15: bool = typer.Option(False, "--v15", help="🚀 V16 PRO · Autonomous multi-agent (core.pipeline_v15)"),
+    v14: bool = typer.Option(False, "--v14", help="⚙️ Force classic CLI path (same as default; disables multi-agent for this run)"),
 ):
-    """🎬 Video Factory V15 PRO — Director-Based Multi-Agent Video Production"""
+    """🎬 Video Factory V16 PRO — Director-Based Multi-Agent Video Production"""
     _setup_logging()
 
     # Determine version & mode
     use_v15 = director or v15 or test or all_now or (schedule and settings.scheduler_use_v15)
     if v14:
-        use_v15 = False  # Explicit V14 override
+        use_v15 = False  # Classic path only (no multi-agent entry)
 
-    version_label = "V15 PRO" if use_v15 else "V14"
-    mode_label = "Director (Interactive)" if director else "Autonomous" if use_v15 else "Classic"
+    mode_label = (
+        "Director · multi-agent"
+        if director
+        else "Autonomous · multi-agent"
+        if use_v15
+        else "Classic · full stack"
+    )
 
     console.print(Panel(
-        f"[bold magenta]🎬 Video Factory {version_label}[/bold magenta]\n"
-        f"[dim]{mode_label} Mode[/dim]",
+        "[bold magenta]🎬 Video Factory V16 PRO[/bold magenta]\n"
+        f"[dim]{mode_label}[/dim]",
         border_style="magenta",
     ))
 
@@ -1210,7 +1213,7 @@ def run(
         console.print("[red]❌ Preflight checks failed.[/red]")
         raise typer.Exit(1)
 
-    # --resume: resume a crashed job (V14 only for now)
+    # --resume: resume a crashed job (classic V16 PRO path)
     if resume:
         console.print(f"\n[cyan]🔄 Resuming job: {resume}[/cyan]\n")
         state = StateManager(settings.temp_dir)
@@ -1255,7 +1258,7 @@ def run(
             raise typer.Exit(1)
 
         if use_v15:
-            console.print(f"\n[yellow]🧪 TEST MODE — V15 PRO ({test_niche})[/yellow]\n")
+            console.print(f"\n[yellow]🧪 TEST MODE — V16 PRO · multi-agent ({test_niche})[/yellow]\n")
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
             mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
@@ -1267,12 +1270,12 @@ def run(
                 runtime_overrides={"target_duration_mins": duration_mins} if duration_mins > 0 else None,
             )
         else:
-            console.print(f"\n[yellow]🧪 TEST MODE — V14 Classic ({test_niche})[/yellow]\n")
+            console.print(f"\n[yellow]🧪 TEST MODE — V16 PRO · classic ({test_niche})[/yellow]\n")
             run_pipeline(test_niche, manual_ideas=manual_ideas)
 
     elif dry_run and niche:
         if use_v15:
-            console.print(f"\n[yellow]🏜️ DRY RUN V15 — {niche}[/yellow]\n")
+            console.print(f"\n[yellow]🏜️ DRY RUN V16 PRO · multi-agent — {niche}[/yellow]\n")
             from core.pipeline_v15 import run_pipeline_v15
             from core.director import DirectorMode
             mode = DirectorMode.INTERACTIVE if director else DirectorMode.AUTO
@@ -1285,11 +1288,11 @@ def run(
                 runtime_overrides={"target_duration_mins": duration_mins} if duration_mins > 0 else None,
             )
         else:
-            console.print(f"\n[yellow]🏜️ DRY RUN V14 — {niche}[/yellow]\n")
+            console.print(f"\n[yellow]🏜️ DRY RUN V16 PRO · classic — {niche}[/yellow]\n")
             run_pipeline(niche, dry_run=True, manual_ideas=manual_ideas)
 
     elif all_now:
-        console.print(f"\n[cyan]🚀 Running all 5 nichos ({version_label})...[/cyan]\n")
+        console.print(f"\n[cyan]🚀 Running all nichos (V16 PRO)…[/cyan]\n")
         for slug in NICHOS:
             console.print(f"\n{'='*60}")
             console.print(f"[bold]{slug.upper()}[/bold]")
@@ -1312,12 +1315,12 @@ def run(
         start_scheduler()
 
     elif director and niche:
-        # V15 Interactive mode
+        # V16 PRO · Director (multi-agent)
         if niche not in NICHOS:
             console.print(f"[red]❌ Unknown niche: {niche}[/red]")
             console.print(f"Available: {', '.join(NICHOS.keys())}")
             raise typer.Exit(1)
-        console.print(f"\n[cyan]🎬 V15 DIRECTOR MODE — {niche}[/cyan]")
+        console.print(f"\n[cyan]🎬 V16 PRO · DIRECTOR — {niche}[/cyan]")
         console.print("[dim]You'll approve/edit at each stage[/dim]\n")
         from core.pipeline_v15 import run_pipeline_v15
         from core.director import DirectorMode
@@ -1330,12 +1333,12 @@ def run(
         )
 
     elif v15 and niche:
-        # V15 Autonomous mode
+        # V16 PRO · Autonomous multi-agent
         if niche not in NICHOS:
             console.print(f"[red]❌ Unknown niche: {niche}[/red]")
             console.print(f"Available: {', '.join(NICHOS.keys())}")
             raise typer.Exit(1)
-        console.print(f"\n[cyan]🚀 V15 AUTONOMOUS — {niche}[/cyan]\n")
+        console.print(f"\n[cyan]🚀 V16 PRO · AUTONOMOUS — {niche}[/cyan]\n")
         from core.pipeline_v15 import run_pipeline_v15
         from core.director import DirectorMode
         run_pipeline_v15(
@@ -1347,7 +1350,7 @@ def run(
         )
 
     elif niche:
-        # Default: V14 classic (backward compatible)
+        # Default: V16 PRO classic full stack
         if niche not in NICHOS:
             console.print(f"[red]❌ Unknown niche: {niche}[/red]")
             console.print(f"Available: {', '.join(NICHOS.keys())}")

@@ -1,4 +1,4 @@
-"""Video Factory V16 — Web Dashboard Server (Enhanced).
+"""Video Factory V16 PRO — Web Dashboard Server (Enhanced).
 
 Serves a premium dark-mode dashboard at http://localhost:8000
 with real-time log streaming, system resource monitoring, job details,
@@ -84,11 +84,11 @@ def _log_sink(message):
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Video Factory V16", docs_url="/api/docs")
+app = FastAPI(title="Video Factory V16 PRO", docs_url="/api/docs")
 
-# --- V16.1 PRO dashboard metadata ---
+# --- V16 PRO dashboard metadata ---
 APP_VERSION = "16.1.0"
-APP_CODENAME = "PRO Premium"
+APP_CODENAME = "V16 PRO"
 _APP_STARTED_AT = time.time()
 
 # Static files
@@ -2994,7 +2994,7 @@ def _run_pipeline_bg(
             runtime_overrides["target_duration_mins"] = target_duration_mins
         if video_format:
             runtime_overrides["video_format"] = video_format
-        logger.info(f"🚀 Starting V15 {mode.value.upper()} Pipeline for {nicho_slug}")
+        logger.info(f"🚀 Starting V16 PRO {mode.value.upper()} pipeline for {nicho_slug}")
         result = run_pipeline_v15(
             nicho_slug,
             dry_run=dry_run,
