@@ -56,7 +56,15 @@ from state_manager import StateManager
 try:
     from pipeline.composition_master import fetch_fresh_stock_videos
 except ImportError:
-    def fetch_fresh_stock_videos(guion: str = "", nicho_slug: str = "", num_clips: int = 8, **kwargs):
+    def fetch_fresh_stock_videos(
+        guion: str = "",
+        tema: str = "",
+        nicho_slug: str = "",
+        keywords: list | None = None,
+        num_clips: int = 8,
+        job_id: str = "",
+        **kwargs,
+    ):
         """Fallback simple si no existe el módulo real"""
         logger.warning("Usando fetch_fresh_stock_videos fallback")
         return [{"id": f"clip_{i}", "url": f"https://example.com/clip{i}.mp4", "duration": 5.0} for i in range(num_clips)]
@@ -665,11 +673,37 @@ def _stage_subtitles(ctx: dict) -> dict:
 
 def _stage_media(ctx: dict) -> dict:
     logger.info("=== STAGE: MEDIA (OpenMontage) ===")
-    
+
+    manifest = ctx["manifest"]
+    nicho = ctx["nicho"]
     nicho_slug = ctx["nicho_slug"]
-    guion = ctx.get("guion", "") or ctx.get("titulo", "")
-    
-    raw_clips = fetch_fresh_stock_videos(guion=guion, nicho_slug=nicho_slug, num_clips=8)
+    content = ctx.get("content")
+    guion = (
+        ctx.get("guion", "")
+        or getattr(manifest, "guion", "")
+        or ctx.get("titulo", "")
+        or (getattr(content, "guion", "") if content else "")
+        or ""
+    )
+    tema = (
+        (content.titulo if content else "")
+        or getattr(manifest, "titulo", "")
+        or guion[:120]
+    )
+    keywords = list(getattr(content, "palabras_clave", None) or [])
+    if len(keywords) < 2:
+        parts = [p for p in (nicho.nombre or "").replace(",", " ").split() if len(p) > 2]
+        keywords = (parts + [nicho_slug])[:8] if parts else [nicho_slug, "video", "shorts"]
+
+    num_clips = int(getattr(nicho, "num_clips", 8) or 8)
+    raw_clips = fetch_fresh_stock_videos(
+        guion=guion,
+        tema=tema,
+        nicho_slug=nicho_slug,
+        keywords=keywords,
+        num_clips=num_clips,
+        job_id=str(getattr(manifest, "job_id", "") or ""),
+    )
     
     try:
         from tools.openmontage.smart_scorer import score_and_rank_clips, evaluate_scene_quality
@@ -786,7 +820,6 @@ def _stage_render(ctx: dict) -> dict:
 
     ctx["final_video"] = str(output_path)
     ctx["video_path"] = ctx["final_video"]
-    manifest.output_path = str(output_path)
     manifest.video_path = str(output_path)
 
     return ctx
